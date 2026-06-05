@@ -1,6 +1,10 @@
 node_modules/
-static/uploads/
+.env
+*.log
+static/uploads/*
+!static/uploads/.gitkeep
+__pycache__/
+*.pyc
 *.db
 *.db.bak
-.env
-.env.*
+.DS_Store
