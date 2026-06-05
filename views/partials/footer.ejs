@@ -1,0 +1,153 @@
+  </main>
+
+  <% if (currentUser) { %>
+  <div id="changePwModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4">
+    <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl">
+      <div class="p-5 border-b flex items-center justify-between">
+        <h3 class="font-bold text-gray-800">🔑 تغيير كلمة المرور</h3>
+        <button onclick="closeChangePw()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+      </div>
+      <div class="p-5 space-y-4">
+        <div>
+          <label class="text-xs font-semibold text-gray-600 block mb-1">كلمة المرور الحالية</label>
+          <input id="cpCurrent" type="password" autocomplete="current-password"
+            class="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-400"
+            placeholder="••••••••"/>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-gray-600 block mb-1">كلمة المرور الجديدة</label>
+          <input id="cpNew" type="password" autocomplete="new-password"
+            class="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-400"
+            placeholder="4 أحرف على الأقل"/>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-gray-600 block mb-1">تأكيد كلمة المرور الجديدة</label>
+          <input id="cpConfirm" type="password" autocomplete="new-password"
+            class="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-400"
+            placeholder="••••••••"/>
+        </div>
+        <div id="cpError" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-xl px-3 py-2 text-sm"></div>
+        <div id="cpSuccess" class="hidden bg-green-50 border border-green-200 text-green-700 rounded-xl px-3 py-2 text-sm">✅ تم تغيير كلمة المرور بنجاح</div>
+        <div class="flex gap-3">
+          <button onclick="submitChangePw()" id="cpSubmitBtn"
+            class="flex-1 bg-blue-700 hover:bg-blue-800 text-white font-semibold py-2.5 rounded-xl text-sm">
+            حفظ كلمة المرور
+          </button>
+          <button onclick="closeChangePw()"
+            class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">
+            إلغاء
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+  const _BASE_PATH = "<%- base %>";
+  function openChangePw() {
+    document.getElementById("cpCurrent").value = "";
+    document.getElementById("cpNew").value = "";
+    document.getElementById("cpConfirm").value = "";
+    document.getElementById("cpError").classList.add("hidden");
+    document.getElementById("cpSuccess").classList.add("hidden");
+    document.getElementById("cpSubmitBtn").disabled = false;
+    document.getElementById("changePwModal").classList.remove("hidden");
+    setTimeout(() => document.getElementById("cpCurrent").focus(), 100);
+  }
+  function closeChangePw() {
+    document.getElementById("changePwModal").classList.add("hidden");
+  }
+  async function submitChangePw() {
+    const current = document.getElementById("cpCurrent").value;
+    const newPw   = document.getElementById("cpNew").value;
+    const confirm = document.getElementById("cpConfirm").value;
+    const errEl   = document.getElementById("cpError");
+    const sucEl   = document.getElementById("cpSuccess");
+    errEl.classList.add("hidden");
+    sucEl.classList.add("hidden");
+    if (!current || !newPw || !confirm) { errEl.textContent = "جميع الحقول مطلوبة"; errEl.classList.remove("hidden"); return; }
+    if (newPw.length < 4) { errEl.textContent = "كلمة المرور الجديدة يجب أن تكون 4 أحرف على الأقل"; errEl.classList.remove("hidden"); return; }
+    if (newPw !== confirm) { errEl.textContent = "كلمتا المرور الجديدتان غير متطابقتين"; errEl.classList.remove("hidden"); return; }
+    const btn = document.getElementById("cpSubmitBtn");
+    btn.disabled = true; btn.textContent = "جارٍ الحفظ...";
+    try {
+      const res = await fetch(`${_BASE_PATH}/api/users/me/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password: current, new_password: newPw })
+      });
+      const data = await res.json();
+      btn.disabled = false; btn.textContent = "حفظ كلمة المرور";
+      if (res.ok) {
+        sucEl.classList.remove("hidden");
+        setTimeout(closeChangePw, 1800);
+      } else {
+        errEl.textContent = data.error || "حدث خطأ";
+        errEl.classList.remove("hidden");
+      }
+    } catch(e) {
+      btn.disabled = false; btn.textContent = "حفظ كلمة المرور";
+      errEl.textContent = "خطأ في الاتصال";
+      errEl.classList.remove("hidden");
+    }
+  }
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !document.getElementById("changePwModal").classList.contains("hidden")) closeChangePw();
+  });
+  </script>
+  <% } %>
+
+  <script>
+  (function() {
+    const LANG_KEY = 'pos_ui_lang';
+    let currentLang = localStorage.getItem(LANG_KEY) || 'ar';
+    function applyLang(lang) {
+      currentLang = lang;
+      localStorage.setItem(LANG_KEY, lang);
+      const isRtl = lang === 'ar';
+      const html = document.getElementById('htmlRoot');
+      html.setAttribute('lang', lang);
+      html.setAttribute('dir', isRtl ? 'rtl' : 'ltr');
+      document.querySelectorAll('[data-ar][data-en]').forEach(el => {
+        el.textContent = lang === 'ar' ? el.getAttribute('data-ar') : el.getAttribute('data-en');
+      });
+      document.querySelectorAll('[data-ar-placeholder][data-en-placeholder]').forEach(el => {
+        el.placeholder = lang === 'ar' ? el.getAttribute('data-ar-placeholder') : el.getAttribute('data-en-placeholder');
+      });
+      const btn = document.getElementById('langBtnText');
+      if (btn) btn.textContent = lang === 'ar' ? 'EN' : 'عر';
+    }
+    window.toggleLang = function() { applyLang(currentLang === 'ar' ? 'en' : 'ar'); };
+    window.getCurrentLang = function() { return currentLang; };
+    document.addEventListener('DOMContentLoaded', () => applyLang(currentLang));
+  })();
+  </script>
+
+  <script>
+  (function() {
+    const BASE_PATH = "<%- base %>";
+    async function refreshBadge() {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/products/low-stock`);
+        const items = await res.json();
+        const badge = document.getElementById("lowStockBadge");
+        if (!badge) return;
+        if (items.length > 0) {
+          badge.textContent = items.length;
+          badge.classList.remove("hidden");
+        } else {
+          badge.classList.add("hidden");
+        }
+      } catch(e) {}
+    }
+    window.refreshBadge = refreshBadge;
+    document.addEventListener('DOMContentLoaded', refreshBadge);
+    setInterval(refreshBadge, 60000);
+  })();
+  </script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(regs => { regs.forEach(r => r.unregister()); });
+    }
+  </script>
+</body>
+</html>

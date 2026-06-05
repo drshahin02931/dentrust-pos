@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" id="htmlRoot">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title><%= pageTitle || 'نظام POS' %></title>
+  <link rel="manifest" href="<%- base %>/static/manifest.json"/>
+  <meta name="theme-color" content="#1d4ed8"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="POS"/>
+  <link rel="apple-touch-icon" href="<%- base %>/static/icon-192.png"/>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['Segoe UI', 'Arial', 'sans-serif'] } } }
+    }
+  </script>
+  <style>
+    @media print { .no-print { display: none !important; } }
+    .nav-link { display:flex; align-items:center; gap:0.4rem; padding:0.5rem 0.875rem; border-radius:0.75rem; font-size:0.8125rem; font-weight:500; transition:all 0.15s; white-space:nowrap; }
+    .nav-link.active { background:white; color:#1d4ed8; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+    .nav-link:not(.active) { color:#bfdbfe; }
+    .nav-link:not(.active):hover { background:rgba(255,255,255,0.15); }
+    input, select, textarea { direction: rtl; }
+    [dir="ltr"] input, [dir="ltr"] select, [dir="ltr"] textarea { direction: ltr; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <nav class="no-print bg-blue-700 text-white shadow-lg sticky top-0 z-50">
+    <div class="max-w-screen-xl mx-auto px-4 py-2 flex items-center gap-1 overflow-x-auto">
+
+      <span class="text-base font-bold ml-3 whitespace-nowrap">
+        <% if (settings && settings.store_name && settings.store_name !== 'اسم المحل') { %>
+          🏪 <span id="navStoreName"><%- settings.store_name %></span>
+        <% } else { %>
+          🏪 <span id="navStoreName" data-ar="نقطة البيع" data-en="POS">نقطة البيع</span>
+        <% } %>
+      </span>
+
+      <% if (!currentUser || (userPerms && userPerms.pos !== false)) { %>
+      <a href="<%- base %>/" class="nav-link <%= (reqPath === base+'/' || reqPath === base) ? 'active' : '' %>">
+        <span data-ar="🛒 البيع" data-en="🛒 Sales">🛒 <span class="lang-text" data-ar="البيع" data-en="Sales">البيع</span></span>
+      </a>
+      <% } %>
+
+      <% if (!currentUser || userPerms.inventory !== false) { %>
+      <a href="<%- base %>/inventory" class="nav-link <%= reqPath.includes('/inventory') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="📦 المخزون" data-en="📦 Inventory">📦 المخزون</span>
+      </a>
+      <a href="<%- base %>/barcodes" class="nav-link <%= reqPath.includes('/barcodes') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="🏷️ الباركود" data-en="🏷️ Barcodes">🏷️ الباركود</span>
+      </a>
+      <% } %>
+
+      <% if (!currentUser || userPerms.expiry !== false) { %>
+      <a href="<%- base %>/expiry" class="nav-link <%= reqPath.includes('/expiry') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="⏰ الصلاحية" data-en="⏰ Expiry">⏰ الصلاحية</span>
+      </a>
+      <% } %>
+
+      <% if (!currentUser || userPerms.customers !== false) { %>
+      <a href="<%- base %>/customers" class="nav-link <%= reqPath.includes('/customers') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="👥 العملاء" data-en="👥 Customers">👥 العملاء</span>
+      </a>
+      <% } %>
+
+      <% if (!currentUser || userPerms.accounting !== false) { %>
+      <a href="<%- base %>/accounting" class="nav-link <%= reqPath.includes('/accounting') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="📊 المحاسبة" data-en="📊 Accounting">📊 المحاسبة</span>
+      </a>
+      <% } %>
+
+      <% if (!currentUser || userPerms.invoices !== false) { %>
+      <a href="<%- base %>/invoices" class="nav-link <%= reqPath.includes('/invoices') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="🧾 الفواتير" data-en="🧾 Invoices">🧾 الفواتير</span>
+      </a>
+      <% } %>
+
+      <a href="<%- base %>/notifications" class="nav-link relative <%= reqPath.includes('/notifications') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="🔔 الإشعارات" data-en="🔔 Alerts">🔔 الإشعارات</span>
+        <span id="lowStockBadge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white font-black rounded-full text-[9px] min-w-[1rem] px-1 leading-none py-0.5 text-center"></span>
+      </a>
+
+      <% if (isMgr) { %>
+      <div class="h-5 w-px bg-blue-500 mx-1"></div>
+      <a href="<%- base %>/admin/users" class="nav-link <%= reqPath.includes('/admin/users') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="👤 المستخدمون" data-en="👤 Users">👤 المستخدمون</span>
+      </a>
+      <a href="<%- base %>/admin/attendance" class="nav-link <%= reqPath.includes('/admin/attendance') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="📅 الحضور" data-en="📅 Attendance">📅 الحضور</span>
+      </a>
+      <a href="<%- base %>/sync" class="nav-link <%= reqPath.includes('/sync') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="🔄 مزامنة" data-en="🔄 Sync">🔄 مزامنة</span>
+      </a>
+      <a href="<%- base %>/suppliers" class="nav-link <%= reqPath.includes('/suppliers') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="🏭 الموردين" data-en="🏭 Suppliers">🏭 الموردين</span>
+      </a>
+      <a href="<%- base %>/cash-register" class="nav-link <%= reqPath.includes('/cash-register') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="💰 الخزينة" data-en="💰 Cash Register">💰 الخزينة</span>
+      </a>
+      <a href="<%- base %>/settings" class="nav-link <%= reqPath.includes('/settings') ? 'active' : '' %>">
+        <span class="lang-text" data-ar="⚙️ الإعدادات" data-en="⚙️ Settings">⚙️ الإعدادات</span>
+      </a>
+      <% } %>
+
+      <div class="mr-auto flex items-center gap-2 flex-shrink-0">
+        <button onclick="toggleLang()" id="langBtn"
+          class="text-xs bg-white/15 hover:bg-white/25 text-white rounded-xl px-3 py-1.5 font-bold transition-colors border border-white/20 flex items-center gap-1">
+          <span id="langBtnText">EN</span>
+        </button>
+
+        <% if (currentUser) { %>
+        <button onclick="openChangePw()"
+          class="text-xs bg-blue-600 hover:bg-blue-500 rounded-xl px-3 py-1.5 flex items-center gap-1.5 transition-colors"
+          title="تغيير كلمة المرور">
+          <% if (isMgr) { %><span class="text-yellow-300">👑</span><% } else { %><span>👤</span><% } %>
+          <span class="font-semibold"><%- currentUser.username %></span>
+        </button>
+        <a href="<%- base %>/logout"
+          class="text-xs bg-red-500/20 hover:bg-red-500/40 text-red-100 rounded-xl px-3 py-1.5 font-medium transition-colors lang-text"
+          data-ar="خروج" data-en="Logout">خروج</a>
+        <% } %>
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-screen-xl mx-auto px-4 py-6">

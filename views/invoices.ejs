@@ -1,0 +1,649 @@
+<%- include('partials/header', Object.assign({pageTitle: 'الفواتير'}, locals)) %>
+<div class="space-y-6">
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <h1 class="text-2xl font-bold text-gray-800" data-ar="🧾 إدارة الفواتير" data-en="🧾 Invoices">🧾 إدارة الفواتير</h1>
+    <div class="flex items-center gap-2 text-sm text-gray-500 bg-white border rounded-xl px-4 py-2 shadow-sm">
+      <span data-ar="إجمالي الفواتير:" data-en="Total invoices:">إجمالي الفواتير:</span>
+      <span id="totalCount" class="font-bold text-blue-700 mr-1">—</span>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="bg-white rounded-2xl border shadow-sm p-4 flex flex-wrap gap-3 items-end">
+    <div class="flex-1 min-w-48">
+      <label class="text-xs font-medium text-gray-600 block mb-1" data-ar="بحث برقم الفاتورة أو العميل" data-en="Search by invoice # or customer">بحث برقم الفاتورة أو العميل</label>
+      <input id="searchBox" type="text" oninput="applyFilters()"
+        data-ar-placeholder="رقم أو اسم..." data-en-placeholder="# or name..."
+        placeholder="رقم أو اسم..."
+        class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+    </div>
+    <div>
+      <label class="text-xs font-medium text-gray-600 block mb-1" data-ar="طريقة الدفع" data-en="Payment method">طريقة الدفع</label>
+      <select id="payFilter" onchange="applyFilters()"
+        class="border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
+        <option value="" data-ar="الكل" data-en="All">الكل</option>
+        <option value="cash">💵 كاش</option>
+        <option value="visa">💳 فيزا</option>
+        <option value="instapay">📱 InstaPay</option>
+        <option value="credit">📋 آجل</option>
+      </select>
+    </div>
+    <div>
+      <label class="text-xs font-medium text-gray-600 block mb-1" data-ar="الحالة" data-en="Status">الحالة</label>
+      <select id="statusFilter" onchange="applyFilters()"
+        class="border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
+        <option value="" data-ar="الكل" data-en="All">الكل</option>
+        <option value="0" data-ar="فعّالة" data-en="Active">فعّالة</option>
+        <option value="1" data-ar="مُستردّة جزئياً" data-en="Partial return">مُستردّة جزئياً</option>
+        <option value="2" data-ar="مُستردّة كلياً" data-en="Fully returned">مُستردّة كلياً</option>
+      </select>
+    </div>
+    <div>
+      <label class="text-xs font-medium text-gray-600 block mb-1" data-ar="من تاريخ" data-en="From date">من تاريخ</label>
+      <input id="dateFrom" type="date" onchange="applyFilters()"
+        class="border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+    </div>
+    <div>
+      <label class="text-xs font-medium text-gray-600 block mb-1" data-ar="إلى تاريخ" data-en="To date">إلى تاريخ</label>
+      <input id="dateTo" type="date" onchange="applyFilters()"
+        class="border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+    </div>
+    <button onclick="resetFilters()" class="text-xs text-gray-500 hover:text-gray-700 px-3 py-2 border rounded-xl hover:bg-gray-50" data-ar="إعادة ضبط" data-en="Reset">إعادة ضبط</button>
+  </div>
+
+  <!-- Summary Cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-center">
+      <div class="text-xs text-blue-500 font-medium mb-1" data-ar="إجمالي المبيعات" data-en="Total Sales">إجمالي المبيعات</div>
+      <div id="sumRevenue" class="text-2xl font-black text-blue-700">—</div>
+      <div class="text-xs text-blue-400 mt-1" data-ar="جنيه" data-en="EGP">جنيه</div>
+    </div>
+    <div class="bg-green-50 border border-green-100 rounded-2xl p-4 text-center">
+      <div class="text-xs text-green-600 font-medium mb-1" data-ar="عدد الفواتير" data-en="Invoice count">عدد الفواتير</div>
+      <div id="sumCount" class="text-2xl font-black text-green-700">—</div>
+      <div class="text-xs text-green-400 mt-1" data-ar="فاتورة" data-en="invoices">فاتورة</div>
+    </div>
+    <div class="bg-red-50 border border-red-100 rounded-2xl p-4 text-center">
+      <div class="text-xs text-red-500 font-medium mb-1" data-ar="مُستردّة (جزئي/كلي)" data-en="Returned (partial/full)">مُستردّة (جزئي/كلي)</div>
+      <div id="sumReturned" class="text-2xl font-black text-red-600">—</div>
+      <div class="text-xs text-red-400 mt-1" data-ar="فاتورة" data-en="invoices">فاتورة</div>
+    </div>
+    <div class="bg-purple-50 border border-purple-100 rounded-2xl p-4 text-center">
+      <div class="text-xs text-purple-600 font-medium mb-1" data-ar="قيمة المردودات" data-en="Returns value">قيمة المردودات</div>
+      <div id="sumRefunds" class="text-2xl font-black text-purple-700">—</div>
+      <div class="text-xs text-purple-400 mt-1" data-ar="جنيه" data-en="EGP">جنيه</div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b">
+        <tr class="text-right text-gray-600 font-semibold">
+          <th class="px-4 py-3" data-ar="رقم الفاتورة" data-en="Invoice #">رقم الفاتورة</th>
+          <th class="px-4 py-3" data-ar="التاريخ" data-en="Date">التاريخ</th>
+          <th class="px-4 py-3" data-ar="العميل" data-en="Customer">العميل</th>
+          <th class="px-4 py-3" data-ar="طريقة الدفع" data-en="Payment">طريقة الدفع</th>
+          <th class="px-4 py-3" data-ar="الإجمالي" data-en="Total">الإجمالي</th>
+          <th class="px-4 py-3" data-ar="الحالة" data-en="Status">الحالة</th>
+          <th class="px-4 py-3" data-ar="إجراءات" data-en="Actions">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="invoiceTable" class="divide-y"></tbody>
+    </table>
+    <div id="noInvoices" class="hidden text-center text-gray-400 py-12 text-sm" data-ar="لا توجد فواتير تطابق البحث" data-en="No invoices match your filters">لا توجد فواتير تطابق البحث</div>
+    <div id="loadMore" class="hidden text-center p-4">
+      <button onclick="loadMoreInvoices()" class="text-blue-600 hover:underline text-sm font-medium" data-ar="تحميل المزيد..." data-en="Load more...">تحميل المزيد...</button>
+    </div>
+  </div>
+</div>
+
+<!-- Invoice Detail Modal -->
+<div id="detailModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col">
+    <div class="p-5 border-b flex items-center justify-between flex-shrink-0">
+      <h3 id="modalTitle" class="font-bold text-gray-800 text-lg">تفاصيل الفاتورة</h3>
+      <button onclick="closeDetail()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+    </div>
+    <div id="modalBody" class="overflow-y-auto flex-1 p-5"></div>
+    <div class="p-4 border-t flex gap-3 flex-shrink-0" id="modalActions"></div>
+  </div>
+</div>
+
+<!-- Add Items Modal -->
+<div id="addItemsModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col">
+    <div class="p-5 border-b flex items-center justify-between flex-shrink-0">
+      <div>
+        <h3 class="font-bold text-gray-800 text-lg">➕ إضافة أصناف للفاتورة</h3>
+        <p id="addItemsLabel" class="text-xs text-gray-500 mt-0.5"></p>
+      </div>
+      <button onclick="closeAddItems()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+    </div>
+    <div class="p-4 border-b flex-shrink-0">
+      <input id="addItemsSearch" type="text" placeholder="🔍 ابحث عن منتج..."
+        class="w-full border-2 border-blue-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+        oninput="searchAddItems()"/>
+      <div id="addItemsSuggestions" class="mt-1 hidden border rounded-xl shadow-lg divide-y max-h-48 overflow-y-auto bg-white z-10 relative"></div>
+    </div>
+    <div class="flex-1 overflow-y-auto p-4">
+      <div id="addItemsList" class="space-y-2">
+        <div class="text-center text-gray-400 text-sm py-6">ابحث عن منتج لإضافته</div>
+      </div>
+    </div>
+    <div class="p-4 border-t space-y-3 flex-shrink-0">
+      <div class="bg-blue-50 rounded-xl p-3 flex justify-between items-center">
+        <span class="font-semibold text-blue-700 text-sm">إجمالي الإضافة</span>
+        <span id="addItemsTotal" class="font-black text-blue-700 text-xl">0.00 جنيه</span>
+      </div>
+      <div id="addItemsError" class="hidden text-red-600 text-sm bg-red-50 rounded-xl p-2 text-center"></div>
+      <div class="flex gap-3">
+        <button onclick="confirmAddItems()" class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800">✅ تأكيد الإضافة</button>
+        <button onclick="closeAddItems()" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl">إلغاء</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Partial Return Modal -->
+<div id="returnModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col">
+    <div class="p-5 border-b flex items-center justify-between flex-shrink-0">
+      <div>
+        <h3 class="font-bold text-gray-800 text-lg">↩️ استرجاع من الفاتورة</h3>
+        <p id="returnInvoiceLabel" class="text-xs text-gray-500 mt-0.5"></p>
+      </div>
+      <button onclick="closeReturn()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+    </div>
+
+    <div class="overflow-y-auto flex-1 p-5 space-y-4">
+      <!-- Items to return -->
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-xs font-semibold text-gray-600">اختر الأصناف والكميات للاسترجاع</label>
+          <button onclick="selectAllItems()" class="text-xs text-blue-600 hover:underline">تحديد الكل</button>
+        </div>
+        <div id="returnItemsList" class="space-y-2 max-h-60 overflow-y-auto"></div>
+      </div>
+
+      <!-- Reason -->
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1">سبب الاسترجاع (اختياري)</label>
+        <textarea id="returnReason" rows="2" placeholder="مثال: المنتج تالف / العميل غيّر رأيه..."
+          class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-200 resize-none"></textarea>
+      </div>
+
+      <!-- Refund preview -->
+      <div class="bg-orange-50 border border-orange-200 rounded-xl p-3">
+        <div class="flex justify-between items-center">
+          <span class="text-sm text-orange-700 font-medium">المبلغ المُستردّ:</span>
+          <span id="returnTotalPreview" class="text-xl font-black text-orange-700">0.00 جنيه</span>
+        </div>
+      </div>
+
+      <div class="bg-yellow-50 border border-yellow-200 rounded-xl p-3 text-xs text-yellow-800">
+        ⚠️ سيتم إعادة المخزون للمنتجات المحددة وتسجيل المبلغ كمردود.
+      </div>
+
+      <div id="returnError" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-xl px-3 py-2 text-sm"></div>
+    </div>
+
+    <div class="p-4 border-t flex gap-3 flex-shrink-0">
+      <button id="confirmReturnBtn" onclick="confirmReturn()"
+        class="flex-1 bg-orange-600 text-white font-semibold py-2.5 rounded-xl hover:bg-orange-700">
+        تأكيد الاسترجاع
+      </button>
+      <button onclick="closeReturn()" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl">
+        إلغاء
+      </button>
+    </div>
+  </div>
+</div>
+<script>
+const BASE = "<%- base %>";
+const CAN_RETURN = <%= canReturn ? true : false %>;
+const IS_MGR = <%= isMgr ? true : false %>;
+const PAY_LABELS = { cash:"💵 كاش", visa:"💳 فيزا", instapay:"📱 InstaPay", credit:"📋 آجل" };
+const PAY_COLORS = { cash:"bg-green-100 text-green-700", visa:"bg-blue-100 text-blue-700", instapay:"bg-purple-100 text-purple-700", credit:"bg-orange-100 text-orange-700" };
+
+let allInvoices = [];
+let filteredInvoices = [];
+let currentReturnSaleId = null;
+let currentReturnItems = [];
+let displayLimit = 50;
+
+async function loadInvoices() {
+  const res = await fetch(`${BASE}/api/invoices`);
+  allInvoices = await res.json();
+  document.getElementById("totalCount").textContent = allInvoices.length;
+  applyFilters();
+}
+
+function applyFilters() {
+  const q = document.getElementById("searchBox").value.toLowerCase().trim();
+  const pay = document.getElementById("payFilter").value;
+  const status = document.getElementById("statusFilter").value;
+  const from = document.getElementById("dateFrom").value;
+  const to = document.getElementById("dateTo").value;
+
+  filteredInvoices = allInvoices.filter(inv => {
+    if (q && !String(inv.id).includes(q) && !(inv.customer_name||"").toLowerCase().includes(q)) return false;
+    if (pay && inv.payment_method !== pay) return false;
+    if (status !== "" && inv.return_status !== parseInt(status)) return false;
+    if (from && inv.date.slice(0,10) < from) return false;
+    if (to && inv.date.slice(0,10) > to) return false;
+    return true;
+  });
+  updateSummary();
+  renderTable();
+}
+
+function updateSummary() {
+  const active = filteredInvoices.filter(i => i.return_status === 0);
+  const withReturns = filteredInvoices.filter(i => i.return_status > 0);
+  document.getElementById("sumRevenue").textContent = active.reduce((s,i) => s + i.total_amount, 0).toFixed(2);
+  document.getElementById("sumCount").textContent = filteredInvoices.length;
+  document.getElementById("sumReturned").textContent = withReturns.length;
+  document.getElementById("sumRefunds").textContent = filteredInvoices.reduce((s,i) => s + (i.total_refunded||0), 0).toFixed(2);
+}
+
+function statusBadge(inv) {
+  if (inv.return_status === 2) return `<span class="bg-red-100 text-red-700 text-xs font-bold px-2.5 py-1 rounded-full">مُستردّة كلياً</span>`;
+  if (inv.return_status === 1) return `<span class="bg-orange-100 text-orange-700 text-xs font-bold px-2.5 py-1 rounded-full">↩️ جزئي</span>`;
+  return `<span class="bg-green-100 text-green-700 text-xs font-bold px-2.5 py-1 rounded-full">فعّالة</span>`;
+}
+
+function renderTable() {
+  const tbody = document.getElementById("invoiceTable");
+  const noMsg = document.getElementById("noInvoices");
+  const loadMoreBtn = document.getElementById("loadMore");
+  if (!filteredInvoices.length) {
+    tbody.innerHTML = "";
+    noMsg.classList.remove("hidden");
+    loadMoreBtn.classList.add("hidden");
+    return;
+  }
+  noMsg.classList.add("hidden");
+  const toShow = filteredInvoices.slice(0, displayLimit);
+  tbody.innerHTML = toShow.map(inv => {
+    const fullyReturned = inv.return_status === 2;
+    const payBadge = `<span class="text-xs font-medium px-2.5 py-1 rounded-full ${PAY_COLORS[inv.payment_method]||'bg-gray-100 text-gray-600'}">${PAY_LABELS[inv.payment_method]||inv.payment_method}</span>`;
+    const canReturnThis = CAN_RETURN && inv.return_status < 2;
+    return `<tr class="${fullyReturned?'bg-red-50/40 opacity-75':'hover:bg-gray-50'} transition-colors cursor-pointer" onclick="viewInvoice(${inv.id})">
+      <td class="px-4 py-3 font-mono font-bold text-blue-700">#${String(inv.id).padStart(5,'0')}</td>
+      <td class="px-4 py-3 text-gray-600 text-xs">${inv.date.replace('T',' ').slice(0,16)}</td>
+      <td class="px-4 py-3 text-gray-700">${inv.customer_name||'—'}</td>
+      <td class="px-4 py-3">${payBadge}</td>
+      <td class="px-4 py-3 font-bold ${fullyReturned?'text-red-400 line-through':'text-gray-800'}">${inv.total_amount.toFixed(2)} جنيه</td>
+      <td class="px-4 py-3">${statusBadge(inv)}</td>
+      <td class="px-4 py-3" onclick="event.stopPropagation()">
+        <div class="flex gap-1.5 flex-wrap">
+          <button onclick="viewInvoice(${inv.id})" class="text-xs bg-blue-50 text-blue-700 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 font-medium">عرض</button>
+          <button onclick="printInv(${inv.id})" class="text-xs bg-gray-50 text-gray-600 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 font-medium">طباعة</button>
+          ${canReturnThis ? `<button onclick="openReturn(${inv.id})" class="text-xs bg-orange-50 text-orange-700 px-2.5 py-1.5 rounded-lg hover:bg-orange-100 font-medium">↩️ استرجاع</button>` : ''}
+          <button onclick="openAddItems(${inv.id})" class="text-xs bg-green-50 text-green-700 px-2.5 py-1.5 rounded-lg hover:bg-green-100 font-medium">➕ إضافة</button>
+          ${IS_MGR ? `<button onclick="voidInvoice(${inv.id})" class="text-xs bg-red-50 text-red-700 px-2.5 py-1.5 rounded-lg hover:bg-red-100 font-medium">🗑 حذف</button>` : ''}
+        </div>
+      </td>
+    </tr>`;
+  }).join("");
+  loadMoreBtn.classList.toggle("hidden", filteredInvoices.length <= displayLimit);
+}
+
+function loadMoreInvoices() { displayLimit += 50; renderTable(); }
+
+function resetFilters() {
+  ["searchBox"].forEach(id => document.getElementById(id).value = "");
+  ["payFilter","statusFilter","dateFrom","dateTo"].forEach(id => document.getElementById(id).value = "");
+  displayLimit = 50;
+  applyFilters();
+}
+
+async function viewInvoice(id) {
+  const res = await fetch(`${BASE}/api/invoices/${id}`);
+  const data = await res.json();
+  const inv = data.invoice; const items = data.items; const returns = data.returns || [];
+
+  document.getElementById("modalTitle").textContent = `فاتورة رقم #${String(inv.id).padStart(5,'0')}`;
+  const payBadge = `<span class="text-xs font-medium px-2.5 py-1 rounded-full ${PAY_COLORS[inv.payment_method]||''}">${PAY_LABELS[inv.payment_method]||inv.payment_method}</span>`;
+
+  let returnsHtml = "";
+  if (returns.length) {
+    returnsHtml = `<div class="mt-4 space-y-2">
+      <div class="font-semibold text-sm text-gray-700">سجل المردودات:</div>
+      ${returns.map(r => `
+        <div class="bg-red-50 border border-red-100 rounded-xl p-3 text-xs space-y-1">
+          <div class="flex justify-between items-start gap-2">
+            <span class="text-red-700 font-bold">↩️ مردود — ${r.total_refund.toFixed(2)} جنيه</span>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <span class="text-gray-500">${(r.date||'').replace('T',' ').slice(0,16)}</span>
+              ${CAN_RETURN ? `<button onclick="deleteReturn(${r.id},${inv.id})" class="text-red-400 hover:text-red-700 font-bold text-base leading-none" title="حذف المردود نهائياً">🗑</button>` : ''}
+            </div>
+          </div>
+          ${r.reason ? `<div class="text-red-600">السبب: ${r.reason}</div>` : ''}
+          ${r.processed_by_name ? `<div class="text-gray-500">بواسطة: ${r.processed_by_name}</div>` : ''}
+        </div>`).join("")}
+    </div>`;
+  }
+
+  document.getElementById("modalBody").innerHTML = `<div class="space-y-4">
+    <div class="grid grid-cols-2 gap-3 text-sm">
+      <div class="bg-gray-50 rounded-xl p-3 space-y-1.5">
+        <div class="flex justify-between"><span class="text-gray-500">رقم الفاتورة</span><span class="font-bold text-blue-700 font-mono">#${String(inv.id).padStart(5,'0')}</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">التاريخ</span><span class="text-gray-700">${inv.date.replace('T',' ').slice(0,16)}</span></div>
+        <div class="flex justify-between items-center"><span class="text-gray-500">طريقة الدفع</span>${payBadge}</div>
+      </div>
+      <div class="bg-gray-50 rounded-xl p-3 space-y-1.5">
+        ${inv.customer_name?`<div class="flex justify-between"><span class="text-gray-500">العميل</span><span class="font-medium">${inv.customer_name}</span></div>`:''}
+        ${inv.customer_phone?`<div class="flex justify-between"><span class="text-gray-500">الهاتف</span><span class="font-mono text-sm">${inv.customer_phone}</span></div>`:''}
+        <div class="flex justify-between"><span class="text-gray-500">عدد الأصناف</span><span class="font-bold">${items.length}</span></div>
+      </div>
+    </div>
+    <div class="border rounded-xl overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 border-b">
+          <tr class="text-right text-gray-600 font-semibold">
+            <th class="px-4 py-2.5">المنتج</th>
+            <th class="px-4 py-2.5 text-center">الكمية</th>
+            <th class="px-4 py-2.5 text-center">مُستردّ</th>
+            <th class="px-4 py-2.5 text-left">الإجمالي</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y">
+          ${items.map(item => {
+            const fullyReturned = item.remaining_qty === 0;
+            return `<tr class="${fullyReturned?'bg-red-50/40 opacity-70':''}">
+              <td class="px-4 py-2.5 font-medium text-gray-800">${item.product_name}</td>
+              <td class="px-4 py-2.5 text-center font-bold">${item.quantity}</td>
+              <td class="px-4 py-2.5 text-center text-xs">
+                ${item.returned_qty > 0 ? `<span class="text-red-600 font-bold">-${item.returned_qty}</span>` : '—'}
+              </td>
+              <td class="px-4 py-2.5 text-left font-bold text-blue-700">${(item.unit_price*item.quantity).toFixed(2)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+    <div class="bg-blue-50 rounded-xl p-4 flex justify-between items-center">
+      <span class="font-bold text-gray-700">الإجمالي الكلي</span>
+      <span class="text-2xl font-black text-blue-700">${inv.total_amount.toFixed(2)} جنيه</span>
+    </div>
+    ${returnsHtml}
+  </div>`;
+
+  const canReturnThis = CAN_RETURN && inv.return_status < 2;
+  document.getElementById("modalActions").innerHTML = `
+    <button onclick="printInv(${inv.id})" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl hover:bg-gray-200">🖨️ طباعة</button>
+    <button onclick="closeDetail(); openAddItems(${inv.id})" class="flex-1 bg-green-600 text-white font-semibold py-2.5 rounded-xl hover:bg-green-700">➕ إضافة أصناف</button>
+    ${canReturnThis ? `<button onclick="closeDetail(); openReturn(${inv.id})" class="flex-1 bg-orange-500 text-white font-semibold py-2.5 rounded-xl hover:bg-orange-600">↩️ استرجاع</button>` : ''}
+    ${IS_MGR ? `<button onclick="closeDetail(); voidInvoice(${inv.id})" class="flex-1 bg-red-600 text-white font-semibold py-2.5 rounded-xl hover:bg-red-700">🗑 حذف نهائي</button>` : ''}
+    <button onclick="closeDetail()" class="px-5 bg-gray-50 text-gray-600 font-semibold py-2.5 rounded-xl hover:bg-gray-100 border">إغلاق</button>
+  `;
+  document.getElementById("detailModal").classList.remove("hidden");
+}
+
+function closeDetail() { document.getElementById("detailModal").classList.add("hidden"); }
+function printInv(id) { window.open(`${BASE}/invoice/${id}`, "_blank"); }
+
+async function voidInvoice(id) {
+  const lang = typeof getCurrentLang === 'function' ? getCurrentLang() : 'ar';
+  const msg = lang === 'en'
+    ? `⚠️ Permanently DELETE invoice #${String(id).padStart(5,'0')}?\n\nThis will remove the invoice, reverse stock, and adjust customer credit.\nThis action CANNOT be undone.`
+    : `⚠️ حذف الفاتورة رقم #${String(id).padStart(5,'0')} نهائياً؟\n\nسيتم إزالة الفاتورة وإعادة المخزون وتعديل ديون العميل.\nهذا الإجراء لا يمكن التراجع عنه.`;
+  if (!confirm(msg)) return;
+  const res = await fetch(`${BASE}/api/sales/${id}`, { method: "DELETE" });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error || (lang === 'en' ? 'Delete failed' : 'فشل الحذف')); return; }
+  allInvoices = allInvoices.filter(i => i.id !== id);
+  document.getElementById("totalCount").textContent = allInvoices.length;
+  applyFilters();
+  alert(lang === 'en' ? `✅ Invoice #${String(id).padStart(5,'0')} deleted.` : `✅ تم حذف الفاتورة #${String(id).padStart(5,'0')} نهائياً.`);
+}
+
+async function openReturn(saleId) {
+  currentReturnSaleId = saleId;
+  document.getElementById("returnInvoiceLabel").textContent = `فاتورة #${String(saleId).padStart(5,'0')}`;
+  document.getElementById("returnReason").value = "";
+  document.getElementById("returnError").classList.add("hidden");
+  document.getElementById("returnModal").classList.remove("hidden");
+
+  const res = await fetch(`${BASE}/api/invoices/${saleId}`);
+  const data = await res.json();
+  currentReturnItems = data.items.filter(i => i.remaining_qty > 0);
+
+  const list = document.getElementById("returnItemsList");
+  if (!currentReturnItems.length) {
+    list.innerHTML = '<div class="text-center text-gray-400 py-4 text-sm">لا توجد أصناف متاحة للاسترجاع</div>';
+    return;
+  }
+
+  list.innerHTML = currentReturnItems.map((item, idx) => `
+    <div class="border rounded-xl p-3 flex items-center gap-3 bg-gray-50">
+      <input type="checkbox" id="ri-${idx}" onchange="updateReturnTotal()"
+        class="rounded w-4 h-4 flex-shrink-0"/>
+      <div class="flex-1 min-w-0">
+        <div class="font-medium text-sm text-gray-800 truncate">${item.product_name}</div>
+        <div class="text-xs text-gray-500">${item.unit_price.toFixed(2)} جنيه/وحدة — متاح للاسترجاع: ${item.remaining_qty}</div>
+      </div>
+      <div class="flex items-center gap-1 flex-shrink-0">
+        <label class="text-xs text-gray-500">الكمية:</label>
+        <input type="number" id="rq-${idx}" value="${item.remaining_qty}" min="1" max="${item.remaining_qty}"
+          oninput="updateReturnTotal()"
+          class="w-16 border rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-orange-200"/>
+      </div>
+      <div id="rsubtotal-${idx}" class="w-20 text-left text-sm font-bold text-orange-700">
+        ${(item.unit_price * item.remaining_qty).toFixed(2)}
+      </div>
+    </div>
+  `).join("");
+
+  updateReturnTotal();
+}
+
+function selectAllItems() {
+  currentReturnItems.forEach((_, idx) => {
+    const cb = document.getElementById(`ri-${idx}`);
+    if (cb) cb.checked = true;
+  });
+  updateReturnTotal();
+}
+
+function updateReturnTotal() {
+  let total = 0;
+  currentReturnItems.forEach((item, idx) => {
+    const cb = document.getElementById(`ri-${idx}`);
+    const qInput = document.getElementById(`rq-${idx}`);
+    const subtotalEl = document.getElementById(`rsubtotal-${idx}`);
+    if (!cb || !qInput) return;
+    const qty = Math.min(Math.max(1, parseInt(qInput.value)||0), item.remaining_qty);
+    const subtotal = cb.checked ? qty * item.unit_price : 0;
+    if (subtotalEl) subtotalEl.textContent = (qty * item.unit_price).toFixed(2);
+    total += subtotal;
+  });
+  document.getElementById("returnTotalPreview").textContent = total.toFixed(2) + " جنيه";
+}
+
+function closeReturn() { document.getElementById("returnModal").classList.add("hidden"); currentReturnSaleId = null; }
+
+async function confirmReturn() {
+  if (!currentReturnSaleId) return;
+  const items = [];
+  currentReturnItems.forEach((item, idx) => {
+    const cb = document.getElementById(`ri-${idx}`);
+    const qInput = document.getElementById(`rq-${idx}`);
+    if (cb && cb.checked && qInput) {
+      const qty = Math.min(Math.max(1, parseInt(qInput.value)||0), item.remaining_qty);
+      if (qty > 0) items.push({ sale_item_id: item.id, quantity: qty });
+    }
+  });
+  if (!items.length) {
+    document.getElementById("returnError").textContent = "اختر على الأقل صنفاً واحداً للاسترجاع";
+    document.getElementById("returnError").classList.remove("hidden");
+    return;
+  }
+  const reason = document.getElementById("returnReason").value.trim();
+  const btn = document.getElementById("confirmReturnBtn");
+  btn.disabled = true;
+  btn.textContent = "جارٍ الاسترجاع...";
+
+  const res = await fetch(`${BASE}/api/invoices/${currentReturnSaleId}/return`, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ items, reason })
+  });
+  const data = await res.json();
+  btn.disabled = false;
+  btn.textContent = "تأكيد الاسترجاع";
+
+  if (!res.ok) {
+    document.getElementById("returnError").textContent = data.error || "حدث خطأ أثناء الاسترجاع";
+    document.getElementById("returnError").classList.remove("hidden");
+    return;
+  }
+  closeReturn();
+  await loadInvoices();
+  alert(`✅ تم الاسترجاع بنجاح — المبلغ: ${data.refund_amount.toFixed(2)} جنيه`);
+}
+
+// ── Delete Return ──────────────────────────────────────────────────────────
+async function deleteReturn(returnId, saleId) {
+  if (!confirm("⚠️ حذف هذا المردود نهائياً؟\nسيتم عكس المخزون وتعديل الديون — هذا الإجراء لا يمكن التراجع عنه.")) return;
+  const res = await fetch(`${BASE}/api/returns/${returnId}`, { method: "DELETE" });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error || "حدث خطأ أثناء الحذف"); return; }
+  closeDetail();
+  await loadInvoices();
+  alert("✅ تم حذف المردود نهائياً");
+}
+
+// ── Add Items to Invoice ───────────────────────────────────────────────────
+let addItemsSaleId = null;
+let addItemsCart = [];
+let addItemsSuggCache = {};
+let addItemsSearchTimer = null;
+
+function openAddItems(saleId) {
+  addItemsSaleId = saleId;
+  addItemsCart = [];
+  document.getElementById("addItemsLabel").textContent = `فاتورة #${String(saleId).padStart(5,'0')}`;
+  document.getElementById("addItemsSearch").value = "";
+  document.getElementById("addItemsSuggestions").classList.add("hidden");
+  document.getElementById("addItemsError").classList.add("hidden");
+  renderAddCart();
+  document.getElementById("addItemsModal").classList.remove("hidden");
+  setTimeout(() => document.getElementById("addItemsSearch").focus(), 100);
+}
+
+function closeAddItems() {
+  document.getElementById("addItemsModal").classList.add("hidden");
+  addItemsSaleId = null;
+  addItemsCart = [];
+}
+
+function searchAddItems() {
+  clearTimeout(addItemsSearchTimer);
+  const q = document.getElementById("addItemsSearch").value.trim();
+  const sugg = document.getElementById("addItemsSuggestions");
+  if (!q) { sugg.classList.add("hidden"); return; }
+  addItemsSearchTimer = setTimeout(async () => {
+    const res = await fetch(`${BASE}/api/products?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    addItemsSuggCache = {};
+    data.forEach(p => addItemsSuggCache[p.id] = p);
+    if (!data.length) { sugg.classList.add("hidden"); return; }
+    sugg.innerHTML = data.slice(0,8).map(p => `
+      <div onclick="addItemFromSugg(${p.id})"
+        class="px-4 py-2.5 hover:bg-blue-50 cursor-pointer flex justify-between items-center text-sm">
+        <div>
+          <span class="font-medium">${p.product_name}</span>
+          ${p.quantity <= 0
+            ? '<span class="text-xs text-red-500 mr-2">نفذ</span>'
+            : p.quantity <= 5 ? `<span class="text-xs text-orange-500 mr-2">(${p.quantity} متبقي)</span>` : ''}
+        </div>
+        <span class="text-blue-700 font-bold text-xs">${p.sale_price.toFixed(2)} ج</span>
+      </div>`).join("");
+    sugg.classList.remove("hidden");
+  }, 200);
+}
+
+function addItemFromSugg(id) {
+  const p = addItemsSuggCache[id];
+  if (!p) return;
+  document.getElementById("addItemsSuggestions").classList.add("hidden");
+  document.getElementById("addItemsSearch").value = "";
+  if (p.quantity <= 0) { alert(`"${p.product_name}" غير متوفر في المخزون`); return; }
+  const existing = addItemsCart.find(i => i.product_id === p.id);
+  if (existing) {
+    if (existing.quantity >= p.quantity) { alert("لا يوجد مخزون كافٍ"); return; }
+    existing.quantity++;
+  } else {
+    addItemsCart.push({ product_id: p.id, product_name: p.product_name,
+      unit_price: p.sale_price, quantity: 1, max_qty: p.quantity });
+  }
+  renderAddCart();
+}
+
+function renderAddCart() {
+  const list = document.getElementById("addItemsList");
+  if (!addItemsCart.length) {
+    list.innerHTML = '<div class="text-center text-gray-400 text-sm py-6">ابحث عن منتج لإضافته</div>';
+    document.getElementById("addItemsTotal").textContent = "0.00 جنيه";
+    return;
+  }
+  list.innerHTML = addItemsCart.map((item, idx) => `
+    <div class="flex items-center gap-3 border rounded-xl p-3 bg-gray-50">
+      <div class="flex-1 min-w-0">
+        <div class="font-medium text-sm truncate">${item.product_name}</div>
+        <div class="text-xs text-gray-500">${item.unit_price.toFixed(2)} جنيه/وحدة</div>
+      </div>
+      <div class="flex items-center gap-1">
+        <button onclick="chgAddQty(${idx},-1)" class="w-7 h-7 rounded-lg bg-gray-200 hover:bg-red-100 font-bold text-sm flex items-center justify-center">−</button>
+        <span class="w-8 text-center font-bold text-sm">${item.quantity}</span>
+        <button onclick="chgAddQty(${idx},1)" class="w-7 h-7 rounded-lg bg-gray-200 hover:bg-green-100 font-bold text-sm flex items-center justify-center">+</button>
+      </div>
+      <div class="font-bold text-blue-700 w-20 text-left text-sm">${(item.unit_price*item.quantity).toFixed(2)}</div>
+      <button onclick="rmAddItem(${idx})" class="text-red-400 hover:text-red-600 text-xl leading-none">×</button>
+    </div>`).join("");
+  const total = addItemsCart.reduce((s,i) => s + i.unit_price * i.quantity, 0);
+  document.getElementById("addItemsTotal").textContent = total.toFixed(2) + " جنيه";
+}
+
+function chgAddQty(idx, delta) {
+  addItemsCart[idx].quantity += delta;
+  if (addItemsCart[idx].quantity <= 0) addItemsCart.splice(idx, 1);
+  else if (addItemsCart[idx].quantity > addItemsCart[idx].max_qty) {
+    addItemsCart[idx].quantity = addItemsCart[idx].max_qty;
+    alert("لا يوجد مخزون كافٍ");
+  }
+  renderAddCart();
+}
+function rmAddItem(idx) { addItemsCart.splice(idx, 1); renderAddCart(); }
+
+async function confirmAddItems() {
+  if (!addItemsCart.length) { alert("أضف منتجاً أولاً"); return; }
+  const errEl = document.getElementById("addItemsError");
+  errEl.classList.add("hidden");
+  const res = await fetch(`${BASE}/api/invoices/${addItemsSaleId}/add-items`, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ items: addItemsCart.map(i => ({
+      product_id: i.product_id, product_name: i.product_name,
+      quantity: i.quantity, unit_price: i.unit_price
+    })) })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    errEl.textContent = data.error || "حدث خطأ";
+    errEl.classList.remove("hidden");
+    return;
+  }
+  closeAddItems();
+  await loadInvoices();
+  alert(`✅ تمت الإضافة بنجاح — المبلغ الإضافي: ${data.added_amount.toFixed(2)} جنيه`);
+}
+
+loadInvoices();
+</script>
+
+</main>
+<%- include('partials/footer', locals) %>

@@ -1,0 +1,9 @@
+{
+  "name": "POS System",
+  "short_name": "POS",
+  "start_url": "/pos-system/",
+  "display": "standalone",
+  "background_color": "#1d4ed8",
+  "theme_color": "#1d4ed8",
+  "icons": []
+}

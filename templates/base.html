@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" id="htmlRoot">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}نظام POS{% endblock %}</title>
+  <link rel="manifest" href="{{ base }}/static/manifest.json"/>
+  <meta name="theme-color" content="#1d4ed8"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="POS"/>
+  <link rel="apple-touch-icon" href="{{ base }}/static/icon-192.png"/>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['Segoe UI', 'Arial', 'sans-serif'] } } }
+    }
+  </script>
+  <style>
+    @media print { .no-print { display: none !important; } }
+    .nav-link { display:flex; align-items:center; gap:0.4rem; padding:0.5rem 0.875rem; border-radius:0.75rem; font-size:0.8125rem; font-weight:500; transition:all 0.15s; white-space:nowrap; }
+    .nav-link.active { background:white; color:#1d4ed8; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+    .nav-link:not(.active) { color:#bfdbfe; }
+    .nav-link:not(.active):hover { background:rgba(255,255,255,0.15); }
+    input, select, textarea { direction: rtl; }
+    [dir="ltr"] input, [dir="ltr"] select, [dir="ltr"] textarea { direction: ltr; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <nav class="no-print bg-blue-700 text-white shadow-lg sticky top-0 z-50">
+    <div class="max-w-screen-xl mx-auto px-4 py-2 flex items-center gap-1 overflow-x-auto">
+
+      <span class="text-base font-bold ml-3 whitespace-nowrap">
+        {% if settings and settings.get('store_name') and settings.store_name != 'اسم المحل' %}
+          🏪 <span id="navStoreName">{{ settings.store_name }}</span>
+        {% else %}
+          🏪 <span id="navStoreName" data-ar="نقطة البيع" data-en="POS">نقطة البيع</span>
+        {% endif %}
+      </span>
+
+      {% if not current_user or user_perms.get('pos', true) %}
+      <a href="{{ base }}/" class="nav-link {% if request.path == base+'/' or request.path == base %}active{% endif %}">
+        <span data-ar="🛒 البيع" data-en="🛒 Sales">🛒 <span class="lang-text" data-ar="البيع" data-en="Sales">البيع</span></span>
+      </a>
+      {% endif %}
+
+      {% if not current_user or user_perms.get('inventory', true) %}
+      <a href="{{ base }}/inventory" class="nav-link {% if '/inventory' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="📦 المخزون" data-en="📦 Inventory">📦 المخزون</span>
+      </a>
+      <a href="{{ base }}/barcodes" class="nav-link {% if '/barcodes' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="🏷️ الباركود" data-en="🏷️ Barcodes">🏷️ الباركود</span>
+      </a>
+      {% endif %}
+
+      {% if not current_user or user_perms.get('expiry', true) %}
+      <a href="{{ base }}/expiry" class="nav-link {% if '/expiry' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="⏰ الصلاحية" data-en="⏰ Expiry">⏰ الصلاحية</span>
+      </a>
+      {% endif %}
+
+      {% if not current_user or user_perms.get('customers', true) %}
+      <a href="{{ base }}/customers" class="nav-link {% if '/customers' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="👥 العملاء" data-en="👥 Customers">👥 العملاء</span>
+      </a>
+      {% endif %}
+
+      {% if not current_user or user_perms.get('accounting', true) %}
+      <a href="{{ base }}/accounting" class="nav-link {% if '/accounting' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="📊 المحاسبة" data-en="📊 Accounting">📊 المحاسبة</span>
+      </a>
+      {% endif %}
+
+      {% if not current_user or user_perms.get('invoices', true) %}
+      <a href="{{ base }}/invoices" class="nav-link {% if '/invoices' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="🧾 الفواتير" data-en="🧾 Invoices">🧾 الفواتير</span>
+      </a>
+      {% endif %}
+
+      <a href="{{ base }}/notifications" class="nav-link relative {% if '/notifications' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="🔔 الإشعارات" data-en="🔔 Alerts">🔔 الإشعارات</span>
+        <span id="lowStockBadge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white font-black rounded-full text-[9px] min-w-[1rem] px-1 leading-none py-0.5 text-center"></span>
+      </a>
+
+      {% if is_mgr %}
+      <div class="h-5 w-px bg-blue-500 mx-1"></div>
+      <a href="{{ base }}/admin/users" class="nav-link {% if '/admin/users' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="👤 المستخدمون" data-en="👤 Users">👤 المستخدمون</span>
+      </a>
+      <a href="{{ base }}/admin/attendance" class="nav-link {% if '/admin/attendance' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="📅 الحضور" data-en="📅 Attendance">📅 الحضور</span>
+      </a>
+      <a href="{{ base }}/sync" class="nav-link {% if '/sync' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="🔄 مزامنة" data-en="🔄 Sync">🔄 مزامنة</span>
+      </a>
+      <a href="{{ base }}/suppliers" class="nav-link {% if '/suppliers' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="🏭 الموردين" data-en="🏭 Suppliers">🏭 الموردين</span>
+      </a>
+      <a href="{{ base }}/cash-register" class="nav-link {% if '/cash-register' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="💰 الخزينة" data-en="💰 Cash Register">💰 الخزينة</span>
+      </a>
+      <a href="{{ base }}/settings" class="nav-link {% if '/settings' in request.path %}active{% endif %}">
+        <span class="lang-text" data-ar="⚙️ الإعدادات" data-en="⚙️ Settings">⚙️ الإعدادات</span>
+      </a>
+      {% endif %}
+
+      <div class="mr-auto flex items-center gap-2 flex-shrink-0">
+        <!-- Language Toggle -->
+        <button onclick="toggleLang()" id="langBtn"
+          class="text-xs bg-white/15 hover:bg-white/25 text-white rounded-xl px-3 py-1.5 font-bold transition-colors border border-white/20 flex items-center gap-1">
+          <span id="langBtnText">EN</span>
+        </button>
+
+        {% if current_user %}
+        <button onclick="openChangePw()"
+          class="text-xs bg-blue-600 hover:bg-blue-500 rounded-xl px-3 py-1.5 flex items-center gap-1.5 transition-colors"
+          title="تغيير كلمة المرور">
+          {% if is_mgr %}<span class="text-yellow-300">👑</span>{% else %}<span>👤</span>{% endif %}
+          <span class="font-semibold">{{ current_user.username }}</span>
+        </button>
+        <a href="{{ base }}/logout"
+          class="text-xs bg-red-500/20 hover:bg-red-500/40 text-red-100 rounded-xl px-3 py-1.5 font-medium transition-colors lang-text"
+          data-ar="خروج" data-en="Logout">خروج</a>
+        {% endif %}
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-screen-xl mx-auto px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+
+  {% block scripts %}{% endblock %}
+
+  <!-- Change Password Modal -->
+  {% if current_user %}
+  <div id="changePwModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4">
+    <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl">
+      <div class="p-5 border-b flex items-center justify-between">
+        <h3 class="font-bold text-gray-800">🔑 تغيير كلمة المرور</h3>
+        <button onclick="closeChangePw()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+      </div>
+      <div class="p-5 space-y-4">
+        <div>
+          <label class="text-xs font-semibold text-gray-600 block mb-1">كلمة المرور الحالية</label>
+          <input id="cpCurrent" type="password" autocomplete="current-password"
+            class="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-400"
+            placeholder="••••••••"/>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-gray-600 block mb-1">كلمة المرور الجديدة</label>
+          <input id="cpNew" type="password" autocomplete="new-password"
+            class="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-400"
+            placeholder="4 أحرف على الأقل"/>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-gray-600 block mb-1">تأكيد كلمة المرور الجديدة</label>
+          <input id="cpConfirm" type="password" autocomplete="new-password"
+            class="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-400"
+            placeholder="••••••••"/>
+        </div>
+        <div id="cpError" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-xl px-3 py-2 text-sm"></div>
+        <div id="cpSuccess" class="hidden bg-green-50 border border-green-200 text-green-700 rounded-xl px-3 py-2 text-sm">✅ تم تغيير كلمة المرور بنجاح</div>
+        <div class="flex gap-3">
+          <button onclick="submitChangePw()" id="cpSubmitBtn"
+            class="flex-1 bg-blue-700 hover:bg-blue-800 text-white font-semibold py-2.5 rounded-xl text-sm">
+            حفظ كلمة المرور
+          </button>
+          <button onclick="closeChangePw()"
+            class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">
+            إلغاء
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+  const _BASE_PATH = "{{ base }}";
+  function openChangePw() {
+    document.getElementById("cpCurrent").value = "";
+    document.getElementById("cpNew").value = "";
+    document.getElementById("cpConfirm").value = "";
+    document.getElementById("cpError").classList.add("hidden");
+    document.getElementById("cpSuccess").classList.add("hidden");
+    document.getElementById("cpSubmitBtn").disabled = false;
+    document.getElementById("changePwModal").classList.remove("hidden");
+    setTimeout(() => document.getElementById("cpCurrent").focus(), 100);
+  }
+  function closeChangePw() {
+    document.getElementById("changePwModal").classList.add("hidden");
+  }
+  async function submitChangePw() {
+    const current = document.getElementById("cpCurrent").value;
+    const newPw   = document.getElementById("cpNew").value;
+    const confirm = document.getElementById("cpConfirm").value;
+    const errEl   = document.getElementById("cpError");
+    const sucEl   = document.getElementById("cpSuccess");
+    errEl.classList.add("hidden");
+    sucEl.classList.add("hidden");
+    if (!current || !newPw || !confirm) { errEl.textContent = "جميع الحقول مطلوبة"; errEl.classList.remove("hidden"); return; }
+    if (newPw.length < 4) { errEl.textContent = "كلمة المرور الجديدة يجب أن تكون 4 أحرف على الأقل"; errEl.classList.remove("hidden"); return; }
+    if (newPw !== confirm) { errEl.textContent = "كلمتا المرور الجديدتان غير متطابقتين"; errEl.classList.remove("hidden"); return; }
+    const btn = document.getElementById("cpSubmitBtn");
+    btn.disabled = true; btn.textContent = "جارٍ الحفظ...";
+    try {
+      const res = await fetch(`${_BASE_PATH}/api/users/me/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password: current, new_password: newPw })
+      });
+      const data = await res.json();
+      btn.disabled = false; btn.textContent = "حفظ كلمة المرور";
+      if (res.ok) {
+        sucEl.classList.remove("hidden");
+        setTimeout(closeChangePw, 1800);
+      } else {
+        errEl.textContent = data.error || "حدث خطأ";
+        errEl.classList.remove("hidden");
+      }
+    } catch(e) {
+      btn.disabled = false; btn.textContent = "حفظ كلمة المرور";
+      errEl.textContent = "خطأ في الاتصال";
+      errEl.classList.remove("hidden");
+    }
+  }
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !document.getElementById("changePwModal").classList.contains("hidden")) closeChangePw();
+  });
+  </script>
+  {% endif %}
+
+  <!-- Global Language Toggle Script -->
+  <script>
+  (function() {
+    const LANG_KEY = 'pos_ui_lang';
+    let currentLang = localStorage.getItem(LANG_KEY) || 'ar';
+
+    function applyLang(lang) {
+      currentLang = lang;
+      localStorage.setItem(LANG_KEY, lang);
+      const isRtl = lang === 'ar';
+      const html = document.getElementById('htmlRoot');
+      html.setAttribute('lang', lang);
+      html.setAttribute('dir', isRtl ? 'rtl' : 'ltr');
+      document.querySelectorAll('[data-ar][data-en]').forEach(el => {
+        el.textContent = lang === 'ar' ? el.getAttribute('data-ar') : el.getAttribute('data-en');
+      });
+      document.querySelectorAll('[data-ar-placeholder][data-en-placeholder]').forEach(el => {
+        el.placeholder = lang === 'ar' ? el.getAttribute('data-ar-placeholder') : el.getAttribute('data-en-placeholder');
+      });
+      const btn = document.getElementById('langBtnText');
+      if (btn) btn.textContent = lang === 'ar' ? 'EN' : 'عر';
+    }
+
+    window.toggleLang = function() {
+      applyLang(currentLang === 'ar' ? 'en' : 'ar');
+    };
+
+    window.getCurrentLang = function() { return currentLang; };
+
+    document.addEventListener('DOMContentLoaded', () => applyLang(currentLang));
+  })();
+  </script>
+
+  <!-- Notifications Badge Script -->
+  <script>
+  (function() {
+    const BASE_PATH = "{{ base }}";
+    async function refreshBadge() {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/products/low-stock`);
+        const items = await res.json();
+        const badge = document.getElementById("lowStockBadge");
+        if (!badge) return;
+        if (items.length > 0) {
+          badge.textContent = items.length;
+          badge.classList.remove("hidden");
+        } else {
+          badge.classList.add("hidden");
+        }
+      } catch(e) {}
+    }
+    window.refreshBadge = refreshBadge;
+    document.addEventListener('DOMContentLoaded', refreshBadge);
+    setInterval(refreshBadge, 60000);
+  })();
+  </script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        regs.forEach(r => r.unregister());
+      });
+    }
+  </script>
+</body>
+</html>

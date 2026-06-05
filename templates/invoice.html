@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+{% set lang = st.get('invoice_lang','ar') if st else 'ar' %}
+{% set show_ar = lang in ('ar','both') %}
+{% set show_en = lang in ('en','both') %}
+{% set is_both = lang == 'both' %}
+<html lang="{{ 'ar' if show_ar else 'en' }}" dir="{{ 'rtl' if show_ar and not is_both else 'ltr' }}">
+<head>
+  <meta charset="UTF-8"/>
+  <title>{% if show_ar %}فاتورة #{{ sale.id }}{% else %}Invoice #{{ sale.id }}{% endif %}</title>
+  <style>
+    @page { size: 80mm auto; margin: 3mm 4mm; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 80mm;
+      font-family: 'Arial', 'Tahoma', 'Segoe UI', sans-serif;
+      font-size: 11px;
+      color: #000;
+      background: #fff;
+    }
+
+    @media screen {
+      body { max-width: 80mm; margin: 20px auto; border: 1px dashed #ccc; padding: 8px; }
+    }
+    @media print {
+      body { border: none; padding: 0; margin: 0; }
+    }
+
+    /* ── Utilities ── */
+    .center { text-align: center; }
+    .right  { text-align: right; }
+    .left   { text-align: left; }
+    .bold   { font-weight: bold; }
+    .divider { border: none; border-top: 1px dashed #000; margin: 5px 0; }
+    .row { display: flex; justify-content: space-between; align-items: baseline; margin: 2.5px 0; font-size: 11px; }
+
+    /* ── Header ── */
+    .store-name { font-size: 17px; font-weight: 900; letter-spacing: 0.5px; margin: 3px 0 1px; }
+    .store-sub  { font-size: 10px; margin: 1px 0; }
+
+    /* ── Invoice title ── */
+    .inv-title { font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; margin: 4px 0; }
+
+    /* ── Items table ── */
+    table { width: 100%; border-collapse: collapse; margin: 2px 0; }
+    thead th {
+      font-size: 10px;
+      font-weight: bold;
+      padding: 3px 2px;
+      border-bottom: 1px solid #000;
+      border-top: 1px solid #000;
+    }
+    tbody td {
+      font-size: 11px;
+      padding: 3px 2px;
+      vertical-align: top;
+      border-bottom: 1px dotted #bbb;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+
+    /* ── Totals ── */
+    .total-section { margin-top: 4px; }
+    .total-main {
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+      font-weight: 900;
+      padding: 4px 0;
+      border-top: 2px solid #000;
+      border-bottom: 2px solid #000;
+      margin: 4px 0;
+    }
+    .sub-row { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; }
+
+    /* ── Credit ── */
+    .credit-stamp {
+      border: 2px solid #000;
+      border-radius: 4px;
+      padding: 3px 8px;
+      font-size: 12px;
+      font-weight: bold;
+      text-align: center;
+      margin: 5px 0;
+      letter-spacing: 1px;
+    }
+    .balance-box {
+      border: 1px dashed #000;
+      border-radius: 3px;
+      padding: 4px 6px;
+      margin: 3px 0;
+    }
+    .balance-total {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: bold;
+      border-top: 1px dashed #000;
+      padding-top: 3px;
+      margin-top: 3px;
+    }
+
+    /* ── Footer ── */
+    .footer-text {
+      white-space: pre-line;
+      text-align: center;
+      font-size: 10px;
+      line-height: 1.6;
+      margin-top: 5px;
+    }
+
+    /* ── Logo ── */
+    .logo-box { margin: 0 auto 4px; text-align: center; }
+    .logo-box img { max-width: 60px; max-height: 60px; object-fit: contain; }
+  </style>
+</head>
+<body>
+
+  <!-- ══ Store Header ══ -->
+  <div class="center" style="margin-bottom:5px;">
+    {% if st and st.get('logo_url') %}
+    <div class="logo-box"><img src="{{ st.logo_url }}" alt="logo"/></div>
+    {% endif %}
+
+    {% if show_ar %}
+    <div class="store-name">{{ st.get('store_name') or 'اسم المحل' if st else 'اسم المحل' }}</div>
+    {% endif %}
+    {% if show_en %}
+    <div class="store-name" style="font-size:{{ '17' if not show_ar else '13' }}px;">
+      {{ st.get('store_name_en') or 'Store' if st else 'Store' }}
+    </div>
+    {% endif %}
+
+    {% if st and st.get('store_phone') %}
+    <div class="store-sub">{{ st.store_phone }}</div>
+    {% endif %}
+    {% if st and st.get('store_address') and show_ar %}
+    <div class="store-sub">{{ st.store_address }}</div>
+    {% endif %}
+    {% if st and st.get('store_address_en') and show_en %}
+    <div class="store-sub">{{ st.store_address_en }}</div>
+    {% endif %}
+  </div>
+
+  <hr class="divider"/>
+
+  <!-- ══ Invoice Title ══ -->
+  <div class="center inv-title">
+    {% if show_ar %}{{ (st.get('invoice_title') or 'فاتورة') if st else 'فاتورة' }}{% endif %}
+    {% if is_both %} / {% endif %}
+    {% if show_en %}{{ (st.get('invoice_title_en') or 'INVOICE') if st else 'INVOICE' }}{% endif %}
+  </div>
+
+  <hr class="divider"/>
+
+  <!-- ══ Sale Info ══ -->
+  {% if show_ar %}
+  <div class="row"><span>رقم الفاتورة</span><span class="bold">#{{ sale.id }}</span></div>
+  <div class="row"><span>التاريخ</span><span>{{ sale.date[:16] }}</span></div>
+  <div class="row">
+    <span>الدفع</span>
+    <span class="bold">
+      {% if sale.payment_method == 'cash' %}كاش
+      {% elif sale.payment_method == 'visa' %}فيزا
+      {% elif sale.payment_method == 'instapay' %}InstaPay
+      {% elif sale.payment_method == 'split' %}مقسّم
+      {% else %}آجل{% endif %}
+    </span>
+  </div>
+  {% if customer %}
+  <div class="row"><span>العميل</span><span class="bold" style="max-width:55%;text-align:left;">{{ customer.name }}</span></div>
+  {% if customer.phone %}<div class="row"><span>الهاتف</span><span>{{ customer.phone }}</span></div>{% endif %}
+  {% if customer.address %}<div class="row"><span>العنوان</span><span style="max-width:60%;text-align:left;word-break:break-word;">{{ customer.address }}</span></div>{% endif %}
+  {% endif %}
+  {% endif %}
+
+  {% if show_en %}
+  <div style="direction:ltr;{% if is_both %}border-top:1px dashed #aaa;margin-top:4px;padding-top:4px;{% endif %}">
+    <div class="row"><span>Invoice #</span><span class="bold">{{ sale.id }}</span></div>
+    <div class="row"><span>Date</span><span>{{ sale.date[:16] }}</span></div>
+    <div class="row">
+      <span>Payment</span>
+      <span class="bold">
+        {% if sale.payment_method == 'cash' %}Cash
+        {% elif sale.payment_method == 'visa' %}Visa
+        {% elif sale.payment_method == 'instapay' %}InstaPay
+        {% elif sale.payment_method == 'split' %}Split
+        {% else %}Credit{% endif %}
+      </span>
+    </div>
+    {% if customer %}
+    <div class="row"><span>Customer</span><span class="bold">{{ customer.name }}</span></div>
+    {% if customer.phone %}<div class="row"><span>Phone</span><span>{{ customer.phone }}</span></div>{% endif %}
+    {% if customer.address %}<div class="row"><span>Address</span><span style="max-width:60%;word-break:break-word;">{{ customer.address }}</span></div>{% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <hr class="divider"/>
+
+  <!-- ══ Items Table ══ -->
+  {% set currency_label    = st.get('currency','جنيه') if st else 'جنيه' %}
+  {% set currency_en_label = st.get('currency_en','EGP') if st else 'EGP' %}
+
+  {% if show_ar %}
+  <table>
+    <thead>
+      <tr>
+        <th class="right" style="width:48%;">المنتج</th>
+        <th class="center" style="width:8%;">ك</th>
+        <th class="left"   style="width:20%;">سعر</th>
+        <th class="left"   style="width:24%;">الإجمالي</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td class="right" style="word-break:break-word;line-height:1.4;">{{ item.product_name }}</td>
+        <td class="center">{{ item.quantity }}</td>
+        <td class="left">{{ "%.2f"|format(item.unit_price) }}</td>
+        <td class="left bold">{{ "%.2f"|format(item.unit_price * item.quantity) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if show_en %}
+  <table style="direction:ltr;">
+    <thead>
+      <tr>
+        <th class="left"   style="width:48%;">Item</th>
+        <th class="center" style="width:8%;">Qty</th>
+        <th class="left"   style="width:20%;">Price</th>
+        <th class="left"   style="width:24%;">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+      <tr>
+        <td class="left" style="word-break:break-word;line-height:1.4;">{{ item.product_name }}</td>
+        <td class="center">{{ item.quantity }}</td>
+        <td class="left">{{ "%.2f"|format(item.unit_price) }}</td>
+        <td class="left bold">{{ "%.2f"|format(item.unit_price * item.quantity) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <!-- ══ Totals ══ -->
+  <div class="total-section">
+    {% if show_ar %}
+    <div class="total-main">
+      <span>الإجمالي</span>
+      <span>{{ "%.2f"|format(sale.total_amount) }} {{ currency_label }}</span>
+    </div>
+    {% endif %}
+    {% if show_en %}
+    <div class="total-main" style="direction:ltr;">
+      <span>TOTAL</span>
+      <span>{{ "%.2f"|format(sale.total_amount) }} {{ currency_en_label }}</span>
+    </div>
+    {% endif %}
+
+    {% if sale.payment_method != 'credit' and sale.amount_received %}
+    {% if show_ar %}
+    <div class="sub-row"><span>مستلم</span><span>{{ "%.2f"|format(sale.amount_received) }} {{ currency_label }}</span></div>
+    {% if sale.change_due and sale.change_due > 0 %}
+    <div class="sub-row bold"><span>الباقي للعميل</span><span>{{ "%.2f"|format(sale.change_due) }} {{ currency_label }}</span></div>
+    {% endif %}
+    {% endif %}
+    {% if show_en %}
+    <div class="sub-row" style="direction:ltr;"><span>Received</span><span>{{ "%.2f"|format(sale.amount_received) }} {{ currency_en_label }}</span></div>
+    {% if sale.change_due and sale.change_due > 0 %}
+    <div class="sub-row bold" style="direction:ltr;"><span>Change</span><span>{{ "%.2f"|format(sale.change_due) }} {{ currency_en_label }}</span></div>
+    {% endif %}
+    {% endif %}
+    {% endif %}
+  </div>
+
+  <!-- ══ Credit Section ══ -->
+  {% if sale.payment_method == 'credit' %}
+  <div class="credit-stamp">
+    {% if show_ar %}★ آجـل ★{% endif %}
+    {% if is_both %} | {% endif %}
+    {% if show_en %}★ CREDIT ★{% endif %}
+  </div>
+  <div class="balance-box">
+    {% if previous_balance > 0 %}
+    {% if show_ar %}
+    <div class="row"><span>رصيد سابق:</span><span>{{ "%.2f"|format(previous_balance) }} {{ currency_label }}</span></div>
+    <div class="row"><span>هذا الطلب:</span><span>{{ "%.2f"|format(sale.total_amount) }} {{ currency_label }}</span></div>
+    {% endif %}
+    {% if show_en %}
+    <div class="row" style="direction:ltr;"><span>Previous:</span><span>{{ "%.2f"|format(previous_balance) }} {{ currency_en_label }}</span></div>
+    <div class="row" style="direction:ltr;"><span>This order:</span><span>{{ "%.2f"|format(sale.total_amount) }} {{ currency_en_label }}</span></div>
+    {% endif %}
+    {% endif %}
+    {% if show_ar %}
+    <div class="balance-total"><span>إجمالي المتبقي</span><span>{{ "%.2f"|format((previous_balance or 0) + sale.total_amount) }} {{ currency_label }}</span></div>
+    {% endif %}
+    {% if show_en %}
+    <div class="balance-total" style="direction:ltr;"><span>Total Due</span><span>{{ "%.2f"|format((previous_balance or 0) + sale.total_amount) }} {{ currency_en_label }}</span></div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <hr class="divider"/>
+
+  <!-- ══ Footer ══ -->
+  <div class="footer-text">
+    {% if show_ar %}{{ (st.get('invoice_footer') or 'شكراً لتعاملكم معنا') if st else 'شكراً لتعاملكم معنا' }}{% endif %}
+    {% if is_both %}<br/>{% endif %}
+    {% if show_en %}{{ (st.get('invoice_footer_en') or 'Thank you for your business') if st else 'Thank you for your business' }}{% endif %}
+  </div>
+
+  <!-- ══ WhatsApp button (screen only) ══ -->
+  {% if customer and customer.phone %}
+  <div style="margin-top:10px;text-align:center;" class="no-print">
+    <a id="waBtn" href="#" target="_blank"
+       style="display:inline-flex;align-items:center;gap:6px;background:#25d366;color:#fff;text-decoration:none;padding:7px 16px;border-radius:20px;font-size:12px;font-weight:bold;">
+      <svg width="14" height="14" fill="white" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.123 1.532 5.855L.054 23.5l5.819-1.527A11.938 11.938 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.012-1.375l-.36-.213-3.727.977.994-3.63-.235-.374A9.818 9.818 0 1112 21.818z"/></svg>
+      إرسال واتساب
+    </a>
+  </div>
+  <script>
+    (function(){
+      var phone = "{{ customer.phone }}".replace(/[^0-9]/g,"");
+      var intl  = phone.startsWith("0") ? "2" + phone : phone;
+      var store = "{{ st.get('store_name','المحل') if st else 'المحل' }}";
+      var items = [{% for it in items %}"{{ it.product_name }} ×{{ it.quantity|int }}"{% if not loop.last %},{% endif %}{% endfor %}];
+      var total = "{{ '%.2f'|format(sale.total_amount) }}";
+      var msg   = "🧾 فاتورة من " + store + "\n#{{ sale.id }} — {{ sale.date[:10] if sale.date else '' }}\n\n" +
+                  items.join("\n") + "\n\nالإجمالي: " + total + " جنيه\nشكراً لتعاملكم معنا 🙏";
+      document.getElementById("waBtn").href = "https://wa.me/" + intl + "?text=" + encodeURIComponent(msg);
+    })();
+  </script>
+  {% endif %}
+
+  <script>
+    window.onload = function() {
+      {% if st and st.get('auto_print') == '1' %}
+      setTimeout(() => window.print(), 300);
+      {% endif %}
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+{% block title %}الإعدادات{% endblock %}
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold text-gray-800" data-ar="⚙️ إعدادات النظام" data-en="⚙️ System Settings">⚙️ إعدادات النظام</h1>
+    <button onclick="saveSettings()" id="saveBtn"
+      class="bg-blue-700 text-white font-semibold px-6 py-2.5 rounded-xl hover:bg-blue-800 flex items-center gap-2">
+      <span data-ar="حفظ الإعدادات" data-en="Save Settings">حفظ الإعدادات</span>
+    </button>
+  </div>
+
+  <div id="toast" class="hidden fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-green-600 text-white px-6 py-3 rounded-2xl shadow-xl font-semibold text-sm"></div>
+
+  <!-- Store Info -->
+  <div class="bg-white rounded-2xl border shadow-sm p-6 space-y-4">
+    <h2 class="font-bold text-gray-700 text-base border-b pb-2" data-ar="🏪 معلومات المحل" data-en="🏪 Store Information">🏪 معلومات المحل</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="اسم المحل (عربي)" data-en="Store Name (Arabic)">اسم المحل (عربي)</label>
+        <input id="store_name" type="text" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="اسم المحل (إنجليزي)" data-en="Store Name (English)">اسم المحل (إنجليزي)</label>
+        <input id="store_name_en" type="text" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="رقم الهاتف" data-en="Phone Number">رقم الهاتف</label>
+        <input id="store_phone" type="text" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="العملة (عربي)" data-en="Currency (Arabic)">العملة (عربي)</label>
+        <input id="currency" type="text" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+      <div class="md:col-span-2">
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="العنوان (عربي)" data-en="Address (Arabic)">العنوان (عربي)</label>
+        <input id="store_address" type="text" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+      <div class="md:col-span-2">
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="العنوان (إنجليزي)" data-en="Address (English)">العنوان (إنجليزي)</label>
+        <input id="store_address_en" type="text" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+    </div>
+  </div>
+
+  <!-- Logo -->
+  <div class="bg-white rounded-2xl border shadow-sm p-6 space-y-4">
+    <h2 class="font-bold text-gray-700 text-base border-b pb-2" data-ar="🖼️ شعار المحل (اللوجو)" data-en="🖼️ Store Logo">🖼️ شعار المحل (اللوجو)</h2>
+    <div class="flex items-start gap-5 flex-wrap">
+      <div id="logoPreview" class="w-24 h-24 rounded-2xl border-2 border-dashed border-gray-300 flex items-center justify-center bg-gray-50 overflow-hidden flex-shrink-0">
+        <span class="text-gray-400 text-xs text-center px-2" data-ar="لا يوجد لوجو" data-en="No Logo">لا يوجد لوجو</span>
+      </div>
+      <div class="flex-1 space-y-3">
+        <div>
+          <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="رفع صورة اللوجو" data-en="Upload Logo Image">رفع صورة اللوجو</label>
+          <input id="logoFile" type="file" accept="image/*" onchange="uploadLogo()"
+            class="w-full text-sm border rounded-xl px-3 py-2 focus:outline-none file:mr-2 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+          <p class="text-xs text-gray-400 mt-1" data-ar="PNG أو JPG، يفضل خلفية شفافة" data-en="PNG or JPG, transparent background preferred">PNG أو JPG، يفضل خلفية شفافة</p>
+        </div>
+        <div id="uploadProgress" class="hidden">
+          <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div id="uploadBar" class="h-full bg-blue-600 rounded-full transition-all" style="width:0%"></div>
+          </div>
+        </div>
+        <button onclick="removeLogo()" class="text-xs text-red-500 hover:text-red-700 font-medium" data-ar="حذف اللوجو" data-en="Remove Logo">حذف اللوجو</button>
+      </div>
+    </div>
+    <input id="logo_url" type="hidden"/>
+  </div>
+
+  <!-- Invoice Settings -->
+  <div class="bg-white rounded-2xl border shadow-sm p-6 space-y-4">
+    <h2 class="font-bold text-gray-700 text-base border-b pb-2" data-ar="🧾 إعدادات الفاتورة" data-en="🧾 Invoice Settings">🧾 إعدادات الفاتورة</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="عنوان الفاتورة (عربي)" data-en="Invoice Title (Arabic)">عنوان الفاتورة (عربي)</label>
+        <input id="invoice_title" type="text" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="عنوان الفاتورة (إنجليزي)" data-en="Invoice Title (English)">عنوان الفاتورة (إنجليزي)</label>
+        <input id="invoice_title_en" type="text" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="العملة (إنجليزي)" data-en="Currency (English)">العملة (إنجليزي)</label>
+        <input id="currency_en" type="text" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="لغة طباعة الفاتورة" data-en="Invoice Print Language">لغة طباعة الفاتورة</label>
+        <select id="invoice_lang" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
+          <option value="ar">عربي فقط</option>
+          <option value="en">English Only</option>
+          <option value="both">عربي + English (ثنائي)</option>
+        </select>
+      </div>
+      <div class="md:col-span-2">
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="نص ذيل الفاتورة (عربي)" data-en="Invoice Footer (Arabic)">نص ذيل الفاتورة (عربي)</label>
+        <textarea id="invoice_footer" rows="3" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 resize-none"></textarea>
+        <p class="text-xs text-gray-400 mt-1">يظهر في أسفل كل فاتورة مطبوعة</p>
+      </div>
+      <div class="md:col-span-2">
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="نص ذيل الفاتورة (إنجليزي)" data-en="Invoice Footer (English)">نص ذيل الفاتورة (إنجليزي)</label>
+        <textarea id="invoice_footer_en" rows="3" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 resize-none"></textarea>
+      </div>
+    </div>
+    <div class="flex items-center gap-3 bg-gray-50 rounded-xl p-3">
+      <input type="checkbox" id="auto_print" class="w-4 h-4 rounded accent-blue-600"/>
+      <label for="auto_print" class="text-sm font-medium text-gray-700" data-ar="طباعة الفاتورة تلقائياً بعد كل بيع" data-en="Auto-print invoice after each sale">طباعة الفاتورة تلقائياً بعد كل بيع</label>
+    </div>
+  </div>
+
+  <!-- Backup / Restore -->
+  <div class="bg-white rounded-2xl border shadow-sm p-6 space-y-4">
+    <h2 class="font-bold text-gray-700 text-base border-b pb-2">💾 نسخة احتياطية واستعادة</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- Backup -->
+      <div class="bg-blue-50 rounded-2xl border border-blue-100 p-4 space-y-3">
+        <div>
+          <div class="font-semibold text-blue-800 text-sm">⬇️ تنزيل نسخة احتياطية</div>
+          <div class="text-xs text-blue-500 mt-0.5">تنزيل قاعدة البيانات كاملة (pos.db)</div>
+        </div>
+        <a href="{{ base }}/api/backup" download
+           class="block w-full text-center bg-blue-700 hover:bg-blue-800 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors">
+          ⬇️ تنزيل الـ Backup الآن
+        </a>
+      </div>
+      <!-- Restore -->
+      <div class="bg-orange-50 rounded-2xl border border-orange-200 p-4 space-y-3">
+        <div>
+          <div class="font-semibold text-orange-800 text-sm">⬆️ استعادة من نسخة احتياطية</div>
+          <div class="text-xs text-orange-500 mt-0.5">⚠️ سيحل ملف الـ Backup محل البيانات الحالية</div>
+        </div>
+        <div class="space-y-2">
+          <input type="file" id="restoreFile" accept=".db" class="w-full text-xs text-gray-600 border border-orange-200 rounded-xl px-3 py-2 bg-white"/>
+          <button onclick="doRestore()" class="w-full bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors">
+            ⬆️ استعادة
+          </button>
+        </div>
+        <div id="restoreMsg" class="hidden text-xs font-semibold text-center py-1 rounded-lg"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Invoice Preview -->
+  <div class="bg-white rounded-2xl border shadow-sm p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-bold text-gray-700 text-base" data-ar="👁️ معاينة الفاتورة" data-en="👁️ Invoice Preview">👁️ معاينة الفاتورة</h2>
+      <button onclick="refreshPreview()" class="text-xs text-blue-600 hover:underline font-medium" data-ar="تحديث المعاينة" data-en="Refresh Preview">تحديث المعاينة</button>
+    </div>
+    <div class="flex justify-center">
+      <iframe id="previewFrame" src="{{ base }}/invoice/1" style="width:90mm;height:200mm;border:1px dashed #ccc;border-radius:8px;"></iframe>
+    </div>
+    <p class="text-xs text-gray-400 text-center mt-2" data-ar="* المعاينة تعرض أحدث فاتورة في النظام" data-en="* Preview shows the latest invoice in the system">* المعاينة تعرض أحدث فاتورة في النظام</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const BASE = "{{ base }}";
+
+async function loadSettings() {
+  const res = await fetch(`${BASE}/api/settings`);
+  const s = await res.json();
+  const fields = ["store_name","store_name_en","store_phone","store_address","store_address_en",
+    "invoice_title","invoice_title_en","invoice_footer","invoice_footer_en",
+    "currency","currency_en","logo_url"];
+  fields.forEach(k => { const el = document.getElementById(k); if(el) el.value = s[k]||""; });
+  document.getElementById("invoice_lang").value = s.invoice_lang || "ar";
+  document.getElementById("auto_print").checked = s.auto_print === "1";
+  updateLogoPreview(s.logo_url || "");
+}
+
+function updateLogoPreview(url) {
+  const box = document.getElementById("logoPreview");
+  document.getElementById("logo_url").value = url;
+  if (url) {
+    box.innerHTML = `<img src="${url}" class="w-full h-full object-contain p-1"/>`;
+  } else {
+    box.innerHTML = `<span class="text-gray-400 text-xs text-center px-2">لا يوجد لوجو</span>`;
+  }
+}
+
+async function uploadLogo() {
+  const file = document.getElementById("logoFile").files[0];
+  if (!file) return;
+  const prog = document.getElementById("uploadProgress");
+  const bar = document.getElementById("uploadBar");
+  prog.classList.remove("hidden");
+  bar.style.width = "30%";
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(`${BASE}/api/upload-image`, { method: "POST", body: fd });
+  bar.style.width = "100%";
+  const data = await res.json();
+  setTimeout(() => prog.classList.add("hidden"), 600);
+  if (res.ok && data.url) {
+    updateLogoPreview(data.url);
+    showToast("✅ تم رفع اللوجو بنجاح");
+  } else {
+    showToast("❌ فشل رفع الصورة", true);
+  }
+}
+
+function removeLogo() {
+  document.getElementById("logoFile").value = "";
+  updateLogoPreview("");
+}
+
+async function saveSettings() {
+  const btn = document.getElementById("saveBtn");
+  btn.disabled = true;
+  const data = {};
+  ["store_name","store_name_en","store_phone","store_address","store_address_en",
+   "invoice_title","invoice_title_en","invoice_footer","invoice_footer_en",
+   "currency","currency_en"].forEach(k => {
+    const el = document.getElementById(k);
+    if(el) data[k] = el.value.trim();
+  });
+  data.logo_url = document.getElementById("logo_url").value;
+  data.invoice_lang = document.getElementById("invoice_lang").value;
+  data.auto_print = document.getElementById("auto_print").checked ? "1" : "0";
+  const res = await fetch(`${BASE}/api/settings`, {
+    method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(data)
+  });
+  btn.disabled = false;
+  if (res.ok) {
+    showToast("✅ تم حفظ الإعدادات بنجاح");
+    refreshPreview();
+  } else {
+    showToast("❌ حدث خطأ أثناء الحفظ", true);
+  }
+}
+
+function refreshPreview() {
+  const frame = document.getElementById("previewFrame");
+  frame.src = frame.src.split("?")[0] + "?t=" + Date.now();
+}
+
+function showToast(msg, isErr=false) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = `fixed top-4 left-1/2 -translate-x-1/2 z-50 text-white px-6 py-3 rounded-2xl shadow-xl font-semibold text-sm ${isErr?'bg-red-600':'bg-green-600'}`;
+  t.classList.remove("hidden");
+  setTimeout(() => t.classList.add("hidden"), 3000);
+}
+
+loadSettings();
+
+async function doRestore() {
+  const file = document.getElementById("restoreFile").files[0];
+  if (!file) { alert("اختر ملف .db أولاً"); return; }
+  if (!confirm("⚠️ هذا سيحل محل كل البيانات الحالية. متأكد؟")) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  const msgEl = document.getElementById("restoreMsg");
+  const res = await fetch(`${BASE}/api/restore`, { method: "POST", body: fd });
+  const data = await res.json();
+  msgEl.classList.remove("hidden");
+  if (res.ok) {
+    msgEl.textContent = "✅ " + data.message;
+    msgEl.className = "text-xs font-semibold text-center py-1 rounded-lg bg-green-100 text-green-700";
+    setTimeout(() => location.reload(), 1500);
+  } else {
+    msgEl.textContent = "❌ " + (data.error || "حدث خطأ");
+    msgEl.className = "text-xs font-semibold text-center py-1 rounded-lg bg-red-100 text-red-700";
+  }
+}
+</script>
+{% endblock %}

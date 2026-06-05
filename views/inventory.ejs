@@ -1,0 +1,889 @@
+<%- include('partials/header', Object.assign({pageTitle: 'إدارة المخزون'}, locals)) %>
+<div class="space-y-6">
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold text-gray-800" data-ar="📦 إدارة المخزون" data-en="📦 Inventory">📦 إدارة المخزون</h1>
+    <button onclick="openModal()" class="bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-blue-800 shadow" data-ar="+ إضافة منتج" data-en="+ Add Product">+ إضافة منتج</button>
+  </div>
+
+  <!-- Financial Summary (Manager Only) -->
+  <div id="financialCard" data-is-mgr="<%= isMgr ? 'true' : 'false' %>" style="<%= !isMgr ? 'display:none' : '' %>" class="bg-gradient-to-l from-blue-700 to-blue-900 text-white rounded-2xl shadow p-4">
+    <div class="text-xs font-bold text-blue-200 mb-3">📊 الملخص المالي للمخزون</div>
+    <div class="grid grid-cols-3 gap-3 text-center">
+      <div class="bg-white/10 rounded-xl p-3">
+        <div id="fin-cost" class="text-xl font-black">—</div>
+        <div class="text-xs text-blue-200 mt-1">💰 رأس المال المستثمر</div>
+      </div>
+      <div class="bg-white/10 rounded-xl p-3">
+        <div id="fin-revenue" class="text-xl font-black text-green-300">—</div>
+        <div class="text-xs text-blue-200 mt-1">📈 البيع المحتمل</div>
+      </div>
+      <div class="bg-white/10 rounded-xl p-3">
+        <div id="fin-profit" class="text-xl font-black text-yellow-300">—</div>
+        <div class="text-xs text-blue-200 mt-1">💹 الربح الصافي المحتمل</div>
+      </div>
+    </div>
+    <div id="fin-zero-note" style="display:none" class="text-center text-xs text-blue-300 mt-3">
+      ⚠️ الأرقام صفر لأن الكميات لم تُضاف بعد — عدّل الكميات من المخزون لرؤية الأرقام الحقيقية
+    </div>
+  </div>
+
+  <!-- Stats Bar -->
+  <div class="grid grid-cols-3 gap-4">
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center">
+      <div id="stat-total" class="text-2xl font-black text-blue-700">—</div>
+      <div class="text-xs text-gray-500 mt-1">إجمالي الأصناف</div>
+    </div>
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center cursor-pointer" onclick="filterByMinStock()">
+      <div id="stat-low" class="text-2xl font-black text-orange-500">—</div>
+      <div class="text-xs text-gray-500 mt-1">⚠️ بلغ الحد الأدنى</div>
+    </div>
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center">
+      <div id="stat-out" class="text-2xl font-black text-red-600">—</div>
+      <div class="text-xs text-gray-500 mt-1">نفذ من المخزون</div>
+    </div>
+  </div>
+
+  <!-- Low-stock banner -->
+  <div id="lowStockBanner" class="hidden bg-red-50 border border-red-200 rounded-2xl px-4 py-3 flex items-center gap-3">
+    <span class="text-red-500 text-xl">⚠️</span>
+    <div>
+      <span id="lowStockBannerText" class="font-bold text-red-700"></span>
+      <span class="text-xs text-red-500 mr-1"> — اضغط على البطاقة البرتقالية لعرضها</span>
+    </div>
+    <button onclick="clearCategoryFilter()" class="mr-auto text-xs text-red-400 hover:text-red-600 underline">إلغاء الفلتر</button>
+  </div>
+
+  <!-- Search + Category Filter -->
+  <div class="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
+    <input id="searchBox" type="text"
+      data-ar-placeholder="ابحث بالاسم أو الباركود..." data-en-placeholder="Search by name or barcode..."
+      placeholder="ابحث بالاسم أو الباركود..."
+      oninput="applyFilters()"
+      class="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+    <div id="categoryFilters" class="flex flex-wrap gap-2 hidden">
+      <button onclick="setCategoryFilter(null)"
+        id="cat-all"
+        class="text-xs px-3 py-1.5 rounded-full border font-medium bg-blue-700 text-white border-blue-700">
+        الكل
+      </button>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b">
+        <tr class="text-right text-gray-600 font-semibold">
+          <th class="px-4 py-3">الصورة</th>
+          <th class="px-4 py-3">المنتج</th>
+          <th class="px-4 py-3">الفئة</th>
+          <th class="px-4 py-3">الباركود</th>
+          <th class="px-4 py-3">الكمية</th>
+          <th class="px-4 py-3">الحد الأدنى</th>
+          <th class="px-4 py-3">سعر الشراء</th>
+          <th class="px-4 py-3">سعر البيع</th>
+          <th class="px-4 py-3">الصلاحية</th>
+          <th class="px-4 py-3">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="productTable" class="divide-y"></tbody>
+    </table>
+    <div id="noProducts" class="hidden text-center text-gray-400 py-12" data-ar="لا توجد منتجات" data-en="No products found">لا توجد منتجات</div>
+  </div>
+</div>
+
+<!-- Add/Edit Modal -->
+<div id="modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
+    <div class="p-5 border-b flex items-center justify-between sticky top-0 bg-white z-10">
+      <h3 id="modalTitle" class="font-bold text-gray-800 text-lg">إضافة منتج</h3>
+      <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+    </div>
+    <form id="productForm" onsubmit="saveProduct(event)" class="p-5 space-y-4">
+      <input type="hidden" id="editId"/>
+      <input type="hidden" id="f-image-url"/>
+
+      <!-- Product Image -->
+      <div>
+        <label class="text-xs font-medium text-gray-600 block mb-1" data-ar="صورة المنتج" data-en="Product Image">صورة المنتج</label>
+        <div class="flex items-center gap-3">
+          <div id="imagePreview" class="w-20 h-20 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center bg-gray-50 overflow-hidden flex-shrink-0">
+            <span id="imagePlaceholder" class="text-2xl">📷</span>
+            <img id="imagePreviewImg" src="" alt="" class="hidden w-full h-full object-cover"/>
+          </div>
+          <div class="flex-1">
+            <input type="file" id="f-image-file" accept="image/*" onchange="handleImageSelect(this)"
+              class="hidden"/>
+            <button type="button" onclick="document.getElementById('f-image-file').click()"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 text-right">
+              📁 اختر صورة
+            </button>
+            <button type="button" onclick="clearImage()"
+              class="w-full mt-1 border border-red-200 rounded-xl px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 text-right">
+              ✕ إزالة الصورة
+            </button>
+            <div id="uploadProgress" class="hidden mt-1 text-xs text-blue-600">جاري الرفع...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div class="col-span-2">
+          <label class="text-xs font-medium text-gray-600" data-ar="اسم المنتج *" data-en="Product Name *">اسم المنتج *</label>
+          <input id="f-name" required class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            data-ar-placeholder="اسم المنتج" data-en-placeholder="Product name" placeholder="اسم المنتج"/>
+        </div>
+
+        <!-- Barcode with generate button -->
+        <div class="col-span-2">
+          <label class="text-xs font-medium text-gray-600" data-ar="الباركود (5 أرقام)" data-en="Barcode (5 digits)">الباركود (5 أرقام)</label>
+          <div class="flex gap-2 mt-1">
+            <input id="f-barcode" class="flex-1 border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="اختياري أو توليد تلقائي"/>
+            <button type="button" onclick="generateBarcode()"
+              class="bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap flex items-center gap-1">
+              🎲 توليد
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label class="text-xs font-medium text-gray-600" data-ar="الكمية" data-en="Quantity">الكمية</label>
+          <input id="f-qty" type="number" min="0" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="0"/>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-600" data-ar="تاريخ الصلاحية" data-en="Expiry Date">تاريخ الصلاحية</label>
+          <input id="f-expiry" type="date" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-600" data-ar="سعر الشراء (جنيه)" data-en="Cost Price (EGP)">سعر الشراء (جنيه)</label>
+          <input id="f-purchase" type="number" step="0.01" min="0" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="0.00"/>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-600">سعر البيع (جنيه)</label>
+          <input id="f-sale" type="number" step="0.01" min="0" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="0.00"/>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-600">الحد الأدنى للمخزون</label>
+          <input id="f-min-stock" type="number" min="0" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="0"/>
+        </div>
+        <div class="col-span-2">
+          <label class="text-xs font-medium text-gray-600">الفئة</label>
+          <input id="f-category" autocomplete="off" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="مثال: أدوات طبية"/>
+        </div>
+        <div class="col-span-2">
+          <label class="text-xs font-medium text-gray-600">الوصف</label>
+          <textarea id="f-description" rows="3"
+            class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200 resize-none"
+            placeholder="وصف المنتج (اختياري)..."></textarea>
+        </div>
+
+        <!-- Section Selector -->
+        <div class="col-span-2">
+          <label class="text-xs font-medium text-gray-600 block mb-2">القسم على موقع DenTrust</label>
+          <div class="flex gap-3">
+            <label class="flex-1 flex items-center gap-2.5 border-2 rounded-xl px-4 py-3 cursor-pointer transition-colors section-opt" id="sec-dental-lbl">
+              <input type="radio" name="f-section" id="sec-dental" value="dental" checked onchange="onSectionChange()" class="w-4 h-4 accent-blue-700 flex-shrink-0"/>
+              <div>
+                <div class="text-sm font-semibold text-gray-800">🦷 منتج أسنان</div>
+                <div class="text-xs text-gray-500">يظهر في قسم Products</div>
+              </div>
+            </label>
+            <label class="flex-1 flex items-center gap-2.5 border-2 rounded-xl px-4 py-3 cursor-pointer transition-colors section-opt" id="sec-medical-lbl">
+              <input type="radio" name="f-section" id="sec-medical" value="medical" onchange="onSectionChange()" class="w-4 h-4 accent-teal-600 flex-shrink-0"/>
+              <div>
+                <div class="text-sm font-semibold text-gray-800">🩺 ملابس طبية</div>
+                <div class="text-xs text-gray-500">يظهر في قسم Medical Wear</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Variants Toggle -->
+        <div class="col-span-2">
+          <label class="flex items-center gap-3 bg-teal-50 border border-teal-200 rounded-xl px-4 py-3 cursor-pointer">
+            <input type="checkbox" id="f-use-variants" onchange="toggleVariants(this.checked)" class="w-4 h-4 accent-teal-600 rounded flex-shrink-0"/>
+            <div>
+              <div class="text-sm font-semibold text-teal-800">📦 تقسيم الكميات بالبوكسات</div>
+              <div class="text-xs text-teal-600 mt-0.5">حدد العنوان + عدد البوكسات + الكمية في كل بوكس</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Variants Section -->
+      <div id="variantsSection" class="hidden space-y-4 border border-teal-200 bg-teal-50/40 rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-xs font-semibold text-gray-600">أصناف البوكسات</label>
+          <span class="text-xs text-gray-500">الإجمالي: <span id="totalQtyPreview" class="font-bold text-teal-700">0</span> قطعة</span>
+        </div>
+        <!-- Add row -->
+        <div class="grid grid-cols-7 gap-2">
+          <input type="text" id="f-item-label" placeholder="العنوان (مثال: بوكس كبير)"
+            autocomplete="off"
+            class="col-span-3 border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();addItem();}"/>
+          <input type="number" id="f-item-boxes" min="1" placeholder="بوكسات"
+            class="col-span-2 border rounded-xl px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-teal-200"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();addItem();}"/>
+          <input type="number" id="f-item-qpb" min="1" placeholder="قطعة/بوكس"
+            class="col-span-2 border rounded-xl px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-teal-200"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();addItem();}"/>
+        </div>
+        <button type="button" onclick="addItem()" class="w-full bg-teal-700 text-white px-3 py-2 rounded-xl text-sm font-medium hover:bg-teal-800">+ إضافة صنف</button>
+        <div id="itemsTable" class="space-y-2 max-h-52 overflow-y-auto"></div>
+        <div id="noItemsMsg" class="text-xs text-gray-400 text-center py-2">أضف صنفاً لتظهر هنا</div>
+      </div>
+
+      <!-- Checkbox Options Builder -->
+      <div class="border border-gray-200 rounded-2xl p-4 space-y-3">
+        <label class="text-xs font-semibold text-gray-600 block">خيارات المنتج (Custom Options)</label>
+        <div id="cbCategoriesContainer" class="space-y-2"></div>
+        <!-- Add category -->
+        <div id="cbAddCatRow" class="flex gap-2">
+          <input type="text" id="cbNewCatInput" placeholder="اسم المجموعة (مثال: الحجم، اللون...)"
+            class="flex-1 border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();cbAddCategory();}"/>
+          <button type="button" onclick="cbAddCategory()"
+            class="bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-blue-800">+ مجموعة</button>
+        </div>
+      </div>
+
+      <div id="syncNote" class="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2 hidden">
+        🔄 سيتم إضافة هذا المنتج تلقائياً في موقع DenTrust
+      </div>
+
+      <div id="modalError" class="hidden text-red-500 text-sm bg-red-50 rounded-lg px-3 py-2"></div>
+      <div class="flex gap-3 pt-2">
+        <button type="submit" id="submitBtn" class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800" data-ar="حفظ" data-en="Save">حفظ</button>
+        <button type="button" onclick="closeModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl hover:bg-gray-200" data-ar="إلغاء" data-en="Cancel">إلغاء</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+const BASE = "<%- base %>";
+let allProducts = [];
+const productMap = {};
+
+async function loadProducts() {
+  const res = await fetch(`${BASE}/api/products`);
+  allProducts = await res.json();
+  allProducts.forEach(p => productMap[p.id] = p);
+  document.getElementById("stat-total").textContent = allProducts.length;
+  const lowStockCount = allProducts.filter(p => (p.min_stock||0) > 0 && p.quantity <= (p.min_stock||0)).length;
+  document.getElementById("stat-low").textContent = lowStockCount;
+  document.getElementById("stat-out").textContent = allProducts.filter(p => p.quantity <= 0).length;
+
+  // Low-stock banner
+  const banner = document.getElementById("lowStockBanner");
+  const bannerText = document.getElementById("lowStockBannerText");
+  if (lowStockCount > 0) {
+    bannerText.textContent = `${lowStockCount} منتج وصل للحد الأدنى`;
+    banner.classList.remove("hidden");
+  } else {
+    banner.classList.add("hidden");
+  }
+
+  // Build category filter buttons
+  const categories = [...new Set(allProducts.map(p => p.category).filter(Boolean))].sort();
+  const filterDiv = document.getElementById("categoryFilters");
+  const datalist = document.getElementById("categoryList");
+  if (categories.length > 0) {
+    filterDiv.classList.remove("hidden");
+    filterDiv.innerHTML = `<button data-cat="all" onclick="setCategoryFilter(null)"
+      class="cat-filter-btn text-xs px-3 py-1.5 rounded-full border font-medium transition-colors bg-blue-700 text-white border-blue-700">الكل</button>` +
+      categories.map(c => `<button data-cat="${c}" onclick="setCategoryFilter('${c}')"
+        class="cat-filter-btn text-xs px-3 py-1.5 rounded-full border font-medium transition-colors bg-white text-gray-600 border-gray-200 hover:border-blue-300">${c}</button>`).join("");
+  } else {
+    filterDiv.classList.add("hidden");
+  }
+
+  renderTable(allProducts);
+
+  // Financial summary (manager only)
+  const finCard = document.getElementById("financialCard");
+  if (finCard && finCard.dataset.isMgr === "true") {
+    const fmt = n => Number(n).toLocaleString("ar-EG", {minimumFractionDigits: 0, maximumFractionDigits: 0}) + " ج";
+    const totalCost    = allProducts.reduce((s, p) => s + (parseFloat(p.purchase_price)||0) * (parseInt(p.quantity)||0), 0);
+    const totalRevenue = allProducts.reduce((s, p) => s + (parseFloat(p.sale_price)||0)     * (parseInt(p.quantity)||0), 0);
+    const totalProfit  = totalRevenue - totalCost;
+    document.getElementById("fin-cost").textContent    = fmt(totalCost);
+    document.getElementById("fin-revenue").textContent = fmt(totalRevenue);
+    document.getElementById("fin-profit").textContent  = (totalProfit >= 0 ? "+" : "") + fmt(Math.abs(totalProfit));
+    finCard.style.display = "block";
+    // Show note if all zeros (quantities not set yet)
+    if (totalCost === 0 && totalRevenue === 0) {
+      document.getElementById("fin-zero-note").style.display = "block";
+    }
+  }
+}
+
+let activeCategoryFilter = null;
+let showMinStockOnly = false;
+
+function renderTable(products) {
+  const tbody = document.getElementById("productTable");
+  const noMsg = document.getElementById("noProducts");
+  if (products.length === 0) { tbody.innerHTML = ""; noMsg.classList.remove("hidden"); return; }
+  noMsg.classList.add("hidden");
+  tbody.innerHTML = products.map(p => {
+    const today = new Date().toISOString().split("T")[0];
+    const expStyle = p.expiry_date && p.expiry_date < today ? "text-red-600 font-semibold" : p.expiry_date ? "text-gray-700" : "text-gray-400";
+    const minStock = parseInt(p.min_stock) || 0;
+    const isLow = minStock > 0 && p.quantity <= minStock;
+    const isOut = p.quantity <= 0;
+    const qtyStyle = isOut ? "text-red-600 font-black" : isLow ? "text-orange-500 font-bold" : "text-gray-700";
+    const rowBg = isOut ? "bg-red-50" : isLow ? "bg-orange-50" : "";
+    const imgCell = p.image_url
+      ? `<img src="${p.image_url}" alt="" class="w-10 h-10 rounded-lg object-cover border"/>`
+      : `<div class="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-lg">📦</div>`;
+    const minStockCell = minStock > 0
+      ? `<span class="text-xs font-semibold ${isLow ? 'text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full' : 'text-gray-500'}">${minStock}</span>`
+      : `<span class="text-gray-300">—</span>`;
+    return `<tr class="hover:bg-gray-50 ${rowBg}">
+      <td class="px-4 py-3">${imgCell}</td>
+      <td class="px-4 py-3 font-medium text-gray-800">${p.product_name}${p.dentrust_id ? ' <span class="text-xs text-blue-400" title="مرتبط بـ DenTrust">🔗</span>' : ''}${isLow && !isOut ? ' <span class="text-xs text-orange-500">⚠️</span>' : ''}${isOut ? ' <span class="text-xs text-red-500">🚫</span>' : ''}</td>
+      <td class="px-4 py-3"><span class="text-xs ${p.category ? 'bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium' : 'text-gray-300'}">${p.category || '—'}</span></td>
+      <td class="px-4 py-3 font-mono text-gray-500 text-xs">${p.barcode || '—'}</td>
+      <td class="px-4 py-3">${variantQtyCell(p, qtyStyle)}</td>
+      <td class="px-4 py-3">${minStockCell}</td>
+      <td class="px-4 py-3 text-gray-600">${parseFloat(p.purchase_price||0).toFixed(2)}</td>
+      <td class="px-4 py-3 text-blue-700 font-semibold">${parseFloat(p.sale_price||0).toFixed(2)}</td>
+      <td class="px-4 py-3 text-sm ${expStyle}">${p.expiry_date || '—'}</td>
+      <td class="px-4 py-3">
+        <div class="flex gap-2">
+          <button onclick="editProduct(${p.id})" class="text-xs bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg hover:bg-blue-100 font-medium">تعديل</button>
+          <button onclick="deleteProduct(${p.id})" class="text-xs bg-red-50 text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-100 font-medium">حذف</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+function applyFilters() {
+  const q = (document.getElementById("searchBox").value || "").toLowerCase();
+  let filtered = allProducts;
+  if (activeCategoryFilter) {
+    filtered = filtered.filter(p => p.category === activeCategoryFilter);
+  }
+  if (showMinStockOnly) {
+    filtered = filtered.filter(p => (p.min_stock || 0) > 0 && p.quantity <= (p.min_stock || 0));
+  }
+  if (q) {
+    filtered = filtered.filter(p => p.product_name.toLowerCase().includes(q) || (p.barcode||"").includes(q));
+  }
+  renderTable(filtered);
+}
+
+function setCategoryFilter(cat) {
+  activeCategoryFilter = cat;
+  showMinStockOnly = false;
+  document.getElementById("lowStockBanner").classList.add("hidden");
+  document.querySelectorAll(".cat-filter-btn").forEach(btn => {
+    const active = btn.dataset.cat === (cat || "all");
+    btn.className = `cat-filter-btn text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${active ? 'bg-blue-700 text-white border-blue-700' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'}`;
+  });
+  applyFilters();
+}
+
+function clearCategoryFilter() {
+  setCategoryFilter(null);
+  showMinStockOnly = false;
+}
+
+function filterByMinStock() {
+  activeCategoryFilter = null;
+  showMinStockOnly = true;
+  document.querySelectorAll(".cat-filter-btn").forEach(btn => {
+    btn.className = `cat-filter-btn text-xs px-3 py-1.5 rounded-full border font-medium transition-colors bg-white text-gray-600 border-gray-200 hover:border-blue-300`;
+  });
+  applyFilters();
+}
+
+async function generateBarcode() {
+  const res = await fetch(`${BASE}/api/products/generate-barcode`);
+  const data = await res.json();
+  document.getElementById("f-barcode").value = data.barcode;
+}
+
+function setImagePreview(url) {
+  const img = document.getElementById("imagePreviewImg");
+  const placeholder = document.getElementById("imagePlaceholder");
+  if (url) {
+    img.src = url;
+    img.classList.remove("hidden");
+    placeholder.classList.add("hidden");
+  } else {
+    img.src = "";
+    img.classList.add("hidden");
+    placeholder.classList.remove("hidden");
+  }
+  document.getElementById("f-image-url").value = url || "";
+}
+
+function clearImage() {
+  document.getElementById("f-image-file").value = "";
+  setImagePreview("");
+}
+
+async function handleImageSelect(input) {
+  const file = input.files[0];
+  if (!file) return;
+  // Show local preview immediately
+  const reader = new FileReader();
+  reader.onload = e => setImagePreview(e.target.result);
+  reader.readAsDataURL(file);
+  // Upload to server
+  document.getElementById("uploadProgress").classList.remove("hidden");
+  document.getElementById("submitBtn").disabled = true;
+  const formData = new FormData();
+  formData.append("file", file);
+  try {
+    const res = await fetch(`${BASE}/api/upload-image`, { method: "POST", body: formData });
+    const data = await res.json();
+    if (data.ok) {
+      document.getElementById("f-image-url").value = data.url;
+    } else {
+      alert("فشل رفع الصورة: " + (data.error || "خطأ غير معروف"));
+      clearImage();
+    }
+  } catch(e) {
+    alert("فشل رفع الصورة");
+    clearImage();
+  } finally {
+    document.getElementById("uploadProgress").classList.add("hidden");
+    document.getElementById("submitBtn").disabled = false;
+  }
+}
+
+function onSectionChange() {
+  const val = document.querySelector('input[name="f-section"]:checked')?.value || 'dental';
+  document.getElementById("sec-dental-lbl").className =
+    `flex-1 flex items-center gap-2.5 border-2 rounded-xl px-4 py-3 cursor-pointer transition-colors section-opt ${val==='dental' ? 'border-blue-700 bg-blue-50' : 'border-gray-200'}`;
+  document.getElementById("sec-medical-lbl").className =
+    `flex-1 flex items-center gap-2.5 border-2 rounded-xl px-4 py-3 cursor-pointer transition-colors section-opt ${val==='medical' ? 'border-teal-600 bg-teal-50' : 'border-gray-200'}`;
+}
+
+function setSection(val) {
+  const el = document.getElementById(val === 'medical' ? 'sec-medical' : 'sec-dental');
+  if (el) { el.checked = true; onSectionChange(); }
+}
+
+function openModal() {
+  document.getElementById("modalTitle").textContent = "إضافة منتج جديد";
+  document.getElementById("editId").value = "";
+  document.getElementById("productForm").reset();
+  document.getElementById("f-image-url").value = "";
+  document.getElementById("modalError").classList.add("hidden");
+  setImagePreview("");
+  resetVariants();
+  cbReset();
+  setSection('dental');
+  generateBarcode();
+  document.getElementById("syncNote").classList.remove("hidden");
+  document.getElementById("modal").classList.remove("hidden");
+}
+
+function editProduct(id) {
+  const p = productMap[id];
+  if (!p) { alert("لم يتم العثور على المنتج، يرجى تحديث الصفحة والمحاولة مجدداً"); return; }
+  document.getElementById("modalTitle").textContent = "تعديل المنتج";
+  document.getElementById("editId").value = p.id;
+  document.getElementById("f-name").value = p.product_name;
+  document.getElementById("f-barcode").value = p.barcode || "";
+  document.getElementById("f-qty").value = p.quantity;
+  document.getElementById("f-purchase").value = p.purchase_price;
+  document.getElementById("f-sale").value = p.sale_price;
+  document.getElementById("f-expiry").value = p.expiry_date || "";
+  document.getElementById("f-category").value = p.category || "";
+  document.getElementById("f-min-stock").value = p.min_stock || 0;
+  document.getElementById("f-description").value = p.description || "";
+  document.getElementById("modalError").classList.add("hidden");
+  setImagePreview(p.image_url || "");
+  loadVariants(p);
+  setSection(p.section || 'dental');
+  cbLoad(p.checkbox_values);
+  document.getElementById("syncNote").classList.toggle("hidden", !p.dentrust_id);
+  if (p.dentrust_id) {
+    document.getElementById("syncNote").textContent = "🔗 هذا المنتج مرتبط بـ DenTrust — التعديل سيتم تلقائياً";
+  }
+  document.getElementById("modal").classList.remove("hidden");
+}
+
+function closeModal() { document.getElementById("modal").classList.add("hidden"); }
+
+async function saveProduct(e) {
+  e.preventDefault();
+  const btn = document.getElementById("submitBtn");
+  btn.disabled = true;
+  const errDiv = document.getElementById("modalError");
+  errDiv.classList.add("hidden");
+  try {
+    const id = document.getElementById("editId").value;
+    const useVariants = document.getElementById("f-use-variants").checked;
+    const body = {
+      product_name: document.getElementById("f-name").value,
+      barcode: document.getElementById("f-barcode").value || null,
+      quantity: parseInt(document.getElementById("f-qty").value) || 0,
+      purchase_price: parseFloat(document.getElementById("f-purchase").value) || 0,
+      sale_price: parseFloat(document.getElementById("f-sale").value) || 0,
+      expiry_date: document.getElementById("f-expiry").value || null,
+      image_url: document.getElementById("f-image-url").value || null,
+      category: document.getElementById("f-category").value.trim() || null,
+      min_stock: parseInt(document.getElementById("f-min-stock").value) || 0,
+      description: document.getElementById("f-description").value.trim() || null,
+      variants: useVariants ? { items: variantItems } : null,
+      section: document.querySelector('input[name="f-section"]:checked')?.value || 'dental',
+      checkbox_values: cbGetValues(),
+    };
+    const url = id ? `${BASE}/api/products/${id}` : `${BASE}/api/products`;
+    const method = id ? "PUT" : "POST";
+    const res = await fetch(url, { method, headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) {
+      errDiv.textContent = data.error || "حدث خطأ";
+      errDiv.classList.remove("hidden");
+      return;
+    }
+    closeModal();
+    await loadProducts();
+    if (data.sync_warning) alert("⚠️ " + data.sync_warning);
+  } catch (err) {
+    errDiv.textContent = "حدث خطأ في الاتصال، حاول مجدداً";
+    errDiv.classList.remove("hidden");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteProduct(id) {
+  if (!confirm("حذف هذا المنتج؟")) return;
+  await fetch(`${BASE}/api/products/${id}`, { method: "DELETE" });
+  loadProducts();
+}
+
+// ── Variants State ──────────────────────────────────────────────────────────
+let variantItems = [];
+
+function variantQtyCell(p, qtyStyle) {
+  let v = null;
+  try { v = p.variants ? (typeof p.variants === 'string' ? JSON.parse(p.variants) : p.variants) : null; } catch(e) {}
+  // New format: {items: [...]}
+  if (v && v.items && v.items.length > 0) {
+    const rows = v.items.map(s =>
+      `<div class="text-xs leading-5">
+        <span class="font-semibold text-gray-800">${s.label}</span>
+        <span class="text-gray-400"> — ${s.boxes}×${s.qty_per_box} = </span>
+        <span class="font-black text-teal-700">${s.qty}</span>
+      </div>`
+    ).join("");
+    return `<div>${rows}</div>`;
+  }
+  // Old format backward compat: {sizes: [...]}
+  if (v && v.sizes && v.sizes.length > 0) {
+    const tags = v.sizes.map(s => `<span class="inline-flex items-center gap-0.5 bg-teal-50 text-teal-700 border border-teal-200 rounded-full px-2 py-0.5 text-xs font-medium">${s.label} <span class="font-black">${s.qty}</span></span>`).join(" ");
+    return `<div class="space-y-1">${tags}</div>`;
+  }
+  return `<span class="${qtyStyle}">${p.quantity}</span>`;
+}
+
+function toggleVariants(on) {
+  document.getElementById("variantsSection").classList.toggle("hidden", !on);
+  const qtyInput = document.getElementById("f-qty");
+  if (on) {
+    qtyInput.readOnly = true;
+    qtyInput.classList.add("bg-gray-100", "text-gray-400", "cursor-not-allowed");
+    updateTotalQty();
+  } else {
+    qtyInput.readOnly = false;
+    qtyInput.classList.remove("bg-gray-100", "text-gray-400", "cursor-not-allowed");
+  }
+}
+
+function addItem() {
+  const labelEl = document.getElementById("f-item-label");
+  const boxesEl = document.getElementById("f-item-boxes");
+  const qpbEl   = document.getElementById("f-item-qpb");
+  const label = labelEl.value.trim();
+  const boxes = parseInt(boxesEl.value) || 0;
+  const qpb   = parseInt(qpbEl.value)   || 0;
+  if (!label || boxes <= 0 || qpb <= 0) {
+    if (!label) labelEl.focus();
+    else if (boxes <= 0) boxesEl.focus();
+    else qpbEl.focus();
+    return;
+  }
+  variantItems.push({ label, boxes, qty_per_box: qpb, qty: boxes * qpb });
+  labelEl.value = "";
+  boxesEl.value = "";
+  qpbEl.value   = "";
+  renderItems();
+  updateTotalQty();
+  labelEl.focus();
+}
+
+function removeItem(i) {
+  variantItems.splice(i, 1);
+  renderItems();
+  updateTotalQty();
+}
+
+function updateItemBoxes(i, val) {
+  variantItems[i].boxes = parseInt(val) || 0;
+  variantItems[i].qty   = variantItems[i].boxes * variantItems[i].qty_per_box;
+  const el = document.getElementById(`item-total-${i}`);
+  if (el) el.textContent = variantItems[i].qty;
+  updateTotalQty();
+}
+
+function updateItemQpb(i, val) {
+  variantItems[i].qty_per_box = parseInt(val) || 0;
+  variantItems[i].qty         = variantItems[i].boxes * variantItems[i].qty_per_box;
+  const el = document.getElementById(`item-total-${i}`);
+  if (el) el.textContent = variantItems[i].qty;
+  updateTotalQty();
+}
+
+function renderItems() {
+  const container = document.getElementById("itemsTable");
+  const noMsg     = document.getElementById("noItemsMsg");
+  if (!container) return;
+  if (variantItems.length === 0) {
+    container.innerHTML = "";
+    noMsg && noMsg.classList.remove("hidden");
+    return;
+  }
+  noMsg && noMsg.classList.add("hidden");
+  container.innerHTML = variantItems.map((s, i) =>
+    `<div class="flex items-center gap-2 bg-white rounded-xl border px-3 py-2 shadow-sm">
+      <span class="font-bold text-sm text-gray-800 flex-1 min-w-0 truncate bg-teal-50 rounded-lg px-2 py-1 text-center">${s.label}</span>
+      <input type="number" min="1" value="${s.boxes}"
+        oninput="updateItemBoxes(${i}, this.value)"
+        class="w-16 border rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-teal-200"
+        title="عدد البوكسات"/>
+      <span class="text-gray-400 text-xs flex-shrink-0">×</span>
+      <input type="number" min="1" value="${s.qty_per_box}"
+        oninput="updateItemQpb(${i}, this.value)"
+        class="w-16 border rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-teal-200"
+        title="الكمية في كل بوكس"/>
+      <span class="text-gray-400 text-xs flex-shrink-0">=</span>
+      <span id="item-total-${i}" class="w-10 text-center font-black text-teal-700 text-sm flex-shrink-0">${s.qty}</span>
+      <button type="button" onclick="removeItem(${i})"
+        class="text-gray-300 hover:text-red-500 text-xl leading-none flex-shrink-0">×</button>
+    </div>`
+  ).join("");
+}
+
+function updateTotalQty() {
+  const total = variantItems.reduce((s, x) => s + (x.qty || 0), 0);
+  const preview = document.getElementById("totalQtyPreview");
+  if (preview) preview.textContent = total;
+  document.getElementById("f-qty").value = total;
+}
+
+function resetVariants() {
+  variantItems = [];
+  const cb = document.getElementById("f-use-variants");
+  if (cb) cb.checked = false;
+  toggleVariants(false);
+  renderItems();
+}
+
+function loadVariants(product) {
+  let v = null;
+  try { v = product.variants ? (typeof product.variants === 'string' ? JSON.parse(product.variants) : product.variants) : null; } catch(e) {}
+  // New format
+  if (v && v.items && v.items.length > 0) {
+    variantItems = v.items;
+    const cb = document.getElementById("f-use-variants");
+    if (cb) cb.checked = true;
+    toggleVariants(true);
+    renderItems();
+    updateTotalQty();
+    return;
+  }
+  // Old format migration
+  if (v && v.sizes && v.sizes.length > 0) {
+    variantItems = v.sizes.map(s => ({ label: s.label, boxes: 1, qty_per_box: s.qty, qty: s.qty }));
+    const cb = document.getElementById("f-use-variants");
+    if (cb) cb.checked = true;
+    toggleVariants(true);
+    renderItems();
+    updateTotalQty();
+    return;
+  }
+  resetVariants();
+}
+
+// ── Checkbox Options Builder ────────────────────────────────────────────────
+// Data: { [cat]: { [label]: { checked, disabled, reason, stock } } }
+let cbData = {};
+
+function cbReset() {
+  cbData = {};
+  cbRender();
+  document.getElementById("cbNewCatInput").value = "";
+}
+
+function cbLoad(raw) {
+  cbData = {};
+  let cv = {};
+  try { cv = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {}; } catch(e) {}
+  // Parse flat "Cat::Label" format into nested
+  Object.entries(cv).forEach(([key, val]) => {
+    const sep = key.indexOf("::");
+    if (sep === -1) return;
+    const cat = key.slice(0, sep);
+    const label = key.slice(sep + 2);
+    if (!cbData[cat]) cbData[cat] = {};
+    const checked  = typeof val === 'boolean' ? val : (val?.checked ?? false);
+    const disabled = typeof val === 'object' ? (val?.disabled ?? false) : false;
+    const reason   = typeof val === 'object' ? (val?.reason ?? "") : "";
+    const stock    = typeof val === 'object' && val?.stock !== undefined ? val.stock : null;
+    cbData[cat][label] = { checked, disabled, reason, stock };
+  });
+  cbRender();
+}
+
+function cbGetValues() {
+  const out = {};
+  Object.entries(cbData).forEach(([cat, opts]) => {
+    Object.entries(opts).forEach(([label, v]) => {
+      const key = `${cat}::${label}`;
+      const hasStock = v.stock !== null && v.stock !== undefined;
+      if (!v.disabled && !hasStock) {
+        out[key] = v.checked;
+      } else {
+        const obj = { checked: v.checked };
+        if (v.disabled) { obj.disabled = true; if (v.reason) obj.reason = v.reason; }
+        if (hasStock) obj.stock = v.stock;
+        out[key] = obj;
+      }
+    });
+  });
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function cbAddCategory() {
+  const inp = document.getElementById("cbNewCatInput");
+  const cat = inp.value.trim();
+  if (!cat) { inp.focus(); return; }
+  if (cbData[cat]) { inp.focus(); return; }
+  cbData[cat] = {};
+  inp.value = "";
+  cbRender();
+  // Focus the "add option" input for this new category
+  setTimeout(() => {
+    const el = document.getElementById(`cb-opt-inp-${CSS.escape(cat)}`);
+    if (el) el.focus();
+  }, 50);
+}
+
+function cbRemoveCategory(cat) {
+  delete cbData[cat];
+  cbRender();
+}
+
+function cbAddOption(cat) {
+  const inp = document.getElementById(`cb-opt-inp-${CSS.escape(cat)}`);
+  const label = inp.value.trim();
+  if (!label) { inp.focus(); return; }
+  if (!cbData[cat]) cbData[cat] = {};
+  if (cbData[cat][label]) { inp.value = ""; return; }
+  cbData[cat][label] = { checked: true, disabled: false, reason: "", stock: null };
+  inp.value = "";
+  cbRender();
+  setTimeout(() => { const el = document.getElementById(`cb-opt-inp-${CSS.escape(cat)}`); if (el) el.focus(); }, 30);
+}
+
+function cbRemoveOption(cat, label) {
+  if (cbData[cat]) delete cbData[cat][label];
+  cbRender();
+}
+
+function cbToggleChecked(cat, label) {
+  if (cbData[cat]?.[label]) cbData[cat][label].checked = !cbData[cat][label].checked;
+  cbRender();
+}
+
+function cbToggleDisabled(cat, label) {
+  const o = cbData[cat]?.[label];
+  if (!o) return;
+  o.disabled = !o.disabled;
+  if (!o.disabled) o.reason = "";
+  cbRender();
+}
+
+function cbSetReason(cat, label, val) {
+  if (cbData[cat]?.[label]) cbData[cat][label].reason = val;
+}
+
+function cbSetStock(cat, label, val) {
+  const o = cbData[cat]?.[label];
+  if (!o) return;
+  const n = val === "" ? null : Math.max(0, parseInt(val) || 0);
+  o.stock = n;
+  if (n !== null && n <= 0) o.disabled = true;
+  cbRender();
+}
+
+function cbRender() {
+  const container = document.getElementById("cbCategoriesContainer");
+  if (!container) return;
+  const cats = Object.keys(cbData);
+  if (cats.length === 0) { container.innerHTML = ""; return; }
+  container.innerHTML = cats.map(cat => {
+    const opts = cbData[cat];
+    const labels = Object.keys(opts);
+    const optRows = labels.map(label => {
+      const o = opts[label];
+      const isSoldOut = o.stock !== null && o.stock <= 0;
+      const isDisabled = o.disabled || isSoldOut;
+      const stockVal = o.stock !== null ? o.stock : "";
+      return `<div class="flex flex-wrap items-center gap-2 px-2 py-1.5 rounded-lg border ${isDisabled ? 'border-red-200 bg-red-50' : 'border-transparent bg-white'}">
+        <input type="checkbox" ${o.checked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''}
+          onchange="cbToggleChecked('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}') "
+          class="w-4 h-4 accent-blue-700 flex-shrink-0 disabled:opacity-40"/>
+        <span class="text-sm flex-1 ${isDisabled ? 'line-through text-gray-400' : 'text-gray-800'}">${label}</span>
+        <span class="text-xs text-gray-400">كمية:</span>
+        <input type="number" min="0" placeholder="∞" value="${stockVal}"
+          onchange="cbSetStock('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}',this.value)"
+          class="w-14 border border-gray-200 rounded-lg px-1.5 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white"/>
+        ${isDisabled ? `<span class="text-[10px] font-bold text-red-500 bg-red-100 px-1.5 py-0.5 rounded-full">${isSoldOut ? 'نفذ' : 'غير متاح'}</span>` : ''}
+        <button type="button" title="${isDisabled ? 'تفعيل' : 'تعطيل'}"
+          onclick="cbToggleDisabled('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}') "
+          class="text-gray-300 hover:text-red-500 transition-colors flex-shrink-0 text-base leading-none">${isDisabled ? '✅' : '🚫'}</button>
+        <button type="button" onclick="cbRemoveOption('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}') "
+          class="text-gray-300 hover:text-red-500 text-lg leading-none flex-shrink-0">×</button>
+        ${o.disabled && !isSoldOut ? `<div class="w-full mt-1">
+          <input type="text" placeholder="سبب التعطيل..." value="${(o.reason||'').replace(/"/g,'&quot;')}"
+            oninput="cbSetReason('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}',this.value)"
+            class="w-full border border-red-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-red-300 text-red-600 placeholder-red-300 bg-white"/>
+        </div>` : ''}
+      </div>`;
+    }).join("");
+    return `<div class="rounded-xl border border-gray-200 bg-gray-50 overflow-hidden">
+      <div class="flex items-center gap-2 px-3 py-2 bg-white border-b border-gray-200">
+        <span class="text-xs font-bold uppercase tracking-wider text-blue-700 flex-1">${cat}</span>
+        <button type="button" onclick="cbRemoveCategory('${cat.replace(/'/g,"\\'")}')"
+          class="text-gray-300 hover:text-red-500 text-lg leading-none">×</button>
+      </div>
+      <div class="p-2 space-y-1">
+        ${optRows || '<p class="text-xs text-gray-400 px-1 py-1 italic">لا توجد خيارات — أضف أدناه</p>'}
+        <div class="flex gap-2 pt-1">
+          <input type="text" id="cb-opt-inp-${cat}" placeholder="اسم الخيار..."
+            class="flex-1 border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();cbAddOption('${cat.replace(/'/g,"\\'")}');}"/>
+          <button type="button" onclick="cbAddOption('${cat.replace(/'/g,"\\'")}')"
+            class="bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm font-semibold hover:bg-blue-800">+ إضافة</button>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+loadProducts();
+</script>
+
+</main>
+<%- include('partials/footer', locals) %>

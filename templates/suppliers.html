@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+{% block title %}الموردين{% endblock %}
+{% block content %}
+<div class="space-y-5">
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold text-gray-800">🏭 الموردين</h1>
+    <button onclick="openAddModal()" class="bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-blue-800 shadow">+ إضافة مورد</button>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-2 gap-4">
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center">
+      <div id="totalSuppliers" class="text-3xl font-black text-blue-700">—</div>
+      <div class="text-sm text-gray-500 mt-1">إجمالي الموردين</div>
+    </div>
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center">
+      <div id="totalLinked" class="text-3xl font-black text-green-700">—</div>
+      <div class="text-sm text-gray-500 mt-1">منتجات مرتبطة</div>
+    </div>
+  </div>
+
+  <!-- Search -->
+  <input id="searchInput" oninput="filterSuppliers()" type="text"
+    placeholder="🔍 بحث عن مورد..."
+    class="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+
+  <!-- Suppliers List -->
+  <div id="supplierList" class="space-y-2"></div>
+  <div id="noSuppliers" class="hidden text-center text-gray-400 py-12">لا يوجد موردين مسجلين</div>
+</div>
+
+<!-- ══ Add/Edit Modal ══ -->
+<div id="addModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl">
+    <div class="p-5 border-b flex items-center justify-between">
+      <h3 id="modalTitle" class="font-bold text-gray-800 text-lg">إضافة مورد جديد</h3>
+      <button onclick="closeAddModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+    </div>
+    <form onsubmit="saveSupplier(event)" class="p-5 space-y-4">
+      <input type="hidden" id="f-id"/>
+      <div>
+        <label class="text-xs font-medium text-gray-600">الاسم *</label>
+        <input id="f-name" required class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="اسم الشركة أو المورد"/>
+      </div>
+      <div>
+        <label class="text-xs font-medium text-gray-600">رقم الهاتف</label>
+        <input id="f-phone" type="tel" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="01xxxxxxxxx"/>
+      </div>
+      <div>
+        <label class="text-xs font-medium text-gray-600">العنوان</label>
+        <input id="f-address" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="العنوان / المنطقة"/>
+      </div>
+      <div>
+        <label class="text-xs font-medium text-gray-600">ملاحظات</label>
+        <textarea id="f-notes" rows="2" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="شروط الدفع، أوقات التسليم..."></textarea>
+      </div>
+      <div class="flex gap-3 pt-2">
+        <button type="submit" class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800">حفظ</button>
+        <button type="button" onclick="closeAddModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl">إلغاء</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ══ Detail Modal ══ -->
+<div id="detailModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-3">
+  <div class="bg-white rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[88vh]">
+    <div class="p-5 border-b flex items-start justify-between shrink-0">
+      <div>
+        <h2 id="dName" class="text-xl font-black text-gray-800"></h2>
+        <p id="dPhone" class="text-sm text-gray-500 mt-0.5"></p>
+        <p id="dAddress" class="text-xs text-gray-400 mt-0.5"></p>
+        <p id="dNotes" class="text-xs text-gray-400 mt-0.5 italic"></p>
+      </div>
+      <button onclick="closeDetail()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none mt-1">×</button>
+    </div>
+    <div class="px-5 py-3 border-b bg-gray-50 flex gap-2 flex-wrap shrink-0">
+      <button onclick="editSupplier()" class="bg-blue-50 text-blue-700 hover:bg-blue-100 text-sm font-semibold px-4 py-2 rounded-xl">✏️ تعديل</button>
+      <button id="dWaBtn" onclick="callWhatsapp()" class="hidden items-center gap-2 bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-4 py-2 rounded-xl">
+        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.123 1.532 5.855L.054 23.5l5.819-1.527A11.938 11.938 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.012-1.375l-.36-.213-3.727.977.994-3.63-.235-.374A9.818 9.818 0 1112 21.818z"/></svg>
+        واتساب
+      </button>
+      <button onclick="deleteSupplier()" class="bg-red-50 text-red-600 hover:bg-red-100 text-sm font-semibold px-4 py-2 rounded-xl">🗑 حذف</button>
+    </div>
+
+    <!-- Products Tab -->
+    <div class="p-4 border-b shrink-0">
+      <h3 class="text-sm font-bold text-gray-700 mb-3">📦 المنتجات المرتبطة بهذا المورد</h3>
+      <div id="supplierProducts" class="text-sm text-gray-400">جار التحميل...</div>
+    </div>
+
+    <!-- Link Product -->
+    <div class="p-4 shrink-0">
+      <h3 class="text-sm font-bold text-gray-700 mb-2">🔗 ربط منتج بهذا المورد</h3>
+      <div class="flex gap-2">
+        <select id="linkProductSelect" class="flex-1 border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
+          <option value="">-- اختر منتجاً --</option>
+        </select>
+        <button onclick="linkProduct()" class="bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-blue-800">ربط</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const BASE = "{{ base }}";
+let allSuppliers = [];
+let currentSupplier = null;
+let allProducts = [];
+
+async function loadSuppliers() {
+  const res = await fetch(`${BASE}/api/suppliers`);
+  allSuppliers = await res.json();
+  renderSuppliers(allSuppliers);
+}
+
+function renderSuppliers(data) {
+  const totalLinked = data.reduce((s,sup) => s+(sup.product_count||0), 0);
+  document.getElementById("totalSuppliers").textContent = data.length;
+  document.getElementById("totalLinked").textContent    = totalLinked;
+
+  const list  = document.getElementById("supplierList");
+  const noMsg = document.getElementById("noSuppliers");
+  if (!data.length) { list.innerHTML=""; noMsg.classList.remove("hidden"); return; }
+  noMsg.classList.add("hidden");
+
+  list.innerHTML = data.map(s => `
+    <div onclick="openDetail(${s.id})" class="cursor-pointer rounded-2xl border border-gray-200 bg-white shadow-sm p-4 flex items-center justify-between gap-3 hover:shadow-md transition-all">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-black text-lg shrink-0">
+          ${s.name.charAt(0)}
+        </div>
+        <div class="min-w-0">
+          <div class="font-bold text-gray-800 truncate">${s.name}</div>
+          <div class="text-xs text-gray-500">${s.phone || 'بدون هاتف'}</div>
+        </div>
+      </div>
+      <div class="text-right shrink-0">
+        <div class="text-blue-700 font-black text-base">${s.product_count}</div>
+        <div class="text-xs text-gray-400">منتج</div>
+      </div>
+    </div>`).join("");
+}
+
+function filterSuppliers() {
+  const q = document.getElementById("searchInput").value.toLowerCase();
+  renderSuppliers(allSuppliers.filter(s =>
+    s.name.toLowerCase().includes(q) || (s.phone||"").includes(q)
+  ));
+}
+
+// ── Add/Edit Modal ──────────────────────────────────────────────────────────
+function openAddModal() {
+  document.getElementById("modalTitle").textContent = "إضافة مورد جديد";
+  document.getElementById("f-id").value = "";
+  ["f-name","f-phone","f-address","f-notes"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("addModal").classList.remove("hidden");
+}
+
+function closeAddModal() {
+  document.getElementById("addModal").classList.add("hidden");
+}
+
+function editSupplier() {
+  if (!currentSupplier) return;
+  document.getElementById("modalTitle").textContent = "تعديل المورد";
+  document.getElementById("f-id").value      = currentSupplier.id;
+  document.getElementById("f-name").value    = currentSupplier.name;
+  document.getElementById("f-phone").value   = currentSupplier.phone || "";
+  document.getElementById("f-address").value = currentSupplier.address || "";
+  document.getElementById("f-notes").value   = currentSupplier.notes || "";
+  closeDetail();
+  document.getElementById("addModal").classList.remove("hidden");
+}
+
+async function saveSupplier(e) {
+  e.preventDefault();
+  const id   = document.getElementById("f-id").value;
+  const body = {
+    name:    document.getElementById("f-name").value,
+    phone:   document.getElementById("f-phone").value,
+    address: document.getElementById("f-address").value,
+    notes:   document.getElementById("f-notes").value,
+  };
+  if (id) {
+    await fetch(`${BASE}/api/suppliers/${id}`, { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+  } else {
+    await fetch(`${BASE}/api/suppliers`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+  }
+  closeAddModal();
+  loadSuppliers();
+}
+
+// ── Detail Modal ──────────────────────────────────────────────────────────
+async function openDetail(sid) {
+  currentSupplier = allSuppliers.find(s => s.id === sid);
+  if (!currentSupplier) return;
+
+  document.getElementById("dName").textContent    = currentSupplier.name;
+  document.getElementById("dPhone").textContent   = currentSupplier.phone ? `📞 ${currentSupplier.phone}` : "";
+  document.getElementById("dAddress").textContent = currentSupplier.address ? `📍 ${currentSupplier.address}` : "";
+  document.getElementById("dNotes").textContent   = currentSupplier.notes || "";
+
+  const waBtn = document.getElementById("dWaBtn");
+  if (currentSupplier.phone) waBtn.classList.replace("hidden","flex");
+  else waBtn.classList.replace("flex","hidden");
+
+  document.getElementById("detailModal").classList.remove("hidden");
+
+  // Load products for this supplier
+  const res  = await fetch(`${BASE}/api/suppliers/${sid}/products`);
+  const prods = await res.json();
+  const el   = document.getElementById("supplierProducts");
+  if (!prods.length) {
+    el.innerHTML = '<span class="text-gray-400 text-sm">لا توجد منتجات مرتبطة</span>';
+  } else {
+    el.innerHTML = prods.map(p => `
+      <div class="flex items-center justify-between py-1.5 border-b last:border-0">
+        <div>
+          <span class="text-sm font-medium text-gray-800">${p.product_name}</span>
+          <span class="text-xs text-gray-400 mr-2">كمية: ${p.quantity}</span>
+        </div>
+        <div class="text-xs text-gray-500">شراء: ${p.purchase_price} ج — بيع: ${p.sale_price} ج</div>
+      </div>`).join("");
+  }
+
+  // Load all products for linking
+  if (!allProducts.length) {
+    const pr  = await fetch(`${BASE}/api/products`);
+    allProducts = await pr.json();
+  }
+  const sel = document.getElementById("linkProductSelect");
+  sel.innerHTML = '<option value="">-- اختر منتجاً --</option>' +
+    allProducts.map(p => `<option value="${p.id}">${p.product_name}</option>`).join("");
+}
+
+function closeDetail() {
+  document.getElementById("detailModal").classList.add("hidden");
+  currentSupplier = null;
+}
+
+function callWhatsapp() {
+  if (!currentSupplier || !currentSupplier.phone) return;
+  const phone = currentSupplier.phone.replace(/[^0-9]/g,"");
+  const intl  = phone.startsWith("0") ? "2"+phone : phone;
+  window.open(`https://wa.me/${intl}`, '_blank');
+}
+
+async function linkProduct() {
+  const pid = document.getElementById("linkProductSelect").value;
+  if (!pid || !currentSupplier) return;
+  await fetch(`${BASE}/api/products/${pid}/supplier`, {
+    method:"PUT", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ supplier_id: currentSupplier.id })
+  });
+  allProducts = []; // reset cache
+  await openDetail(currentSupplier.id);
+  await loadSuppliers();
+}
+
+async function deleteSupplier() {
+  if (!currentSupplier) return;
+  if (!confirm(`حذف المورد "${currentSupplier.name}"؟ سيتم إلغاء ربطه بكل المنتجات.`)) return;
+  await fetch(`${BASE}/api/suppliers/${currentSupplier.id}`, { method:"DELETE" });
+  closeDetail();
+  loadSuppliers();
+}
+
+loadSuppliers();
+</script>
+{% endblock %}

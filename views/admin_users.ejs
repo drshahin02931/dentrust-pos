@@ -1,0 +1,206 @@
+<%- include('partials/header', Object.assign({pageTitle: 'إدارة المستخدمين'}, locals)) %>
+<div class="space-y-6">
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <h1 class="text-2xl font-bold text-gray-800">👥 إدارة المستخدمين والصلاحيات</h1>
+    <button onclick="openCreateModal()"
+      class="bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-blue-800 shadow">
+      + إضافة موظف جديد
+    </button>
+  </div>
+
+  <!-- Users Table -->
+  <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b">
+        <tr class="text-right text-gray-600 font-semibold">
+          <th class="px-4 py-3">المستخدم</th>
+          <th class="px-4 py-3">الدور</th>
+          <th class="px-4 py-3">الصلاحيات</th>
+          <th class="px-4 py-3">الحالة</th>
+          <th class="px-4 py-3">تاريخ الإنشاء</th>
+          <th class="px-4 py-3">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="usersTable" class="divide-y"></tbody>
+    </table>
+    <div id="noUsers" class="hidden text-center text-gray-400 py-12">لا يوجد مستخدمون</div>
+  </div>
+</div>
+
+<!-- Create/Edit User Modal -->
+<div id="userModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-lg shadow-2xl">
+    <div class="p-5 border-b flex items-center justify-between">
+      <h3 id="userModalTitle" class="font-bold text-gray-800 text-lg">إضافة موظف جديد</h3>
+      <button onclick="closeUserModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+    </div>
+    <div class="p-5 space-y-5">
+      <input type="hidden" id="editUserId"/>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="text-xs font-semibold text-gray-600">اسم المستخدم *</label>
+          <input id="f-username" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="username"/>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-gray-600">كلمة المرور</label>
+          <input id="f-password" type="password" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="اتركه فارغاً للإبقاء"/>
+        </div>
+      </div>
+
+      <!-- Permissions Grid -->
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-3">الصلاحيات</label>
+        <div class="grid grid-cols-2 gap-2">
+          <label class="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-gray-100">
+            <input type="checkbox" id="p-pos" class="rounded"/> <span class="text-sm">🛒 نقطة البيع</span>
+          </label>
+          <label class="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-gray-100">
+            <input type="checkbox" id="p-inventory" class="rounded"/> <span class="text-sm">📦 المخزون</span>
+          </label>
+          <label class="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-gray-100">
+            <input type="checkbox" id="p-expiry" class="rounded"/> <span class="text-sm">⏰ الصلاحية</span>
+          </label>
+          <label class="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-gray-100">
+            <input type="checkbox" id="p-customers" class="rounded"/> <span class="text-sm">👤 العملاء</span>
+          </label>
+          <label class="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-gray-100">
+            <input type="checkbox" id="p-accounting" class="rounded"/> <span class="text-sm">📊 المحاسبة</span>
+          </label>
+          <label class="flex items-center gap-2 bg-gray-50 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-gray-100">
+            <input type="checkbox" id="p-invoices" class="rounded"/> <span class="text-sm">🧾 الفواتير</span>
+          </label>
+          <label class="flex items-center gap-2 bg-orange-50 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-orange-100 border border-orange-100">
+            <input type="checkbox" id="p-edit_prices" class="rounded"/> <span class="text-sm font-medium text-orange-700">✏️ تعديل الأسعار</span>
+          </label>
+          <label class="flex items-center gap-2 bg-orange-50 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-orange-100 border border-orange-100">
+            <input type="checkbox" id="p-process_returns" class="rounded"/> <span class="text-sm font-medium text-orange-700">↩️ معالجة المردودات</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="userModalError" class="hidden text-red-600 text-sm bg-red-50 rounded-xl px-3 py-2"></div>
+
+      <div class="flex gap-3">
+        <button onclick="saveUser()" class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800">حفظ</button>
+        <button onclick="closeUserModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl">إلغاء</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const BASE = "<%- base %>";
+const PERM_KEYS = ["pos","inventory","expiry","customers","accounting","invoices","edit_prices","process_returns"];
+const PERM_LABELS = { pos:"نقطة البيع", inventory:"المخزون", expiry:"الصلاحية", customers:"العملاء", accounting:"المحاسبة", invoices:"الفواتير", edit_prices:"تعديل الأسعار", process_returns:"المردودات" };
+
+async function loadUsers() {
+  const res = await fetch(`${BASE}/api/users`);
+  const users = await res.json();
+  const tbody = document.getElementById("usersTable");
+  if (!users.length) { tbody.innerHTML = ""; document.getElementById("noUsers").classList.remove("hidden"); return; }
+  document.getElementById("noUsers").classList.add("hidden");
+
+  tbody.innerHTML = users.map(u => {
+    const isManager = u.role === "manager";
+    const perms = typeof u.permissions === "string" ? JSON.parse(u.permissions) : u.permissions;
+    const permBadges = PERM_KEYS.filter(k => perms[k]).map(k =>
+      `<span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">${PERM_LABELS[k]}</span>`
+    ).join(" ");
+    return `<tr class="hover:bg-gray-50 ${!u.is_active ? 'opacity-50' : ''}">
+      <td class="px-4 py-3 font-medium text-gray-800">${u.username} ${isManager ? '👑' : ''}</td>
+      <td class="px-4 py-3">
+        <span class="text-xs font-bold px-2.5 py-1 rounded-full ${isManager ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}">
+          ${isManager ? 'مدير' : 'موظف'}
+        </span>
+      </td>
+      <td class="px-4 py-3">
+        <div class="flex flex-wrap gap-1">${isManager ? '<span class="text-xs text-gray-500">كل الصلاحيات</span>' : permBadges || '<span class="text-xs text-gray-400">لا صلاحيات</span>'}</div>
+      </td>
+      <td class="px-4 py-3">
+        <span class="text-xs font-bold px-2.5 py-1 rounded-full ${u.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}">
+          ${u.is_active ? 'نشط' : 'موقوف'}
+        </span>
+      </td>
+      <td class="px-4 py-3 text-gray-500 text-xs">${u.created_at ? u.created_at.slice(0,10) : '—'}</td>
+      <td class="px-4 py-3">
+        ${!isManager ? `
+          <div class="flex gap-2">
+            <button onclick='editUser(${JSON.stringify(JSON.stringify(u))})' class="text-xs bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg hover:bg-blue-100 font-medium">تعديل</button>
+            <button onclick="toggleUser(${u.id},${u.is_active})" class="text-xs ${u.is_active ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'} px-3 py-1.5 rounded-lg hover:opacity-80 font-medium">
+              ${u.is_active ? 'إيقاف' : 'تفعيل'}
+            </button>
+          </div>` : '<span class="text-xs text-gray-400">—</span>'}
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+function openCreateModal() {
+  document.getElementById("userModalTitle").textContent = "إضافة موظف جديد";
+  document.getElementById("editUserId").value = "";
+  document.getElementById("f-username").value = "";
+  document.getElementById("f-password").value = "";
+  PERM_KEYS.forEach(k => {
+    const el = document.getElementById(`p-${k}`);
+    if (el) el.checked = ["pos","inventory","expiry","customers"].includes(k);
+  });
+  document.getElementById("f-username").removeAttribute("disabled");
+  document.getElementById("userModalError").classList.add("hidden");
+  document.getElementById("userModal").classList.remove("hidden");
+}
+
+function editUser(jsonStr) {
+  const u = JSON.parse(jsonStr);
+  document.getElementById("userModalTitle").textContent = `تعديل: ${u.username}`;
+  document.getElementById("editUserId").value = u.id;
+  document.getElementById("f-username").value = u.username;
+  document.getElementById("f-username").setAttribute("disabled", "disabled");
+  document.getElementById("f-password").value = "";
+  const perms = typeof u.permissions === "string" ? JSON.parse(u.permissions) : u.permissions;
+  PERM_KEYS.forEach(k => { const el = document.getElementById(`p-${k}`); if (el) el.checked = !!perms[k]; });
+  document.getElementById("userModalError").classList.add("hidden");
+  document.getElementById("userModal").classList.remove("hidden");
+}
+
+function closeUserModal() { document.getElementById("userModal").classList.add("hidden"); }
+
+async function saveUser() {
+  const id = document.getElementById("editUserId").value;
+  const username = document.getElementById("f-username").value.trim();
+  const password = document.getElementById("f-password").value;
+  const permissions = {};
+  PERM_KEYS.forEach(k => { const el = document.getElementById(`p-${k}`); if (el) permissions[k] = el.checked; });
+
+  let res, body;
+  if (id) {
+    body = { permissions };
+    if (password) body.password = password;
+    res = await fetch(`${BASE}/api/users/${id}`, { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  } else {
+    if (!username) { showError("اسم المستخدم مطلوب"); return; }
+    if (!password) { showError("كلمة المرور مطلوبة"); return; }
+    body = { username, password, permissions };
+    res = await fetch(`${BASE}/api/users`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  }
+  const data = await res.json();
+  if (!res.ok) { showError(data.error || "حدث خطأ"); return; }
+  closeUserModal();
+  loadUsers();
+}
+
+async function toggleUser(id, isActive) {
+  if (isActive && !confirm("إيقاف هذا الموظف؟")) return;
+  await fetch(`${BASE}/api/users/${id}`, { method: "PUT", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ is_active: !isActive }) });
+  loadUsers();
+}
+
+function showError(msg) {
+  const el = document.getElementById("userModalError");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+}
+
+loadUsers();
+</script>
+
+</main>
+<%- include('partials/footer', locals) %>

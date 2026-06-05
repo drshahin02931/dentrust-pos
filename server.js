@@ -1,0 +1,1902 @@
+'use strict';
+require('dotenv').config();
+const express = require('express');
+const session = require('express-session');
+const PgSession = require('connect-pg-simple')(session);
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { v4: uuidv4 } = require('uuid');
+const cron = require('node-cron');
+const cors = require('cors');
+const bwip = require('bwip-js');
+const { posDb, dentrustDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
+
+const BASE = (process.env.BASE_PATH || '/pos-system').replace(/\/$/, '');
+const PORT = parseInt(process.env.PORT || '5000', 10);
+const DATABASE_URL = process.env.DATABASE_URL;
+const SUPABASE_DATABASE_URL = process.env.SUPABASE_DATABASE_URL;
+const UPLOAD_FOLDER = path.join(__dirname, 'static', 'uploads');
+const ALLOWED_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
+
+const app = express();
+app.set('trust proxy', 1);
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(`${BASE}/static`, express.static(path.join(__dirname, 'static')));
+
+const sessionStore = new PgSession({
+  pool: posDb,
+  schemaName: 'pos_data',
+  tableName: 'session',
+  createTableIfMissing: true,
+});
+
+app.use(session({
+  store: sessionStore,
+  secret: process.env.SESSION_SECRET || 'pos-dev-secret-key-2024',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 30 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax' },
+}));
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function isMgr(req) { return req.session?.role === 'manager'; }
+function hasPerm(req, perm) {
+  if (isMgr(req)) return true;
+  return !!(req.session?.permissions?.[perm]);
+}
+
+const OPEN_PATHS = new Set([`${BASE}/login`, `${BASE}/logout`, `${BASE}/sw.js`]);
+const OPEN_API = [
+  '/api/sync/order-placed', '/api/stats', '/api/sync/confirm-online-order',
+  '/api/sync/upsert-product', '/api/sync/delete-product', '/api/settings',
+];
+
+function authGuard(req, res, next) {
+  if (req.session?.user_id) return next();
+  const p = req.path;
+  if (OPEN_PATHS.has(req.originalUrl.split('?')[0])) return next();
+  if (OPEN_API.some(a => p.endsWith(a) || p.includes(a))) return next();
+  if (p.startsWith(`${BASE}/static/`) || p.includes('/static/')) return next();
+  if (req.xhr || req.headers.accept?.includes('application/json')) {
+    return res.status(401).json({ error: 'غير مصرح' });
+  }
+  return res.redirect(`${BASE}/login`);
+}
+app.use(authGuard);
+
+function periodFilter(period, col) {
+  if (period === 'today') return `${col}::date = CURRENT_DATE`;
+  if (period === 'week')  return `${col}::date >= CURRENT_DATE - INTERVAL '7 days'`;
+  if (period === 'month') return `TO_CHAR(${col}::date,'YYYY-MM') = TO_CHAR(CURRENT_DATE,'YYYY-MM')`;
+  return '1=1';
+}
+
+async function renderPage(req, res, view, extra = {}) {
+  const settings = await getSettings().catch(() => ({}));
+  const perms = req.session?.permissions || {};
+  res.render(view, {
+    base: BASE,
+    reqPath: req.path,
+    currentUser: req.session?.user_id ? { id: req.session.user_id, username: req.session.username } : null,
+    isMgr: isMgr(req),
+    canEditPrices: hasPerm(req, 'edit_prices'),
+    canReturn: hasPerm(req, 'process_returns'),
+    userPerms: perms,
+    settings,
+    ...extra,
+  });
+}
+
+// ── Upload ───────────────────────────────────────────────────────────────────
+fs.mkdirSync(UPLOAD_FOLDER, { recursive: true });
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => { fs.mkdirSync(UPLOAD_FOLDER, { recursive: true }); cb(null, UPLOAD_FOLDER); },
+    filename: (req, file, cb) => { const ext = file.originalname.rsplit ? file.originalname.rsplit('.')[1] : file.originalname.split('.').pop(); cb(null, `${uuidv4().replace(/-/g, '')}.${ext.toLowerCase()}`); },
+  }),
+  fileFilter: (req, file, cb) => {
+    const ext = file.originalname.split('.').pop().toLowerCase();
+    cb(null, ALLOWED_EXT.has(ext));
+  },
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
+
+// ── Page Routes ──────────────────────────────────────────────────────────────
+
+app.get([`${BASE}`, `${BASE}/`], (req, res) => {
+  if (!hasPerm(req, 'pos')) return res.redirect(`${BASE}/login`);
+  return renderPage(req, res, 'pos');
+});
+app.get(`${BASE}/inventory`, (req, res) => {
+  if (!hasPerm(req, 'inventory')) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'inventory');
+});
+app.get(`${BASE}/customers`, (req, res) => {
+  if (!hasPerm(req, 'customers')) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'customers');
+});
+app.get(`${BASE}/accounting`, (req, res) => {
+  if (!hasPerm(req, 'accounting')) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'accounting');
+});
+app.get(`${BASE}/invoices`, (req, res) => {
+  if (!hasPerm(req, 'invoices') && !hasPerm(req, 'process_returns')) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'invoices');
+});
+app.get(`${BASE}/settings`, (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'settings');
+});
+app.get(`${BASE}/barcodes`, (req, res) => {
+  if (!hasPerm(req, 'inventory')) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'barcodes');
+});
+app.get(`${BASE}/expiry`, (req, res) => {
+  if (!hasPerm(req, 'expiry')) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'expiry');
+});
+app.get(`${BASE}/notifications`, (req, res) => renderPage(req, res, 'notifications'));
+app.get(`${BASE}/admin/users`, (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'admin_users');
+});
+app.get(`${BASE}/admin/attendance`, (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'attendance');
+});
+app.get(`${BASE}/sync`, (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'sync');
+});
+app.get(`${BASE}/suppliers`, (req, res) => {
+  if (!req.session?.user_id) return res.redirect(`${BASE}/login`);
+  return renderPage(req, res, 'suppliers');
+});
+app.get(`${BASE}/cash-register`, (req, res) => renderPage(req, res, 'cash_register'));
+
+app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
+  try {
+    const sid = parseInt(req.params.sale_id, 10);
+    const { rows: [sale] } = await posDb.query(
+      `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone, c.address AS customer_address
+       FROM sales s LEFT JOIN customers c ON s.customer_id=c.id WHERE s.id=$1`, [sid]
+    );
+    if (!sale) return res.status(404).send('الفاتورة غير موجودة');
+    const { rows: items } = await posDb.query('SELECT * FROM sale_items WHERE sale_id=$1', [sid]);
+    const customer = sale.customer_id ? {
+      name: sale.customer_name || '',
+      phone: sale.customer_phone || '',
+      address: sale.customer_address || '',
+    } : null;
+    let previousBalance = 0;
+    if (sale.payment_method === 'credit' && sale.customer_id) {
+      const { rows: [pb] } = await posDb.query('SELECT total_debt FROM customers WHERE id=$1', [sale.customer_id]);
+      previousBalance = pb ? Math.max(0, parseFloat(pb.total_debt || 0) - parseFloat(sale.total_amount || 0)) : 0;
+    }
+    const st = await getSettings();
+    res.render('invoice', { sale, items, customer, previousBalance, st, base: BASE });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('خطأ داخلي');
+  }
+});
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+app.get(`${BASE}/login`, (req, res) => {
+  if (req.session?.user_id) return res.redirect(`${BASE}/`);
+  res.render('login', { base: BASE, error: null });
+});
+
+app.post(`${BASE}/login`, async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.render('login', { base: BASE, error: 'يرجى إدخال اسم المستخدم وكلمة المرور' });
+  try {
+    const { rows } = await posDb.query('SELECT * FROM users WHERE username=$1 AND is_active=1', [username.trim()]);
+    const user = rows[0];
+    if (!user) return res.render('login', { base: BASE, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' });
+    const ok = await verifyPassword(password, user.password_hash);
+    if (!ok) return res.render('login', { base: BASE, error: 'اسم المستخدم أو كلمة المرور غير صحيحة' });
+    let perms = {};
+    try { perms = typeof user.permissions === 'string' ? JSON.parse(user.permissions) : (user.permissions || {}); } catch (_) {}
+    if (user.role === 'manager') perms = { ...ALL_PERMS };
+    req.session.user_id = user.id;
+    req.session.username = user.username;
+    req.session.role = user.role;
+    req.session.permissions = perms;
+    await posDb.query(
+      'INSERT INTO user_sessions (user_id, ip_address) VALUES ($1, $2)',
+      [user.id, req.ip]
+    ).catch(() => {});
+    res.redirect(`${BASE}/`);
+  } catch (err) {
+    console.error(err);
+    res.render('login', { base: BASE, error: 'خطأ في الخادم' });
+  }
+});
+
+app.get(`${BASE}/logout`, async (req, res) => {
+  if (req.session?.user_id) {
+    await posDb.query(
+      "UPDATE user_sessions SET logout_at=NOW()::text WHERE user_id=$1 AND logout_at IS NULL",
+      [req.session.user_id]
+    ).catch(() => {});
+  }
+  req.session.destroy(() => res.redirect(`${BASE}/login`));
+});
+
+app.get(`${BASE}/sw.js`, (req, res) => res.type('js').send(''));
+
+// ── API: Me / Password ───────────────────────────────────────────────────────
+
+app.post(`${BASE}/api/users/me/password`, async (req, res) => {
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password) return res.status(400).json({ error: 'الحقول مطلوبة' });
+  if (new_password.length < 4) return res.status(400).json({ error: 'كلمة المرور الجديدة قصيرة جداً' });
+  try {
+    const { rows } = await posDb.query('SELECT * FROM users WHERE id=$1', [req.session.user_id]);
+    const user = rows[0];
+    if (!user) return res.status(404).json({ error: 'المستخدم غير موجود' });
+    const ok = await verifyPassword(current_password, user.password_hash);
+    if (!ok) return res.status(400).json({ error: 'كلمة المرور الحالية غير صحيحة' });
+    const hash = await hashPassword(new_password);
+    await posDb.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, user.id]);
+    res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── API: Users ───────────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/users`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    const { rows } = await posDb.query('SELECT id, username, role, permissions, is_active, created_at FROM users ORDER BY id');
+    res.json(rows.map(u => ({ ...u, permissions: typeof u.permissions === 'string' ? JSON.parse(u.permissions || '{}') : u.permissions })));
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/users`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const d = req.body;
+  try {
+    const hash = await hashPassword(d.password || '1234');
+    const role = d.role || 'employee';
+    const perms = role === 'manager' ? { ...ALL_PERMS } : (d.permissions || { ...EMPLOYEE_DEFAULT_PERMS });
+    await posDb.query(
+      'INSERT INTO users (username, password_hash, role, permissions) VALUES ($1,$2,$3,$4)',
+      [d.username, hash, role, JSON.stringify(perms)]
+    );
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: 'اسم المستخدم مسجل مسبقاً' });
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
+});
+
+app.put(`${BASE}/api/users/:uid`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const uid = parseInt(req.params.uid, 10);
+  const d = req.body;
+  try {
+    if (d.password) {
+      const hash = await hashPassword(d.password);
+      await posDb.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, uid]);
+    }
+    if (d.role !== undefined) await posDb.query('UPDATE users SET role=$1 WHERE id=$2', [d.role, uid]);
+    if (d.permissions !== undefined) await posDb.query('UPDATE users SET permissions=$1 WHERE id=$2', [JSON.stringify(d.permissions), uid]);
+    if (d.is_active !== undefined) await posDb.query('UPDATE users SET is_active=$1 WHERE id=$2', [d.is_active ? 1 : 0, uid]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── API: Attendance ──────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/attendance`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    // Support both param names: date_from/date_to (legacy) and from/to (UI sends these)
+    const user_id  = req.query.user_id;
+    const date_from = req.query.date_from || req.query.from;
+    const date_to   = req.query.date_to   || req.query.to;
+    let sql = `SELECT us.*, u.username FROM user_sessions us JOIN users u ON u.id=us.user_id WHERE 1=1`;
+    const params = [];
+    if (user_id) { params.push(user_id); sql += ` AND us.user_id=$${params.length}`; }
+    if (date_from) { params.push(date_from); sql += ` AND us.login_at::date >= $${params.length}::date`; }
+    if (date_to) { params.push(date_to); sql += ` AND us.login_at::date <= $${params.length}::date`; }
+    sql += ' ORDER BY us.login_at DESC LIMIT 500';
+    const { rows } = await posDb.query(sql, params);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── API: Upload Image ─────────────────────────────────────────────────────────
+
+app.post(`${BASE}/api/upload-image`, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'نوع الملف غير مدعوم أو لم يتم إرسال ملف' });
+  const url = `${BASE}/static/uploads/${req.file.filename}`;
+  res.json({ ok: true, url });
+});
+
+// ── API: Products ─────────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/products/generate-barcode`, async (req, res) => {
+  try {
+    const { randomInt } = require('crypto');
+    for (let i = 0; i < 50; i++) {
+      const code = String(randomInt(10000, 99999));
+      const { rows } = await posDb.query('SELECT id FROM products WHERE barcode=$1', [code]);
+      if (!rows.length) return res.json({ barcode: code });
+    }
+    res.json({ barcode: String(randomInt(100000, 999999)) });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/products/categories`, async (req, res) => {
+  try {
+    const { rows } = await posDb.query(
+      "SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category != '' ORDER BY category"
+    );
+    res.json(rows.map(r => r.category));
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/products/low-stock`, async (req, res) => {
+  try {
+    const { rows } = await posDb.query(
+      'SELECT id, product_name, quantity, min_stock, category FROM products WHERE min_stock > 0 AND quantity <= min_stock ORDER BY (quantity - min_stock) ASC'
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/products/financial-summary`, async (req, res) => {
+  try {
+    const { rows: [r] } = await posDb.query(
+      `SELECT COALESCE(SUM(purchase_price * quantity), 0) AS total_cost,
+              COALESCE(SUM(sale_price * quantity), 0) AS total_revenue,
+              COALESCE(SUM((sale_price - purchase_price) * quantity), 0) AS total_profit
+       FROM products`
+    );
+    res.json(r);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/products/search`, async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    const cat = req.query.category;
+    let sql = 'SELECT * FROM products WHERE 1=1';
+    const params = [];
+    if (q) { params.push(q, `%${q}%`); sql += ` AND (barcode=$${params.length-1} OR product_name ILIKE $${params.length})`; }
+    if (cat) { params.push(cat); sql += ` AND category=$${params.length}`; }
+    sql += ' ORDER BY product_name LIMIT 100';
+    const { rows } = await posDb.query(sql, params);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/products`, async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    let rows;
+    if (q) {
+      ({ rows } = await posDb.query(
+        'SELECT * FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name',
+        [q, `%${q}%`]
+      ));
+    } else {
+      ({ rows } = await posDb.query('SELECT * FROM products ORDER BY product_name'));
+    }
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/products`, async (req, res) => {
+  const d = req.body;
+  try {
+    const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
+    const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
+    const { rows: [ins] } = await posDb.query(
+      `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+      [d.barcode || null, d.product_name, d.quantity || 0,
+       d.purchase_price || 0, d.sale_price || 0,
+       d.expiry_date || null, d.image_url || null,
+       d.category || null, parseInt(d.min_stock || 0, 10),
+       d.description || null, variantsJson, d.section || 'dental', cbJson]
+    );
+    const posId = ins.id;
+    let syncError = null;
+    if (SUPABASE_DATABASE_URL) {
+      try { await syncNewProductToDentrust(posId, d); } catch (e) { syncError = e.message; }
+    }
+    const resp = { ok: true };
+    if (syncError) resp.sync_warning = `تم الحفظ في POS لكن فشل الربط بـ DenTrust: ${syncError}`;
+    res.status(201).json(resp);
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: 'الباركود مسجل مسبقاً' });
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
+});
+
+app.get(`${BASE}/api/products/:pid`, async (req, res) => {
+  try {
+    const { rows: [p] } = await posDb.query('SELECT * FROM products WHERE id=$1', [req.params.pid]);
+    if (!p) return res.status(404).json({ error: 'المنتج غير موجود' });
+    res.json(p);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.put(`${BASE}/api/products/:pid`, async (req, res) => {
+  const pid = parseInt(req.params.pid, 10);
+  const d = req.body;
+  try {
+    const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
+    const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
+    await posDb.query(
+      `UPDATE products SET barcode=$1, product_name=$2, quantity=$3, purchase_price=$4, sale_price=$5,
+       expiry_date=$6, image_url=$7, category=$8, min_stock=$9, description=$10, variants=$11,
+       section=$12, checkbox_values=$13 WHERE id=$14`,
+      [d.barcode || null, d.product_name, d.quantity || 0,
+       d.purchase_price || 0, d.sale_price || 0,
+       d.expiry_date || null, d.image_url || null,
+       d.category || null, parseInt(d.min_stock || 0, 10),
+       d.description || null, variantsJson, d.section || 'dental', cbJson, pid]
+    );
+    if (SUPABASE_DATABASE_URL) {
+      try { await syncUpdateProductToDentrust(pid, d); } catch (_) {}
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.delete(`${BASE}/api/products/:pid`, async (req, res) => {
+  const pid = parseInt(req.params.pid, 10);
+  try {
+    const { rows: [row] } = await posDb.query('SELECT dentrust_id FROM products WHERE id=$1', [pid]);
+    await posDb.query('DELETE FROM products WHERE id=$1', [pid]);
+    let syncError = null;
+    if (row?.dentrust_id && DATABASE_URL) {
+      try {
+        const client = await dentrustDb.connect();
+        try { await client.query('DELETE FROM products WHERE id=$1', [row.dentrust_id]); }
+        finally { client.release(); }
+      } catch (e) { syncError = e.message; }
+    }
+    const resp = { ok: true };
+    if (syncError) resp.sync_warning = `حُذف من POS لكن فشل الحذف من DenTrust: ${syncError}`;
+    res.json(resp);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/products/:pid/apply-discount`, async (req, res) => {
+  const pid = parseInt(req.params.pid, 10);
+  await posDb.query('UPDATE products SET sale_price=$1 WHERE id=$2', [parseFloat(req.body.new_price || 0), pid]);
+  res.json({ ok: true });
+});
+
+app.post(`${BASE}/api/products/:pid/mark-damaged`, async (req, res) => {
+  const pid = parseInt(req.params.pid, 10);
+  const { rows: [prod] } = await posDb.query('SELECT * FROM products WHERE id=$1', [pid]);
+  if (prod) {
+    const loss = parseFloat(prod.quantity || 0) * parseFloat(prod.purchase_price || 0);
+    await posDb.query('UPDATE products SET quantity=0 WHERE id=$1', [pid]);
+    await posDb.query(
+      "INSERT INTO expenses (title, amount, date) VALUES ($1,$2,CURRENT_DATE::text)",
+      [`خسارة/تلف: ${prod.product_name}`, loss]
+    );
+  }
+  res.json({ ok: true });
+});
+
+app.put(`${BASE}/api/products/:pid/supplier`, async (req, res) => {
+  const pid = parseInt(req.params.pid, 10);
+  await posDb.query('UPDATE products SET supplier_id=$1 WHERE id=$2', [req.body.supplier_id || null, pid]);
+  res.json({ ok: true });
+});
+
+// ── API: Barcode image ────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/barcode/:text`, async (req, res) => {
+  try {
+    const png = await bwip.toBuffer({
+      bcid: 'code128', text: req.params.text,
+      scale: 3, height: 12, includetext: true, textxalign: 'center',
+    });
+    res.set('Content-Type', 'image/png').send(png);
+  } catch (err) { res.status(400).send('Invalid barcode'); }
+});
+
+// ── API: Cash Sessions ────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/cash-sessions`, async (req, res) => {
+  try {
+    const { rows } = await posDb.query(
+      'SELECT cs.*, u.username as cashier_name FROM cash_sessions cs LEFT JOIN users u ON u.id=cs.cashier_id ORDER BY cs.id DESC LIMIT 30'
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/cash-sessions`, async (req, res) => {
+  const d = req.body;
+  if (d.opening_balance == null || d.opening_instapay == null) {
+    return res.status(400).json({ error: 'يرجى إدخال رصيد الخزينة النقدي ورصيد انستا باي' });
+  }
+  try {
+    const { rows: [open] } = await posDb.query(
+      "SELECT id FROM cash_sessions WHERE status='open' AND cashier_id=$1", [req.session.user_id]
+    );
+    if (open) return res.status(400).json({ error: 'يوجد جلسة مفتوحة بالفعل', session_id: open.id });
+    const now = new Date().toISOString();
+    const today = now.substring(0, 10);
+    const { rows: [ins] } = await posDb.query(
+      "INSERT INTO cash_sessions (cashier_id, date, opening_balance, opening_instapay, status, opened_at) VALUES ($1,$2,$3,$4,'open',$5) RETURNING id",
+      [req.session.user_id, today, parseFloat(d.opening_balance), parseFloat(d.opening_instapay), now]
+    );
+    res.status(201).json({ ok: true, session_id: ins.id });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.put(`${BASE}/api/cash-sessions/:sid`, async (req, res) => {
+  const sid = parseInt(req.params.sid, 10);
+  const d = req.body;
+  try {
+    const { rows: [sess] } = await posDb.query('SELECT * FROM cash_sessions WHERE id=$1', [sid]);
+    if (!sess) return res.status(404).json({ error: 'جلسة غير موجودة' });
+    const closing = parseFloat(d.closing_balance || 0);
+    const instapayCl = parseFloat(d.instapay_closing || 0);
+    const notes = d.notes || '';
+    const sessDate = sess.date || new Date().toISOString().substring(0, 10);
+
+    const { rows: [cashRow] } = await posDb.query(
+      "SELECT COALESCE(SUM(total_amount),0) as total FROM sales WHERE (payment_method='cash' OR payment_method='naqdi') AND date::date=$1::date",
+      [sessDate]
+    );
+    let cashSales = parseFloat(cashRow?.total || 0);
+    let instapaySales = 0;
+
+    const { rows: [instRow] } = await posDb.query(
+      "SELECT COALESCE(SUM(total_amount),0) as total FROM sales WHERE payment_method='instapay' AND date::date=$1::date",
+      [sessDate]
+    );
+    instapaySales = parseFloat(instRow?.total || 0);
+
+    const { rows: splitRows } = await posDb.query(
+      "SELECT payment_split FROM sales WHERE payment_method='split' AND date::date=$1::date", [sessDate]
+    );
+    let splitCash = 0, splitInsta = 0;
+    for (const row of splitRows) {
+      try { const sp = JSON.parse(row.payment_split || '{}'); splitCash += parseFloat(sp.cash || 0); splitInsta += parseFloat(sp.instapay || 0); } catch (_) {}
+    }
+    cashSales += splitCash; instapaySales += splitInsta;
+
+    const { rows: creditRows } = await posDb.query(
+      "SELECT payment_split FROM sales WHERE payment_method='credit' AND payment_split IS NOT NULL AND date::date=$1::date", [sessDate]
+    );
+    for (const row of creditRows) {
+      try { const ps = JSON.parse(row.payment_split || '{}'); cashSales += parseFloat(ps.cash || 0); instapaySales += parseFloat(ps.instapay || 0); } catch (_) {}
+    }
+
+    const { rows: [dcRow] } = await posDb.query("SELECT COALESCE(SUM(cash_amount),0) as t FROM customer_payments WHERE date::date=$1::date", [sessDate]);
+    const { rows: [diRow] } = await posDb.query("SELECT COALESCE(SUM(instapay_amount),0) as t FROM customer_payments WHERE date::date=$1::date", [sessDate]);
+    cashSales += parseFloat(dcRow?.t || 0); instapaySales += parseFloat(diRow?.t || 0);
+
+    const expectedCash = parseFloat(sess.opening_balance || 0) + cashSales;
+    const expectedInsta = parseFloat(sess.opening_instapay || 0) + instapaySales;
+    const discCash = closing - expectedCash;
+    const discInsta = instapayCl - expectedInsta;
+
+    await posDb.query(
+      `UPDATE cash_sessions SET closing_balance=$1, expected_cash=$2, discrepancy=$3,
+       instapay_sales=$4, instapay_closing=$5, instapay_discrepancy=$6,
+       cash_sales=$7, status='closed', notes=$8, closed_at=$9 WHERE id=$10`,
+      [closing, expectedCash, discCash, instapaySales, instapayCl, discInsta, cashSales, notes, new Date().toISOString(), sid]
+    );
+    res.json({ ok: true, expected_cash: expectedCash, discrepancy_cash: discCash, instapay_sales: instapaySales, expected_instapay: expectedInsta, discrepancy_instapay: discInsta });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── API: Sales ────────────────────────────────────────────────────────────────
+
+app.post(`${BASE}/api/sales`, async (req, res) => {
+  const d = req.body;
+  const items = d.items || [];
+  const total = parseFloat(d.total_amount || 0);
+  const method = d.payment_method || 'cash';
+  const customerId = d.customer_id || null;
+  const customerNameFree = (d.customer_name || '').trim() || null;
+  const splitJson = d.payment_split ? JSON.stringify(d.payment_split) : null;
+
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    for (const item of items) {
+      const { rows: [prod] } = await client.query('SELECT quantity, product_name, sale_price FROM products WHERE id=$1', [item.product_id]);
+      if (prod && prod.quantity < item.quantity) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `الكمية المطلوبة (${item.quantity}) تتجاوز المخزون المتاح (${prod.quantity}) للمنتج: ${prod.product_name}` });
+      }
+      if (prod && prod.quantity <= 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `المنتج "${prod.product_name}" غير متوفر في المخزون` });
+      }
+      if (prod && !hasPerm(req, 'edit_prices')) {
+        const dbPrice = parseFloat(prod.sale_price || 0);
+        const reqPrice = parseFloat(item.unit_price || dbPrice);
+        if (Math.abs(reqPrice - dbPrice) > 0.005) {
+          await client.query('ROLLBACK');
+          return res.status(403).json({ error: 'ليس لديك صلاحية تعديل الأسعار' });
+        }
+      }
+    }
+    const amtReceived = d.amount_received != null ? parseFloat(d.amount_received) : null;
+    const changeDue = d.change_due != null ? parseFloat(d.change_due) : null;
+    const { rows: [sale] } = await client.query(
+      `INSERT INTO sales (total_amount, payment_method, customer_id, cashier_id, customer_name, amount_received, change_due, payment_split)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [total, method, customerId, req.session.user_id, customerNameFree, amtReceived, changeDue, splitJson]
+    );
+    const saleId = sale.id;
+    const lowStockItemIds = [];
+    for (const item of items) {
+      const { rows: [snap] } = await client.query('SELECT purchase_price FROM products WHERE id=$1', [item.product_id]);
+      const snapPp = snap ? parseFloat(snap.purchase_price || 0) : 0;
+      await client.query(
+        `INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_purchase_price, snapshot_unit_price)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [saleId, item.product_id, item.product_name, item.quantity, item.unit_price, snapPp, parseFloat(item.unit_price)]
+      );
+      await client.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [item.quantity, item.product_id]);
+      lowStockItemIds.push(item.product_id);
+    }
+    if (method === 'credit' && customerId) {
+      const debtAmount = total - (amtReceived || 0);
+      if (debtAmount > 0) await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [debtAmount, customerId]);
+    } else if (method === 'split' && customerId && d.payment_split) {
+      const creditPortion = parseFloat(d.payment_split.credit || 0);
+      if (creditPortion > 0) await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [creditPortion, customerId]);
+    }
+    await client.query('COMMIT');
+
+    let lowStock = [];
+    if (lowStockItemIds.length > 0) {
+      const placeholders = lowStockItemIds.map((_, i) => `$${i + 1}`).join(',');
+      const { rows: lsRows } = await posDb.query(
+        `SELECT id, product_name, quantity, min_stock FROM products WHERE min_stock > 0 AND quantity <= min_stock AND id IN (${placeholders})`,
+        lowStockItemIds
+      );
+      lowStock = lsRows.map(r => ({ id: r.id, name: r.product_name, qty: r.quantity, min: r.min_stock }));
+    }
+    if (SUPABASE_DATABASE_URL) syncDentrustBatch(items.map(i => ({ pid: i.product_id, delta: -i.quantity }))).catch(() => {});
+    res.status(201).json({ ok: true, sale_id: saleId, low_stock: lowStock });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error(err);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  } finally { client.release(); }
+});
+
+app.get(`${BASE}/api/sales`, async (req, res) => {
+  try {
+    const { rows } = await posDb.query(
+      `SELECT s.*, c.name as customer_name FROM sales s LEFT JOIN customers c ON s.customer_id=c.id ORDER BY s.date DESC LIMIT 100`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/sales/:sid/mark-credit-paid`, async (req, res) => {
+  const sid = parseInt(req.params.sid, 10);
+  const d = req.body;
+  const cashAmount = parseFloat(d.cash_amount || 0);
+  const instapayAmount = parseFloat(d.instapay_amount || 0);
+  try {
+    const { rows: [sale] } = await posDb.query('SELECT * FROM sales WHERE id=$1', [sid]);
+    if (!sale) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+    if (sale.credit_paid) return res.json({ ok: true, already_paid: true });
+    if (!['credit', 'split'].includes(sale.payment_method)) return res.status(400).json({ error: 'الفاتورة ليست آجل' });
+    let debtAmount;
+    if (sale.payment_method === 'split') {
+      const splitData = JSON.parse(sale.payment_split || '{}');
+      debtAmount = parseFloat(splitData.credit || 0);
+    } else {
+      const ps = JSON.parse(sale.payment_split || '{}');
+      const upfront = parseFloat(ps.cash || 0) + parseFloat(ps.instapay || 0);
+      debtAmount = Math.max(0, parseFloat(sale.total_amount) - Math.max(parseFloat(sale.amount_received || 0), upfront));
+    }
+    await posDb.query('UPDATE sales SET credit_paid=1 WHERE id=$1', [sid]);
+    if (debtAmount > 0 && sale.customer_id) {
+      await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [debtAmount, sale.customer_id]);
+    }
+    if ((cashAmount + instapayAmount) > 0 && sale.customer_id) {
+      await posDb.query(
+        'INSERT INTO customer_payments (customer_id, amount, cash_amount, instapay_amount, note) VALUES ($1,$2,$3,$4,$5)',
+        [sale.customer_id, cashAmount + instapayAmount, cashAmount, instapayAmount, `وارد مديونية — فاتورة #${sid}`]
+      );
+    }
+    res.json({ ok: true, debt_reduced: Math.round(debtAmount * 100) / 100 });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const sid = parseInt(req.params.sid, 10);
+  try {
+    const { rows: [sale] } = await posDb.query('SELECT * FROM sales WHERE id=$1', [sid]);
+    if (!sale) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+    const { rows: items } = await posDb.query(
+      `SELECT si.product_id, si.quantity, COALESCE(ri_sum.returned,0) AS returned
+       FROM sale_items si
+       LEFT JOIN (SELECT ri.sale_item_id, SUM(ri.quantity) AS returned FROM return_items ri
+                  JOIN returns r ON r.id=ri.return_id WHERE r.sale_id=$1 GROUP BY ri.sale_item_id) ri_sum
+         ON ri_sum.sale_item_id=si.id WHERE si.sale_id=$1`, [sid]
+    );
+    for (const item of items) {
+      const netRestore = item.quantity - item.returned;
+      if (netRestore > 0) await posDb.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [netRestore, item.product_id]);
+    }
+    if (sale.payment_method === 'credit' && sale.customer_id) {
+      const { rows: [rr] } = await posDb.query("SELECT COALESCE(SUM(total_refund),0) AS t FROM returns WHERE sale_id=$1", [sid]);
+      const netDebt = parseFloat(sale.total_amount) - parseFloat(rr?.t || 0);
+      if (netDebt > 0) await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [netDebt, sale.customer_id]);
+    }
+    await posDb.query('DELETE FROM return_items WHERE return_id IN (SELECT id FROM returns WHERE sale_id=$1)', [sid]);
+    await posDb.query('DELETE FROM returns WHERE sale_id=$1', [sid]);
+    await posDb.query('DELETE FROM sale_items WHERE sale_id=$1', [sid]);
+    await posDb.query('DELETE FROM sales WHERE id=$1', [sid]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── API: Customers ────────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/customers`, async (req, res) => {
+  try {
+    const { rows } = await posDb.query('SELECT * FROM customers ORDER BY total_debt DESC, name ASC');
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/customers`, async (req, res) => {
+  const d = req.body;
+  try {
+    await posDb.query(
+      'INSERT INTO customers (name, phone, address, installment_plan) VALUES ($1,$2,$3,$4)',
+      [d.name, d.phone || '', d.address || '', d.installment_plan || '']
+    );
+    res.status(201).json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/customers/:cid/orders`, async (req, res) => {
+  const cid = parseInt(req.params.cid, 10);
+  try {
+    const { rows: sales } = await posDb.query(
+      `SELECT s.*, CASE WHEN s.payment_method IN ('credit','split') THEN 0 ELSE 1 END as sort_key
+       FROM sales s WHERE s.customer_id=$1 ORDER BY sort_key ASC, s.date DESC`, [cid]
+    );
+    const result = [];
+    for (const s of sales) {
+      const { rows: saleItems } = await posDb.query('SELECT * FROM sale_items WHERE sale_id=$1', [s.id]);
+      result.push({ ...s, items: saleItems });
+    }
+    res.json(result);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
+  const cid = parseInt(req.params.cid, 10);
+  const d = req.body;
+  let amount = parseFloat(d.amount || 0);
+  let cashAmt = parseFloat(d.cash_amount || 0);
+  let instaAmt = parseFloat(d.instapay_amount || 0);
+  if (cashAmt + instaAmt === 0 && amount > 0) cashAmt = amount;
+  try {
+    await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [amount, cid]);
+    await posDb.query(
+      'INSERT INTO customer_payments (customer_id, amount, cash_amount, instapay_amount, note) VALUES ($1,$2,$3,$4,$5)',
+      [cid, amount, cashAmt, instaAmt, d.note || '']
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/customers/:cid/payments`, async (req, res) => {
+  const cid = parseInt(req.params.cid, 10);
+  try {
+    const { rows } = await posDb.query('SELECT * FROM customer_payments WHERE customer_id=$1 ORDER BY date DESC', [cid]);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/customers/:cid/statement`, async (req, res) => {
+  const cid = parseInt(req.params.cid, 10);
+  try {
+    const { rows: [c] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [cid]);
+    if (!c) return res.status(404).json({ error: 'العميل غير موجود' });
+    const { rows: [ti] } = await posDb.query("SELECT COALESCE(SUM(total_amount),0) as t FROM sales WHERE customer_id=$1 AND payment_method='credit'", [cid]);
+    const { rows: [tp] } = await posDb.query("SELECT COALESCE(SUM(amount),0) as t FROM customer_payments WHERE customer_id=$1", [cid]);
+    const { rows: [tr] } = await posDb.query("SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r JOIN sales s ON s.id=r.sale_id WHERE s.customer_id=$1 AND s.payment_method='credit'", [cid]);
+    res.json({
+      total_invoiced: Math.round(parseFloat(ti.t) * 100) / 100,
+      total_returned: Math.round(parseFloat(tr.t) * 100) / 100,
+      net_invoiced: Math.round((parseFloat(ti.t) - parseFloat(tr.t)) * 100) / 100,
+      total_paid: Math.round(parseFloat(tp.t) * 100) / 100,
+      remaining: Math.round(parseFloat(c.total_debt) * 100) / 100,
+    });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.delete(`${BASE}/api/customers/:cid`, async (req, res) => {
+  try {
+    await posDb.query('DELETE FROM customers WHERE id=$1', [parseInt(req.params.cid, 10)]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── API: Expenses ─────────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/expenses`, async (req, res) => {
+  try {
+    const { rows } = await posDb.query('SELECT * FROM expenses ORDER BY date DESC');
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/expenses`, async (req, res) => {
+  const d = req.body;
+  try {
+    await posDb.query(
+      'INSERT INTO expenses (title, amount, date) VALUES ($1,$2,$3)',
+      [d.title, parseFloat(d.amount), d.date || new Date().toISOString().substring(0, 10)]
+    );
+    res.status(201).json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.delete(`${BASE}/api/expenses/:eid`, async (req, res) => {
+  await posDb.query('DELETE FROM expenses WHERE id=$1', [parseInt(req.params.eid, 10)]);
+  res.json({ ok: true });
+});
+
+// ── API: Reports ──────────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/reports/summary`, async (req, res) => {
+  const period = req.query.period || 'month';
+  try {
+    const df = periodFilter(period, 's.date');
+    const ef = periodFilter(period, 'e.date');
+    const rf = periodFilter(period, 'r.date');
+    const { rows: [sd] } = await posDb.query(
+      `SELECT COALESCE(SUM(si.quantity*si.unit_price),0) as r,
+              COALESCE(SUM(si.quantity*COALESCE(si.snapshot_purchase_price,0)),0) as c
+       FROM sales s JOIN sale_items si ON si.sale_id=s.id WHERE ${df}`
+    );
+    const { rows: [et] } = await posDb.query(
+      `SELECT COALESCE(SUM(e.amount),0) as t FROM expenses e WHERE ${ef} AND e.title NOT LIKE 'مردود فاتورة%'`
+    );
+    const { rows: [rt] } = await posDb.query(
+      `SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r WHERE ${rf}`
+    );
+    const { rows: [sc] } = await posDb.query(`SELECT COUNT(*) as cnt FROM sales s WHERE ${df}`);
+    const rev = parseFloat(sd.r || 0), cost = parseFloat(sd.c || 0), exp = parseFloat(et.t || 0), refunds = parseFloat(rt.t || 0);
+    const netRev = Math.max(0, rev - refunds);
+    const gross = netRev - cost;
+    const netProfit = gross - exp;
+    const { rows: payRows } = await posDb.query(
+      `SELECT payment_method, COUNT(*) as cnt, SUM(total_amount) as total FROM sales s WHERE ${df} GROUP BY payment_method`
+    );
+    let cashRev = 0, instaRev = 0;
+    for (const row of payRows) {
+      const m = row.payment_method || '';
+      const t = parseFloat(row.total || 0);
+      if (m === 'cash' || m === 'naqdi') cashRev += t;
+      if (m === 'instapay') instaRev += t;
+    }
+    const { rows: splitRows } = await posDb.query(
+      `SELECT payment_split FROM sales s WHERE payment_method='split' AND ${df}`
+    );
+    for (const row of splitRows) {
+      try { const sp = JSON.parse(row.payment_split || '{}'); cashRev += parseFloat(sp.cash || 0); instaRev += parseFloat(sp.instapay || 0); } catch (_) {}
+    }
+    res.json({
+      revenue: r2(rev), refunds: r2(refunds), net_revenue: r2(netRev),
+      cost: r2(cost), gross_profit: r2(gross), expenses: r2(exp), net_profit: r2(netProfit),
+      sales_count: parseInt(sc.cnt, 10),
+      payment_breakdown: payRows.map(r => ({ ...r, cnt: parseInt(r.cnt, 10), total: parseFloat(r.total || 0) })),
+      cash_revenue: r2(cashRev), instapay_revenue: r2(instaRev),
+    });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/expiry-alerts`, async (req, res) => {
+  const months = parseInt(req.query.months || 3, 10);
+  try {
+    const { rows } = await posDb.query(
+      `SELECT * FROM products WHERE expiry_date IS NOT NULL AND expiry_date::date <= CURRENT_DATE + INTERVAL '${months * 30} days' ORDER BY expiry_date`
+    );
+    const today = new Date().toISOString().substring(0, 10);
+    res.json(rows.map(r => ({ ...r, status: String(r.expiry_date) < today ? 'expired' : 'warning' })));
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/reports/top-products`, async (req, res) => {
+  const period = req.query.period || 'month';
+  try {
+    const df = periodFilter(period, 's.date');
+    const { rows } = await posDb.query(
+      `SELECT si.product_name, SUM(si.quantity) as total_qty, SUM(si.quantity*si.unit_price) as total_revenue
+       FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE ${df}
+       GROUP BY si.product_name ORDER BY total_qty DESC LIMIT 20`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/reports/top-customers`, async (req, res) => {
+  const period = req.query.period || 'month';
+  try {
+    const df = periodFilter(period, 's.date');
+    const { rows } = await posDb.query(
+      `SELECT COALESCE(c.name, s.customer_name, 'عميل نقدي') as customer_name,
+              COUNT(*) as order_count, SUM(s.total_amount) as total_spent
+       FROM sales s LEFT JOIN customers c ON c.id=s.customer_id WHERE ${df}
+       GROUP BY COALESCE(c.name, s.customer_name, 'عميل نقدي') ORDER BY total_spent DESC LIMIT 20`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/reports/hourly`, async (req, res) => {
+  const period = req.query.period || 'today';
+  try {
+    const df = periodFilter(period, 's.date');
+    const { rows } = await posDb.query(
+      `SELECT TO_CHAR(s.date::timestamp, 'HH24') as hour, COUNT(*) as cnt, SUM(s.total_amount) as total
+       FROM sales s WHERE ${df} GROUP BY hour ORDER BY hour`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/stats`, async (req, res) => {
+  try {
+    const [inv, fin, exp] = await Promise.all([
+      posDb.query(`SELECT COUNT(*) as total_products,
+                          COALESCE(SUM(CASE WHEN quantity <= min_stock AND min_stock > 0 THEN 1 ELSE 0 END), 0) as low_stock
+                   FROM products`),
+      posDb.query(`SELECT COALESCE(SUM(s.total_amount),0) as revenue,
+                          COALESCE(SUM(si.unit_price * si.quantity * COALESCE(p.purchase_price / NULLIF(p.sale_price,0), 0)),0) as cost
+                   FROM sales s
+                   LEFT JOIN sale_items si ON si.sale_id = s.id
+                   LEFT JOIN products p ON p.id = si.product_id
+                   WHERE s.payment_method != 'refund'
+                     AND COALESCE(s.source,'pos') = 'pos'`),
+      posDb.query(`SELECT COALESCE(SUM(amount),0) as total_expenses FROM expenses`),
+    ]);
+    const revenue = parseFloat(fin.rows[0].revenue);
+    const cost    = parseFloat(fin.rows[0].cost);
+    const expenses = parseFloat(exp.rows[0].total_expenses);
+    res.json({
+      total_products: parseInt(inv.rows[0].total_products, 10),
+      low_stock:      parseInt(inv.rows[0].low_stock, 10),
+      posRevenue:  revenue,
+      posCost:     cost,
+      posExpenses: expenses,
+      posNetProfit: revenue - cost - expenses,
+    });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── API: Invoices ─────────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/invoices`, async (req, res) => {
+  try {
+    const { rows } = await posDb.query(
+      `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone,
+              COALESCE(ret.total_refunded,0) AS total_refunded,
+              COALESCE(ret.return_count,0) AS return_count
+       FROM sales s
+       LEFT JOIN customers c ON s.customer_id = c.id
+       LEFT JOIN (SELECT sale_id, SUM(total_refund) AS total_refunded, COUNT(*) AS return_count FROM returns GROUP BY sale_id) ret ON ret.sale_id = s.id
+       ORDER BY s.date DESC`
+    );
+    const result = rows.map(r => {
+      const totalRefunded = parseFloat(r.total_refunded || 0);
+      const totalAmt = parseFloat(r.total_amount || 0);
+      let returnStatus = 0;
+      if (totalRefunded >= totalAmt && totalAmt > 0) returnStatus = 2;
+      else if (totalRefunded > 0) returnStatus = 1;
+      return { ...r, return_status: returnStatus, is_returned: returnStatus === 2 };
+    });
+    res.json(result);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/invoices/:sid`, async (req, res) => {
+  const sid = parseInt(req.params.sid, 10);
+  try {
+    const { rows: [inv] } = await posDb.query(
+      `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone
+       FROM sales s LEFT JOIN customers c ON s.customer_id = c.id WHERE s.id=$1`, [sid]
+    );
+    if (!inv) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+    const { rows: itemsRaw } = await posDb.query('SELECT * FROM sale_items WHERE sale_id=$1', [sid]);
+    const items = [];
+    for (const item of itemsRaw) {
+      const { rows: [ret] } = await posDb.query(
+        'SELECT COALESCE(SUM(ri.quantity),0) as qty FROM return_items ri WHERE ri.sale_item_id=$1', [item.id]
+      );
+      const returnedQty = parseInt(ret?.qty || 0, 10);
+      items.push({ ...item, returned_qty: returnedQty, remaining_qty: Math.max(0, item.quantity - returnedQty) });
+    }
+    const totalRemaining = items.reduce((s, i) => s + i.remaining_qty, 0);
+    const totalSold = items.reduce((s, i) => s + i.quantity, 0);
+    const returnStatus = (totalRemaining === 0 && totalSold > 0) ? 2 : (totalRemaining < totalSold ? 1 : 0);
+    inv.return_status = returnStatus;
+    const { rows: returns } = await posDb.query(
+      `SELECT r.*, u.username AS processed_by_name FROM returns r
+       LEFT JOIN users u ON u.id = r.processed_by WHERE r.sale_id=$1 ORDER BY r.date`, [sid]
+    );
+    res.json({ invoice: inv, items, returns });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
+  if (!hasPerm(req, 'process_returns')) return res.status(403).json({ error: 'ليس لديك صلاحية معالجة المردودات' });
+  const sid = parseInt(req.params.sid, 10);
+  const d = req.body;
+  const reason = d.reason || '';
+  let selected = d.items || [];
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [sale] } = await client.query('SELECT * FROM sales WHERE id=$1', [sid]);
+    if (!sale) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'الفاتورة غير موجودة' }); }
+    const { rows: allItems } = await client.query('SELECT * FROM sale_items WHERE sale_id=$1', [sid]);
+    if (!selected.length) {
+      for (const item of allItems) {
+        const { rows: [al] } = await client.query('SELECT COALESCE(SUM(ri.quantity),0) as qty FROM return_items ri WHERE ri.sale_item_id=$1', [item.id]);
+        const rem = item.quantity - parseInt(al.qty, 10);
+        if (rem > 0) selected.push({ sale_item_id: item.id, quantity: rem });
+      }
+    }
+    if (!selected.length) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'لا توجد أصناف متبقية للاسترجاع' }); }
+    let totalRefund = 0;
+    const validated = [];
+    for (const sel of selected) {
+      const selSid = parseInt(sel.sale_item_id, 10);
+      const qty = parseInt(sel.quantity || 0, 10);
+      const { rows: [item] } = await client.query('SELECT * FROM sale_items WHERE id=$1 AND sale_id=$2', [selSid, sid]);
+      if (!item || qty <= 0) continue;
+      const { rows: [al] } = await client.query('SELECT COALESCE(SUM(ri.quantity),0) as qty FROM return_items ri WHERE ri.sale_item_id=$1', [selSid]);
+      const allowed = Math.min(qty, item.quantity - parseInt(al.qty, 10));
+      if (allowed <= 0) continue;
+      validated.push({ item, quantity: allowed });
+      totalRefund += allowed * parseFloat(item.unit_price);
+    }
+    if (!validated.length) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'الكميات غير صحيحة أو مسترجعة مسبقاً' }); }
+    const { rows: [ret] } = await client.query(
+      'INSERT INTO returns (sale_id, total_refund, reason, processed_by) VALUES ($1,$2,$3,$4) RETURNING id',
+      [sid, totalRefund, reason, req.session.user_id]
+    );
+    const returnId = ret.id;
+    for (const v of validated) {
+      const { item, quantity } = v;
+      await client.query(
+        'INSERT INTO return_items (return_id, sale_item_id, product_id, product_name, quantity, unit_price) VALUES ($1,$2,$3,$4,$5,$6)',
+        [returnId, item.id, item.product_id, item.product_name, quantity, item.unit_price]
+      );
+      if (item.product_id) await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [quantity, item.product_id]);
+    }
+    if (sale.payment_method === 'credit' && sale.customer_id) {
+      await client.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [totalRefund, sale.customer_id]);
+    }
+    await client.query('INSERT INTO expenses (title, amount, date) VALUES ($1,$2,CURRENT_DATE::text)',
+      [`مردود فاتورة #${sid}${reason ? ` (${reason})` : ''}`, totalRefund]);
+    await client.query('COMMIT');
+    if (SUPABASE_DATABASE_URL) {
+      syncDentrustBatch(validated.filter(v => v.item.product_id).map(v => ({ pid: v.item.product_id, delta: v.quantity }))).catch(() => {});
+    }
+    res.status(201).json({ ok: true, refund_amount: totalRefund });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: 'خطأ داخلي' });
+  } finally { client.release(); }
+});
+
+app.delete(`${BASE}/api/returns/:rid`, async (req, res) => {
+  if (!hasPerm(req, 'process_returns')) return res.status(403).json({ error: 'ليس لديك صلاحية' });
+  const rid = parseInt(req.params.rid, 10);
+  try {
+    const { rows: [ret] } = await posDb.query('SELECT * FROM returns WHERE id=$1', [rid]);
+    if (!ret) return res.status(404).json({ error: 'المردود غير موجود' });
+    const { rows: [sale] } = await posDb.query('SELECT * FROM sales WHERE id=$1', [ret.sale_id]);
+    const { rows: returnItems } = await posDb.query('SELECT * FROM return_items WHERE return_id=$1', [rid]);
+    for (const ri of returnItems) {
+      if (ri.product_id) await posDb.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [ri.quantity, ri.product_id]);
+    }
+    if (sale?.payment_method === 'credit' && sale.customer_id) {
+      await posDb.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [ret.total_refund, sale.customer_id]);
+    }
+    await posDb.query("DELETE FROM expenses WHERE id = (SELECT id FROM expenses WHERE title LIKE $1 AND amount=$2 LIMIT 1)",
+      [`مردود فاتورة #${ret.sale_id}%`, ret.total_refund]);
+    await posDb.query('DELETE FROM return_items WHERE return_id=$1', [rid]);
+    await posDb.query('DELETE FROM returns WHERE id=$1', [rid]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/invoices/:sid/add-items`, async (req, res) => {
+  const sid = parseInt(req.params.sid, 10);
+  const { items } = req.body;
+  if (!items?.length) return res.status(400).json({ error: 'لا توجد أصناف' });
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [sale] } = await client.query('SELECT * FROM sales WHERE id=$1', [sid]);
+    if (!sale) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'الفاتورة غير موجودة' }); }
+    let extraTotal = 0;
+    for (const item of items) {
+      const prodId = item.product_id;
+      const qty = parseInt(item.quantity || 1, 10);
+      const price = parseFloat(item.unit_price || 0);
+      const name = item.product_name || '';
+      let prod = null;
+      if (prodId) {
+        const { rows: [p] } = await client.query('SELECT * FROM products WHERE id=$1', [prodId]);
+        if (!p) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'المنتج غير موجود' }); }
+        if (p.quantity < qty) { await client.query('ROLLBACK'); return res.status(400).json({ error: `مخزون غير كافٍ لـ ${p.product_name}` }); }
+        prod = p;
+      }
+      const snapPp = prod ? parseFloat(prod.purchase_price || 0) : 0;
+      await client.query(
+        'INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_purchase_price, snapshot_unit_price) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [sid, prodId, name, qty, price, snapPp, price]
+      );
+      if (prodId) await client.query('UPDATE products SET quantity = quantity - $1 WHERE id=$2', [qty, prodId]);
+      extraTotal += qty * price;
+    }
+    await client.query('UPDATE sales SET total_amount = total_amount + $1 WHERE id=$2', [extraTotal, sid]);
+    if (sale.payment_method === 'credit' && sale.customer_id) {
+      await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [extraTotal, sale.customer_id]);
+    }
+    await client.query('COMMIT');
+    res.status(201).json({ ok: true, added_amount: extraTotal });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: 'خطأ داخلي' });
+  } finally { client.release(); }
+});
+
+// ── API: Settings ─────────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/backup`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    const tables = ['products', 'customers', 'sales', 'sale_items', 'expenses',
+                    'suppliers', 'store_settings', 'users', 'cash_register_entries'];
+    const backup = { exported_at: new Date().toISOString(), tables: {} };
+    for (const t of tables) {
+      try {
+        const { rows } = await posDb.query(`SELECT * FROM ${t}`);
+        backup.tables[t] = rows;
+      } catch (_) { backup.tables[t] = []; }
+    }
+    const json = JSON.stringify(backup, null, 2);
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Disposition', `attachment; filename="pos_backup_${date}.json"`);
+    res.setHeader('Content-Type', 'application/json');
+    res.send(json);
+  } catch (err) { res.status(500).json({ error: 'خطأ في التصدير' }); }
+});
+
+app.post(`${BASE}/api/restore`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    const { tables } = req.body;
+    if (!tables || typeof tables !== 'object') return res.status(400).json({ error: 'بيانات غير صالحة' });
+    const RESTORE_ORDER = ['suppliers', 'customers', 'products', 'users', 'store_settings',
+                           'sales', 'sale_items', 'expenses', 'cash_register_entries'];
+    let restored = 0;
+    for (const table of RESTORE_ORDER) {
+      const rows = tables[table];
+      if (!Array.isArray(rows) || !rows.length) continue;
+      const cols = Object.keys(rows[0]).filter(c => c !== 'id');
+      if (!cols.length) continue;
+      for (const row of rows) {
+        try {
+          const vals = cols.map(c => row[c]);
+          const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
+          await posDb.query(
+            `INSERT INTO ${table} (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
+            vals
+          );
+          restored++;
+        } catch (_) {}
+      }
+    }
+    res.json({ ok: true, restored });
+  } catch (err) { res.status(500).json({ error: 'خطأ في الاستعادة: ' + err.message }); }
+});
+
+app.get(`${BASE}/api/settings`, async (req, res) => {
+  try { res.json(await getSettings()); } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/settings`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const d = req.body;
+  try {
+    for (const [k, v] of Object.entries(d)) {
+      await posDb.query(
+        'INSERT INTO store_settings (key,value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value=$2',
+        [k, String(v)]
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── API: Suppliers ────────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/suppliers`, async (req, res) => {
+  try {
+    const { rows } = await posDb.query(
+      `SELECT s.*, COUNT(p.id) as product_count
+       FROM suppliers s LEFT JOIN products p ON p.supplier_id=s.id
+       GROUP BY s.id ORDER BY s.name`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/suppliers`, async (req, res) => {
+  const d = req.body;
+  try {
+    await posDb.query('INSERT INTO suppliers (name, phone, address, notes) VALUES ($1,$2,$3,$4)', [d.name, d.phone || '', d.address || '', d.notes || '']);
+    res.status(201).json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.put(`${BASE}/api/suppliers/:sid`, async (req, res) => {
+  const d = req.body;
+  await posDb.query('UPDATE suppliers SET name=$1, phone=$2, address=$3, notes=$4 WHERE id=$5', [d.name, d.phone || '', d.address || '', d.notes || '', req.params.sid]);
+  res.json({ ok: true });
+});
+
+app.delete(`${BASE}/api/suppliers/:sid`, async (req, res) => {
+  await posDb.query('UPDATE products SET supplier_id=NULL WHERE supplier_id=$1', [req.params.sid]);
+  await posDb.query('DELETE FROM suppliers WHERE id=$1', [req.params.sid]);
+  res.json({ ok: true });
+});
+
+app.get(`${BASE}/api/suppliers/:sid/products`, async (req, res) => {
+  try {
+    const { rows } = await posDb.query('SELECT * FROM products WHERE supplier_id=$1 ORDER BY product_name', [req.params.sid]);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── API: Installments ─────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/installments`, async (req, res) => {
+  try {
+    const customerId = req.query.customer_id || req.query.cid;
+    let sql = `SELECT i.*, c.name as customer_name FROM installment_schedules i LEFT JOIN customers c ON c.id=i.customer_id WHERE 1=1`;
+    const params = [];
+    if (customerId) { params.push(customerId); sql += ` AND i.customer_id=$${params.length}`; }
+    sql += ' ORDER BY i.due_date ASC';
+    const { rows } = await posDb.query(sql, params);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/installments`, async (req, res) => {
+  const d = req.body;
+  try {
+    await posDb.query(
+      'INSERT INTO installment_schedules (customer_id, sale_id, installment_number, amount, due_date, notes) VALUES ($1,$2,$3,$4,$5,$6)',
+      [d.customer_id, d.sale_id || null, d.installment_number || 1, d.amount, d.due_date, d.notes || '']
+    );
+    res.status(201).json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.put(`${BASE}/api/installments/:iid`, async (req, res) => {
+  const d = req.body;
+  await posDb.query('UPDATE installment_schedules SET status=$1, paid_date=$2, notes=$3 WHERE id=$4',
+    [d.status, d.paid_date || null, d.notes || '', req.params.iid]);
+  res.json({ ok: true });
+});
+
+app.delete(`${BASE}/api/installments/:iid`, async (req, res) => {
+  await posDb.query('DELETE FROM installment_schedules WHERE id=$1', [req.params.iid]);
+  res.json({ ok: true });
+});
+
+// ── API: CSV Export ────────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/export/csv`, async (req, res) => {
+  const type = req.query.type || 'sales';
+  const period = req.query.period || 'all';
+  function periodFilter(col) {
+    if (period === 'today') return `AND DATE(${col}) = CURRENT_DATE`;
+    if (period === 'week')  return `AND DATE(${col}) >= CURRENT_DATE - INTERVAL '7 days'`;
+    if (period === 'month') return `AND DATE(${col}) >= DATE_TRUNC('month', CURRENT_DATE)`;
+    if (period === 'year')  return `AND DATE(${col}) >= DATE_TRUNC('year', CURRENT_DATE)`;
+    return '';
+  }
+  try {
+    let rows, headers;
+    if (type === 'sales') {
+      ({ rows } = await posDb.query(`SELECT s.id, s.date, s.total_amount, s.payment_method, COALESCE(c.name,'') as customer FROM sales s LEFT JOIN customers c ON c.id=s.customer_id WHERE 1=1 ${periodFilter('s.date')} ORDER BY s.date DESC`));
+      headers = ['id', 'date', 'total_amount', 'payment_method', 'customer'];
+    } else if (type === 'products') {
+      ({ rows } = await posDb.query('SELECT id, barcode, product_name, quantity, purchase_price, sale_price, category FROM products ORDER BY product_name'));
+      headers = ['id', 'barcode', 'product_name', 'quantity', 'purchase_price', 'sale_price', 'category'];
+    } else if (type === 'customers') {
+      ({ rows } = await posDb.query('SELECT id, name, phone, total_debt FROM customers ORDER BY name'));
+      headers = ['id', 'name', 'phone', 'total_debt'];
+    } else if (type === 'expenses') {
+      ({ rows } = await posDb.query(`SELECT e.id, e.date, e.title, e.amount FROM expenses e WHERE 1=1 ${periodFilter('e.date')} ORDER BY e.date DESC`));
+      headers = ['id', 'date', 'title', 'amount'];
+    } else if (type === 'top-products') {
+      ({ rows } = await posDb.query(`SELECT si.product_name, SUM(si.quantity) as total_qty, SUM(si.quantity * si.unit_price) as total_revenue FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE 1=1 ${periodFilter('s.date')} GROUP BY si.product_name ORDER BY total_qty DESC LIMIT 100`));
+      headers = ['product_name', 'total_qty', 'total_revenue'];
+    } else if (type === 'top-customers') {
+      ({ rows } = await posDb.query(`SELECT c.name, c.phone, COUNT(s.id) as orders, SUM(s.total_amount) as total_spent FROM sales s JOIN customers c ON c.id=s.customer_id WHERE 1=1 ${periodFilter('s.date')} GROUP BY c.id, c.name, c.phone ORDER BY total_spent DESC LIMIT 100`));
+      headers = ['name', 'phone', 'orders', 'total_spent'];
+    } else {
+      ({ rows } = await posDb.query('SELECT id, name, phone, total_debt FROM customers ORDER BY name'));
+      headers = ['id', 'name', 'phone', 'total_debt'];
+    }
+    const csv = [headers.join(','), ...rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(','))].join('\n');
+    res.set('Content-Type', 'text/csv; charset=utf-8').set('Content-Disposition', `attachment; filename="${type}.csv"`).send('\uFEFF' + csv);
+  } catch (err) { res.status(500).send('خطأ'); }
+});
+
+// ── DenTrust Sync Helpers ─────────────────────────────────────────────────────
+
+async function syncDentrustBatch(updates) {
+  if (!SUPABASE_DATABASE_URL || !updates.length) return;
+  const client = await dentrustDb.connect();
+  try {
+    for (const { pid, delta } of updates) {
+      const { rows: [row] } = await posDb.query('SELECT dentrust_id FROM products WHERE id=$1', [pid]);
+      if (!row?.dentrust_id) continue;
+      await client.query('UPDATE products SET stock = GREATEST(0, COALESCE(stock,0) + $1) WHERE id=$2', [delta, row.dentrust_id]);
+    }
+  } finally { client.release(); }
+}
+
+async function syncNewProductToDentrust(posId, d) {
+  const client = await dentrustDb.connect();
+  try {
+    const catName = (d.category || '').trim() || 'General';
+    let { rows: [catRow] } = await client.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) LIMIT 1', [catName]);
+    if (!catRow) {
+      const { rows: [newCat] } = await client.query("INSERT INTO categories (name, section) VALUES ($1, 'dental') RETURNING id", [catName]);
+      catRow = newCat;
+    }
+    const details = (d.description || '').trim() || d.product_name;
+    const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
+    const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
+    const { rows: [ins] } = await client.query(
+      'INSERT INTO products (name, price, purchase_price, stock, is_offer, photos, category_id, expiry_date, details, section, variants, checkbox_values) VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11) RETURNING id',
+      [d.product_name, d.sale_price || 0, d.purchase_price ? String(d.purchase_price) : null,
+       d.quantity || 0, [], catRow.id, d.expiry_date || null, details,
+       d.section || 'dental', variantsJson, cbJson]
+    );
+    await posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2', [ins.id, posId]);
+  } finally { client.release(); }
+}
+
+async function syncUpdateProductToDentrust(pid, d) {
+  const { rows: [row] } = await posDb.query('SELECT dentrust_id FROM products WHERE id=$1', [pid]);
+  if (!row?.dentrust_id) return;
+  const client = await dentrustDb.connect();
+  try {
+    const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
+    const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
+    await client.query(
+      'UPDATE products SET name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, variants=$6, section=$7, checkbox_values=$8 WHERE id=$9',
+      [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
+       d.purchase_price ? String(d.purchase_price) : null, variantsJson,
+       d.section || 'dental', cbJson, row.dentrust_id]);
+  } finally { client.release(); }
+}
+
+async function upsertCustomerInPOS(data) {
+  const { name, phone, city, region, street, building, landmark, address, dentrust_id } = data;
+  if (!phone) return null;
+  const cleanPhone = phone.trim();
+  const fullAddr = address || [street, building, region].filter(Boolean).join('، ');
+  const { rows: [existing] } = await posDb.query('SELECT id FROM customers WHERE phone=$1', [cleanPhone]);
+  if (existing) {
+    await posDb.query(
+      `UPDATE customers SET
+        name = CASE WHEN name IS NULL OR name='' THEN $1 ELSE name END,
+        city = COALESCE(NULLIF($2,''), city), region = COALESCE(NULLIF($3,''), region),
+        street = COALESCE(NULLIF($4,''), street), building_number = COALESCE(NULLIF($5,''), building_number),
+        landmark = COALESCE(NULLIF($6,''), landmark), address = COALESCE(NULLIF($7,''), address),
+        dentrust_id = COALESCE(dentrust_id, $8) WHERE phone=$9`,
+      [name, city || '', region || '', street || '', building || '', landmark || '', fullAddr, dentrust_id, cleanPhone]
+    );
+    return existing.id;
+  }
+  const { rows: [ins] } = await posDb.query(
+    'INSERT INTO customers (name, phone, city, region, street, building_number, landmark, address, dentrust_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
+    [name, cleanPhone, city || '', region || '', street || '', building || '', landmark || '', fullAddr, dentrust_id]
+  );
+  return ins.id;
+}
+
+// ── API: Sync Routes ──────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/sync/dentrust-products`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  try {
+    const client = await dentrustDb.connect();
+    try {
+      const { rows } = await client.query('SELECT id, name, stock FROM products ORDER BY name');
+      res.json(rows);
+    } finally { client.release(); }
+  } catch (err) { res.status(503).json({ error: 'فشل الاتصال بـ DenTrust' }); }
+});
+
+app.get(`${BASE}/api/sync/pos-products`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const { rows } = await posDb.query('SELECT id, product_name, quantity, dentrust_id FROM products ORDER BY product_name');
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/sync/dentrust-customers`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  try {
+    const client = await dentrustDb.connect();
+    try {
+      const { rows } = await client.query('SELECT id, name, phone FROM customers ORDER BY name LIMIT 1000');
+      res.json(rows);
+    } finally { client.release(); }
+  } catch (err) { res.status(503).json({ error: 'فشل الاتصال بـ DenTrust' }); }
+});
+
+app.get(`${BASE}/api/sync/pos-customers`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const { rows } = await posDb.query('SELECT id, name, phone, dentrust_id FROM customers ORDER BY name');
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/sync/link`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  // Support both payload formats: {pos_id, dentrust_id} and {pos_product_id, dentrust_product_id}
+  const posId      = req.body.pos_id       || req.body.pos_product_id;
+  const dentrustId = req.body.dentrust_id  || req.body.dentrust_product_id;
+  await posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2', [dentrustId || null, posId]);
+  res.json({ ok: true });
+});
+
+app.post(`${BASE}/api/sync/push-unlinked`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  try {
+    const { rows: unlinked } = await posDb.query('SELECT * FROM products WHERE dentrust_id IS NULL');
+    let pushed = 0, failed = 0;
+    for (const p of unlinked) {
+      try {
+        await syncNewProductToDentrust(p.id, { product_name: p.product_name, sale_price: p.sale_price, purchase_price: p.purchase_price, quantity: p.quantity, category: p.category, description: p.description, expiry_date: p.expiry_date });
+        pushed++;
+      } catch (_) { failed++; }
+    }
+    res.json({ ok: true, pushed, failed });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/sync/push-stock`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  try {
+    const { rows: linked } = await posDb.query('SELECT * FROM products WHERE dentrust_id IS NOT NULL');
+    const client = await dentrustDb.connect();
+    let updated = 0;
+    try {
+      for (const p of linked) {
+        try { await client.query('UPDATE products SET stock=$1 WHERE id=$2', [p.quantity, p.dentrust_id]); updated++; } catch (_) {}
+      }
+    } finally { client.release(); }
+    res.json({ ok: true, updated });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/sync/push-purchase-prices`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  try {
+    const { rows: linked } = await posDb.query('SELECT * FROM products WHERE dentrust_id IS NOT NULL AND purchase_price > 0');
+    const client = await dentrustDb.connect();
+    let updated = 0;
+    try {
+      for (const p of linked) {
+        try { await client.query('UPDATE products SET purchase_price=$1 WHERE id=$2', [String(p.purchase_price), p.dentrust_id]); updated++; } catch (_) {}
+      }
+    } finally { client.release(); }
+    res.json({ ok: true, updated });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/sync/pull-stock`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  try {
+    const { rows: linked } = await posDb.query('SELECT * FROM products WHERE dentrust_id IS NOT NULL');
+    const client = await dentrustDb.connect();
+    let updated = 0;
+    try {
+      for (const p of linked) {
+        try {
+          const { rows: [dt] } = await client.query('SELECT stock FROM products WHERE id=$1', [p.dentrust_id]);
+          if (dt) { await posDb.query('UPDATE products SET quantity=$1 WHERE id=$2', [dt.stock || 0, p.id]); updated++; }
+        } catch (_) {}
+      }
+    } finally { client.release(); }
+    res.json({ ok: true, updated });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/sync/import-products`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  try {
+    const client = await dentrustDb.connect();
+    let created = 0, updated = 0;
+    try {
+      const { rows: dtProducts } = await client.query('SELECT p.*, c.name as cat_name FROM products p LEFT JOIN categories c ON c.id=p.category_id ORDER BY p.name');
+      for (const p of dtProducts) {
+        try {
+          const { rows: [existing] } = await posDb.query('SELECT id FROM products WHERE dentrust_id=$1', [p.id]);
+          if (!existing) {
+            await posDb.query(
+              `INSERT INTO products (product_name, sale_price, purchase_price, quantity, category, expiry_date, description, dentrust_id)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
+              [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.details || '', p.id]
+            );
+            created++;
+          } else {
+            await posDb.query(
+              `UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, category=$4 WHERE id=$5`,
+              [p.name, p.price || 0, p.stock || 0, p.cat_name || '', existing.id]
+            );
+            updated++;
+          }
+        } catch (_) {}
+      }
+    } finally { client.release(); }
+    res.json({ ok: true, created, updated, total: created + updated });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/sync/import-customers`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  try {
+    const client = await dentrustDb.connect();
+    let created = 0, skipped = 0;
+    try {
+      const { rows: dtCustomers } = await client.query('SELECT * FROM customers ORDER BY name LIMIT 2000');
+      for (const c of dtCustomers) {
+        try {
+          const phone = c.phone || c.phone_number || '';
+          const { rows: [existing] } = await posDb.query('SELECT id FROM customers WHERE phone=$1 OR dentrust_id=$2', [phone, c.id]);
+          if (existing) { skipped++; }
+          else {
+            await upsertCustomerInPOS({ name: c.name, phone, city: c.city, region: c.region, street: c.street, building: c.building_number, landmark: c.landmark, dentrust_id: c.id });
+            created++;
+          }
+        } catch (_) { skipped++; }
+      }
+    } finally { client.release(); }
+    res.json({ ok: true, created, skipped, total: created + skipped });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+async function doFullSync() {
+  let synced_products = 0, synced_customers = 0;
+  if (!SUPABASE_DATABASE_URL) throw new Error('لا يوجد اتصال بـ DenTrust');
+  const client = await dentrustDb.connect();
+  try {
+    // Sync products
+    const { rows: dtProducts } = await client.query('SELECT p.*, c.name as cat_name FROM products p LEFT JOIN categories c ON c.id=p.category_id ORDER BY p.name');
+    for (const p of dtProducts) {
+      try {
+        const { rows: [ex] } = await posDb.query('SELECT id FROM products WHERE dentrust_id=$1', [p.id]);
+        if (!ex) {
+          await posDb.query(
+            `INSERT INTO products (product_name, sale_price, purchase_price, quantity, category, expiry_date, description, dentrust_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
+            [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.details || '', p.id]
+          );
+        } else {
+          await posDb.query('UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, category=$4 WHERE id=$5',
+            [p.name, p.price || 0, p.stock || 0, p.cat_name || '', ex.id]);
+        }
+        synced_products++;
+      } catch (_) {}
+    }
+    // Sync customers
+    const { rows: dtCustomers } = await client.query('SELECT * FROM customers ORDER BY name LIMIT 2000');
+    for (const c of dtCustomers) {
+      try {
+        const phone = c.phone || c.phone_number || '';
+        await upsertCustomerInPOS({ name: c.name, phone, city: c.city, region: c.region, street: c.street, building: c.building_number, landmark: c.landmark, dentrust_id: c.id });
+        synced_customers++;
+      } catch (_) {}
+    }
+  } finally { client.release(); }
+  return { synced_products, synced_customers };
+}
+
+app.post(`${BASE}/api/sync/full`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const result = await doFullSync();
+    res.json({ ok: true, ...result });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post(`${BASE}/api/sync/force-full`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const result = await doFullSync();
+    res.json({ ok: true, ...result });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post(`${BASE}/api/sync/upsert-customer`, async (req, res) => {
+  const d = req.body;
+  try {
+    // Accept both canonical and legacy alias field names
+    const posId = await upsertCustomerInPOS({
+      name:        d.name        || d.customer_name,
+      phone:       d.phone       || d.customer_phone || d.phone_number,
+      city:        d.city        || d.customer_city,
+      region:      d.region      || d.customer_region,
+      street:      d.street      || d.customer_street,
+      building:    d.building_number || d.customer_building || d.building,
+      landmark:    d.landmark    || d.customer_landmark,
+      address:     d.address,
+      dentrust_id: d.dentrust_id || d.dentrust_customer_id,
+    });
+    res.json({ ok: true, customer_id: posId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
+  const d = req.body;
+  try {
+    const customerId = await upsertCustomerInPOS({
+      name: d.customer_name,
+      phone: d.customer_phone,
+      city:     d.customer_city     || d.city,
+      region:   d.customer_region   || d.region,
+      street:   d.customer_street   || d.street,
+      building: d.customer_building || d.building_number,
+      landmark: d.customer_landmark || d.landmark,
+      dentrust_id: d.dentrust_customer_id,
+    });
+    const items = d.items || [];
+    let total = parseFloat(d.total_amount || d.total || 0);
+    if (!total && items.length) total = items.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
+    const { rows: [sale] } = await posDb.query(
+      `INSERT INTO sales (total_amount, payment_method, customer_id, source, dentrust_order_id, customer_name)
+       VALUES ($1,'online',$2,'online',$3,$4) RETURNING id`,
+      [total, customerId, d.dentrust_order_id || null, d.customer_name || '']
+    );
+    const saleId = sale.id;
+    let deducted = 0;
+    for (const item of items) {
+      // Accept dentrust_product_id or legacy productId alias
+      const dtProdId = item.dentrust_product_id || item.productId || item.product_id;
+      const { rows: [prod] } = await posDb.query(
+        'SELECT id, product_name FROM products WHERE dentrust_id=$1', [dtProdId]
+      );
+      await posDb.query(
+        'INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_unit_price) VALUES ($1,$2,$3,$4,$5,$6)',
+        [saleId, prod?.id || null, item.product_name || prod?.product_name || '', item.quantity || 1, item.unit_price || 0, item.unit_price || 0]
+      );
+      if (prod?.id) {
+        await posDb.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [item.quantity || 1, prod.id]);
+        deducted++;
+      }
+    }
+    // Flask: online orders do NOT increment customer debt on order-placed;
+    // debt tracking is handled separately via confirm-online-order / credit payments.
+    res.json({ ok: true, sale_id: saleId, deducted, customer_id: customerId });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Flask-equivalent payment method normalization for online orders
+function normalizePaymentMethod(raw) {
+  const ALLOWED = new Set(['cash', 'instapay', 'credit', 'online', 'split']);
+  if (!raw) return 'cash';
+  const m = String(raw).toLowerCase().trim();
+  if (m === 'cod') return 'cash';
+  if (m === 'split') return 'instapay';
+  return ALLOWED.has(m) ? m : 'cash';
+}
+
+app.post(`${BASE}/api/sync/confirm-online-order`, async (req, res) => {
+  const { dentrust_order_id, payment_method, total_amount, customer_name } = req.body;
+  try {
+    const method = normalizePaymentMethod(payment_method);
+    const orderId = parseInt(dentrust_order_id, 10);
+    if (isNaN(orderId)) return res.json({ ok: true, sale_id: null, note: 'invalid order id' });
+    let { rows: [sale] } = await posDb.query('SELECT * FROM sales WHERE dentrust_order_id=$1', [orderId]);
+    if (!sale) {
+      // Flask behavior: create a full sale when not found, resolving customer + items from DenTrust DB
+      const total = parseFloat(total_amount || 0);
+      const creditPaid = (method === 'credit') ? 0 : 1;
+      let custId = null;
+      let saleItems = [];
+      if (SUPABASE_DATABASE_URL) {
+        try {
+          const dtClient = await dentrustDb.connect();
+          try {
+            // Look up DenTrust order for customer + items
+            const { rows: [dtOrder] } = await dtClient.query('SELECT * FROM orders WHERE id=$1', [orderId]);
+            if (dtOrder) {
+              custId = await upsertCustomerInPOS({
+                name: dtOrder.customer_name || customer_name || '',
+                phone: dtOrder.customer_phone || '',
+                city: dtOrder.customer_city || dtOrder.city,
+                region: dtOrder.customer_region || dtOrder.region,
+                street: dtOrder.customer_street || dtOrder.street,
+              });
+              const { rows: dtItems } = await dtClient.query('SELECT * FROM order_items WHERE order_id=$1', [orderId]);
+              saleItems = dtItems;
+            }
+          } finally { dtClient.release(); }
+        } catch (_) {}
+      }
+      const { rows: [newSale] } = await posDb.query(
+        `INSERT INTO sales (total_amount, payment_method, source, dentrust_order_id, customer_name, customer_id, credit_paid)
+         VALUES ($1,$2,'online',$3,$4,$5,$6) RETURNING *`,
+        [total, method, orderId, customer_name || '', custId, creditPaid]
+      );
+      for (const item of saleItems) {
+        try {
+          const { rows: [prod] } = await posDb.query('SELECT id, product_name FROM products WHERE dentrust_id=$1', [item.product_id || item.dentrust_product_id]);
+          await posDb.query(
+            'INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_unit_price) VALUES ($1,$2,$3,$4,$5,$6)',
+            [newSale.id, prod?.id || null, item.product_name || prod?.product_name || '', item.quantity || 1, item.unit_price || item.price || 0, item.unit_price || item.price || 0]
+          );
+          if (prod?.id) await posDb.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [item.quantity || 1, prod.id]);
+        } catch (_) {}
+      }
+      return res.json({ ok: true, sale_id: newSale.id });
+    } else {
+      // Flask behavior: if sale already exists, return idempotently without mutating financial state
+    }
+    res.json({ ok: true, sale_id: sale.id });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post(`${BASE}/api/sync/upsert-product`, async (req, res) => {
+  const d = req.body;
+  const action = d.action || 'upsert';
+  const name = d.name || d.product_name || '';
+  const price = d.price || d.sale_price || 0;
+  const stock = d.stock !== undefined ? d.stock : (d.quantity !== undefined ? d.quantity : 0);
+  const purchasePrice = d.purchase_price || d.cost_price || 0;
+  const category = d.category || d.cat_name || null;
+  const expiry = d.expiry_date || null;
+  try {
+    if (d.dentrust_id) {
+      let { rows: [existing] } = await posDb.query('SELECT id FROM products WHERE dentrust_id=$1', [d.dentrust_id]);
+      if (!existing && name) {
+        // Link-by-name: find unlinked product with matching name
+        const { rows: [byName] } = await posDb.query(
+          'SELECT id FROM products WHERE LOWER(product_name)=LOWER($1) AND (dentrust_id IS NULL OR dentrust_id=0) LIMIT 1', [name]
+        );
+        if (byName) {
+          await posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2', [d.dentrust_id, byName.id]);
+          existing = byName;
+        }
+      }
+      if (existing) {
+        await posDb.query(
+          'UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, expiry_date=$4, purchase_price=COALESCE(NULLIF($5,0), purchase_price), category=COALESCE($6, category) WHERE dentrust_id=$7',
+          [name, price, stock, expiry, purchasePrice, category, d.dentrust_id]
+        );
+      } else {
+        await posDb.query(
+          'INSERT INTO products (product_name, sale_price, quantity, expiry_date, dentrust_id, purchase_price, category) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
+          [name, price, stock, expiry, d.dentrust_id, purchasePrice, category]
+        );
+      }
+    }
+    res.json({ ok: true, action });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post(`${BASE}/api/sync/delete-product`, async (req, res) => {
+  const { dentrust_id } = req.body;
+  if (dentrust_id) await posDb.query('DELETE FROM products WHERE dentrust_id=$1', [dentrust_id]).catch(() => {});
+  res.json({ ok: true });
+});
+
+// ── Background Sync ───────────────────────────────────────────────────────────
+
+async function doProductSync(incremental = true) {
+  if (!SUPABASE_DATABASE_URL) return;
+  try {
+    const client = await dentrustDb.connect();
+    try {
+      let sql = 'SELECT p.*, c.name as cat_name FROM products p LEFT JOIN categories c ON c.id=p.category_id';
+      if (incremental) sql += " WHERE p.updated_at >= NOW() - INTERVAL '10 minutes'";
+      sql += ' ORDER BY p.id';
+      const { rows: dtProducts } = await client.query(sql);
+      for (const p of dtProducts) {
+        try {
+          const { rows: [ex] } = await posDb.query('SELECT id FROM products WHERE dentrust_id=$1', [p.id]);
+          if (ex) {
+            await posDb.query('UPDATE products SET product_name=$1, sale_price=$2, quantity=$3 WHERE dentrust_id=$4',
+              [p.name, p.price || 0, p.stock || 0, p.id]);
+          } else {
+            await posDb.query(
+              `INSERT INTO products (product_name, sale_price, purchase_price, quantity, category, expiry_date, dentrust_id)
+               VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
+              [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.id]
+            );
+          }
+        } catch (_) {}
+      }
+    } finally { client.release(); }
+  } catch (_) {}
+}
+
+if (SUPABASE_DATABASE_URL) {
+  cron.schedule('*/5 * * * *', () => doProductSync(true).catch(() => {}));
+}
+
+// ── Utility ───────────────────────────────────────────────────────────────────
+
+function r2(n) { return Math.round(parseFloat(n || 0) * 100) / 100; }
+
+// ── Start Server ──────────────────────────────────────────────────────────────
+
+async function main() {
+  if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+    console.error('FATAL: SESSION_SECRET environment variable is not set. Set it before running in production.');
+    process.exit(1);
+  }
+  if (!process.env.DATABASE_URL) {
+    console.error('FATAL: DATABASE_URL environment variable is not set.');
+    process.exit(1);
+  }
+  try {
+    await initDb();
+    await seedManager();
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`POS server running on port ${PORT} at ${BASE}`);
+    });
+  } catch (err) {
+    console.error('Startup error:', err);
+    process.exit(1);
+  }
+}
+
+main();

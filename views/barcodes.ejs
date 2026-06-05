@@ -1,0 +1,243 @@
+<%- include('partials/header', Object.assign({pageTitle: 'الباركود'}, locals)) %>
+<div class="space-y-6 no-print">
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold text-gray-800">🏷️ طباعة الباركود</h1>
+    <button onclick="printBarcodes()"
+      class="bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-blue-800 shadow flex items-center gap-2">
+      🖨️ طباعة المحدد
+    </button>
+  </div>
+
+  <!-- Settings -->
+  <div class="bg-white rounded-2xl border shadow-sm p-5">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1">مقاس الملصق</label>
+        <select id="labelSize" onchange="renderPreview()"
+          class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
+          <option value="small">صغير (38×25 مم)</option>
+          <option value="medium" selected>متوسط (57×32 مم)</option>
+          <option value="large">كبير (80×50 مم)</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1">عدد نسخ كل ملصق</label>
+        <input id="copies" type="number" min="1" max="50" value="1" onchange="renderPreview()"
+          class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+      <div class="col-span-2 flex items-end gap-3">
+        <button onclick="selectAll()" class="flex-1 bg-gray-100 text-gray-700 text-sm font-semibold py-2 rounded-xl hover:bg-gray-200">تحديد الكل</button>
+        <button onclick="deselectAll()" class="flex-1 bg-gray-100 text-gray-700 text-sm font-semibold py-2 rounded-xl hover:bg-gray-200">إلغاء الكل</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Product List -->
+  <div class="bg-white rounded-2xl border shadow-sm p-4">
+    <input id="searchBox" type="text" placeholder="ابحث بالاسم أو الباركود..."
+      oninput="filterProducts(this.value)"
+      class="w-full border rounded-xl px-4 py-2.5 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+    <div id="productList" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto"></div>
+  </div>
+
+  <!-- Preview -->
+  <div class="bg-white rounded-2xl border shadow-sm p-5">
+    <h3 class="font-bold text-gray-700 mb-4">معاينة الطباعة</h3>
+    <div id="preview" class="flex flex-wrap gap-3"></div>
+    <div id="noPreview" class="text-center text-gray-400 py-8 text-sm">اختر منتجات من القائمة أعلاه لمعاينة الملصقات</div>
+  </div>
+</div>
+
+<!-- Print Area (hidden on screen, shown on print) -->
+<div id="printArea" class="hidden"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+
+<style>
+  .label-small  { width: 143px; height: 94px; padding: 4px; }
+  .label-medium { width: 215px; height: 121px; padding: 6px; }
+  .label-large  { width: 302px; height: 189px; padding: 8px; }
+
+  .barcode-label {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: white;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  .barcode-label .store-name {
+    font-family: Arial, sans-serif;
+    font-weight: 900;
+    color: #1d4ed8;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  .barcode-label .prod-name {
+    font-family: Arial, sans-serif;
+    color: #374151;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    text-align: center;
+  }
+  .barcode-label .prod-price {
+    font-family: Arial, sans-serif;
+    font-weight: 700;
+    color: #1d4ed8;
+  }
+
+  @media print {
+    body * { visibility: hidden !important; }
+    #printArea, #printArea * { visibility: visible !important; }
+    #printArea {
+      display: block !important;
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%;
+    }
+    .print-label-small  { width: 38mm; height: 25mm; padding: 1mm; }
+    .print-label-medium { width: 57mm; height: 32mm; padding: 1.5mm; }
+    .print-label-large  { width: 80mm; height: 50mm; padding: 2mm; }
+    .barcode-label {
+      border: 0.5pt solid #ccc;
+      border-radius: 0;
+      page-break-inside: avoid;
+    }
+    .print-wrapper {
+      display: flex;
+      flex-wrap: wrap;
+    }
+  }
+</style>
+
+<script>
+const BASE = "<%- base %>";
+let allProducts = [];
+let selected = new Set();
+
+const SIZES = {
+  small:  { cls: "label-small",  printCls: "print-label-small",  storeFz: "7px",  nameFz: "6px",  priceFz: "7px",  barH: 28 },
+  medium: { cls: "label-medium", printCls: "print-label-medium", storeFz: "9px",  nameFz: "7px",  priceFz: "8px",  barH: 40 },
+  large:  { cls: "label-large",  printCls: "print-label-large",  storeFz: "12px", nameFz: "9px",  priceFz: "11px", barH: 65 },
+};
+
+async function load() {
+  const res = await fetch(`${BASE}/api/products`);
+  allProducts = await res.json();
+  renderList(allProducts);
+}
+
+function renderList(products) {
+  const el = document.getElementById("productList");
+  if (!products.length) { el.innerHTML = '<p class="text-gray-400 text-sm col-span-3">لا توجد منتجات</p>'; return; }
+  el.innerHTML = products.map(p => `
+    <label class="flex items-center gap-3 p-3 rounded-xl border cursor-pointer hover:bg-blue-50 transition-colors ${selected.has(p.id) ? 'border-blue-400 bg-blue-50' : 'border-gray-200'}">
+      <input type="checkbox" value="${p.id}" ${selected.has(p.id) ? 'checked' : ''}
+        onchange="toggleProduct(${p.id}, this.checked)"
+        class="w-4 h-4 text-blue-600 rounded"/>
+      <div class="flex-1 min-w-0">
+        <div class="font-medium text-gray-800 text-sm truncate">${p.product_name}</div>
+        <div class="text-xs text-gray-500 font-mono">${p.barcode || '— لا يوجد باركود'}</div>
+        <div class="text-xs text-blue-600 font-bold">${p.sale_price.toFixed(2)} جنيه</div>
+      </div>
+    </label>
+  `).join("");
+}
+
+function toggleProduct(id, checked) {
+  if (checked) selected.add(id); else selected.delete(id);
+  renderPreview();
+}
+
+function selectAll() {
+  allProducts.forEach(p => selected.add(p.id));
+  renderList(allProducts);
+  renderPreview();
+}
+
+function deselectAll() {
+  selected.clear();
+  renderList(allProducts);
+  renderPreview();
+}
+
+function filterProducts(q) {
+  const lower = q.toLowerCase();
+  const filtered = q.trim()
+    ? allProducts.filter(p => p.product_name.toLowerCase().includes(lower) || (p.barcode||"").includes(q))
+    : allProducts;
+  renderList(filtered);
+}
+
+function makeLabelHtml(p, size, isPreview) {
+  const s = SIZES[size];
+  const cls = isPreview ? s.cls : `barcode-label ${s.printCls}`;
+  const barcode = p.barcode || String(p.id).padStart(5, "0");
+  const svgId = `bc-${p.id}-${isPreview ? 'prev' : 'print'}-${Math.random().toString(36).slice(2)}`;
+  return `
+    <div class="barcode-label ${isPreview ? s.cls : s.printCls}" style="display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;background:white;">
+      <div class="store-name" style="font-size:${s.storeFz};font-weight:900;color:#1d4ed8;letter-spacing:2px;">DENTRUST</div>
+      <svg id="${svgId}"></svg>
+      <div class="prod-name" style="font-size:${s.nameFz};color:#374151;text-align:center;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${p.product_name}</div>
+    </div>
+    <script>
+      (function(){
+        var el = document.getElementById("${svgId}");
+        if(el) JsBarcode(el, "${barcode}", {format:"CODE128",width:${isPreview?1:1.2},height:${s.barH},displayValue:true,fontSize:${isPreview?8:9},margin:1,background:"#ffffff",lineColor:"#000000"});
+      })();
+    <\/script>
+  `;
+}
+
+function renderPreview() {
+  const size = document.getElementById("labelSize").value;
+  const copies = Math.max(1, parseInt(document.getElementById("copies").value) || 1);
+  const preview = document.getElementById("preview");
+  const noPreview = document.getElementById("noPreview");
+  const selectedProducts = allProducts.filter(p => selected.has(p.id));
+
+  if (!selectedProducts.length) {
+    preview.innerHTML = "";
+    noPreview.classList.remove("hidden");
+    return;
+  }
+  noPreview.classList.add("hidden");
+
+  let html = "";
+  for (const p of selectedProducts) {
+    for (let i = 0; i < copies; i++) {
+      html += makeLabelHtml(p, size, true);
+    }
+  }
+  preview.innerHTML = html;
+}
+
+function printBarcodes() {
+  const size = document.getElementById("labelSize").value;
+  const copies = Math.max(1, parseInt(document.getElementById("copies").value) || 1);
+  const selectedProducts = allProducts.filter(p => selected.has(p.id));
+  if (!selectedProducts.length) { alert("اختر منتجاً واحداً على الأقل"); return; }
+
+  let html = '<div class="print-wrapper">';
+  for (const p of selectedProducts) {
+    for (let i = 0; i < copies; i++) {
+      html += makeLabelHtml(p, size, false);
+    }
+  }
+  html += "</div>";
+
+  const printArea = document.getElementById("printArea");
+  printArea.innerHTML = html;
+  window.print();
+}
+
+load();
+</script>
+
+</main>
+<%- include('partials/footer', locals) %>

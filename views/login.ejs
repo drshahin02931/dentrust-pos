@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>تسجيل الدخول — نظام POS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-700 to-blue-900 min-h-screen flex items-center justify-center p-4">
+  <div class="w-full max-w-sm">
+    <div class="text-center mb-8">
+      <div class="text-5xl mb-3">🏪</div>
+      <h1 class="text-2xl font-black text-white">نقطة البيع</h1>
+      <p class="text-blue-200 text-sm mt-1">Point of Sale System</p>
+    </div>
+
+    <div class="bg-white rounded-3xl shadow-2xl p-8">
+      <% if (error) { %>
+      <div class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm mb-5 flex items-center gap-2">
+        <span>⚠️</span><span><%- error %></span>
+      </div>
+      <% } %>
+
+      <form method="POST" action="<%- base %>/login" class="space-y-5">
+        <div>
+          <label class="text-xs font-bold text-gray-600 block mb-1.5">اسم المستخدم</label>
+          <input name="username" type="text" required autocomplete="username"
+            class="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-400 transition-colors"
+            placeholder="أدخل اسم المستخدم" autofocus/>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-gray-600 block mb-1.5">كلمة المرور</label>
+          <input name="password" type="password" required autocomplete="current-password"
+            class="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-400 transition-colors"
+            placeholder="••••••••"/>
+        </div>
+        <button type="submit"
+          class="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-3 rounded-xl transition-colors shadow-sm text-sm">
+          تسجيل الدخول
+        </button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

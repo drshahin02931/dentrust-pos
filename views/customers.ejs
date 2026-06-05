@@ -1,0 +1,564 @@
+<%- include('partials/header', Object.assign({pageTitle: 'العملاء'}, locals)) %>
+<div class="space-y-5">
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold text-gray-800" data-ar="👥 العملاء والآجل" data-en="👥 Customers &amp; Credit">👥 العملاء والآجل</h1>
+    <button onclick="openAddModal()" class="bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-blue-800 shadow" data-ar="+ إضافة عميل" data-en="+ Add Customer">+ إضافة عميل</button>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-2 gap-4">
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center">
+      <div id="totalCustomers" class="text-3xl font-black text-blue-700">—</div>
+      <div class="text-sm text-gray-500 mt-1" data-ar="إجمالي العملاء" data-en="Total Customers">إجمالي العملاء</div>
+    </div>
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center">
+      <div id="totalDebt" class="text-3xl font-black text-red-600">—</div>
+      <div class="text-xs text-gray-500 mt-1" data-ar="إجمالي الآجل (جنيه)" data-en="Total Credit (EGP)">إجمالي الآجل (جنيه)</div>
+    </div>
+  </div>
+
+  <!-- Search -->
+  <input id="searchInput" oninput="filterCustomers()" type="text"
+    data-ar-placeholder="🔍 بحث عن عميل..." data-en-placeholder="🔍 Search customer..."
+    placeholder="🔍 بحث عن عميل..." class="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+
+  <!-- Customer List -->
+  <div id="customerList" class="space-y-2"></div>
+  <div id="noCustomers" class="hidden text-center text-gray-400 py-12" data-ar="لا يوجد عملاء مسجلين" data-en="No customers registered">لا يوجد عملاء مسجلين</div>
+</div>
+
+<!-- ══════════════════════ Add Customer Modal ══════════════════════ -->
+<div id="addModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl">
+    <div class="p-5 border-b flex items-center justify-between">
+      <h3 class="font-bold text-gray-800 text-lg">إضافة عميل جديد</h3>
+      <button onclick="closeAddModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+    </div>
+    <form onsubmit="addCustomer(event)" class="p-5 space-y-4">
+      <div>
+        <label class="text-xs font-medium text-gray-600" data-ar="الاسم *" data-en="Name *">الاسم *</label>
+        <input id="f-name" required class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="اسم الدكتور"/>
+      </div>
+      <div>
+        <label class="text-xs font-medium text-gray-600" data-ar="رقم الهاتف" data-en="Phone">رقم الهاتف</label>
+        <input id="f-phone" type="tel" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="01xxxxxxxxx"/>
+      </div>
+      <div>
+        <label class="text-xs font-medium text-gray-600" data-ar="العنوان" data-en="Address">العنوان</label>
+        <input id="f-address" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="العنوان / المنطقة"/>
+      </div>
+      <div>
+        <label class="text-xs font-medium text-gray-600" data-ar="خطة التقسيط" data-en="Installment Plan">خطة التقسيط</label>
+        <input id="f-plan" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="مثال: 500 جنيه شهرياً"/>
+      </div>
+      <div class="flex gap-3 pt-2">
+        <button type="submit" class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800" data-ar="إضافة" data-en="Add">إضافة</button>
+        <button type="button" onclick="closeAddModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl" data-ar="إلغاء" data-en="Cancel">إلغاء</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ══════════════════════ Customer Detail Modal ══════════════════════ -->
+<div id="detailModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-3">
+  <div class="bg-white rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
+
+    <!-- Header -->
+    <div id="detailHeader" class="p-5 border-b flex items-start justify-between shrink-0">
+      <div>
+        <h2 id="detailName" class="text-xl font-black text-gray-800"></h2>
+        <p id="detailPhone" class="text-sm text-gray-500 mt-0.5"></p>
+        <p id="detailAddress" class="text-xs text-gray-400 mt-0.5"></p>
+        <div class="flex items-center gap-3 mt-2">
+          <span id="detailDebtBadge" class="text-sm font-bold px-3 py-1 rounded-full"></span>
+          <span id="detailPlan" class="text-xs text-gray-400"></span>
+        </div>
+        <!-- Statement summary strip -->
+        <div id="statementStrip" class="hidden mt-3 grid grid-cols-3 gap-2 text-center">
+          <div class="bg-blue-50 rounded-xl px-2 py-2">
+            <div class="text-xs text-blue-500 font-medium">إجمالي الفواتير</div>
+            <div id="stmtInvoiced" class="text-sm font-black text-blue-700">—</div>
+          </div>
+          <div class="bg-green-50 rounded-xl px-2 py-2">
+            <div class="text-xs text-green-600 font-medium">إجمالي المدفوع</div>
+            <div id="stmtPaid" class="text-sm font-black text-green-700">—</div>
+          </div>
+          <div class="bg-red-50 rounded-xl px-2 py-2">
+            <div class="text-xs text-red-500 font-medium">المتبقي عليه</div>
+            <div id="stmtRemaining" class="text-sm font-black text-red-600">—</div>
+          </div>
+        </div>
+      </div>
+      <button onclick="closeDetail()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none mt-1">×</button>
+    </div>
+
+    <!-- Action buttons -->
+    <div class="px-5 py-3 border-b bg-gray-50 flex gap-2 flex-wrap shrink-0">
+      <button id="btnWhatsapp" onclick="openWhatsapp()" class="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-sm">
+        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.123 1.532 5.855L.054 23.5l5.819-1.527A11.938 11.938 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.012-1.375l-.36-.213-3.727.977.994-3.63-.235-.374A9.818 9.818 0 1112 21.818z"/></svg>
+        واتساب
+      </button>
+      <button onclick="openPayModal()" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-sm">
+        💸 تسجيل دفعة
+      </button>
+      <button id="btnDelete" onclick="confirmDelete()" class="flex items-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-semibold px-4 py-2 rounded-xl">
+        🗑 حذف العميل
+      </button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex border-b shrink-0">
+      <button id="tabOrders"       onclick="switchTab('orders')"       class="flex-1 py-3 text-sm font-semibold text-blue-700 border-b-2 border-blue-700">🧾 الطلبات</button>
+      <button id="tabPayments"     onclick="switchTab('payments')"     class="flex-1 py-3 text-sm font-semibold text-gray-400">💳 الدفعات</button>
+      <button id="tabInstallments" onclick="switchTab('installments')" class="flex-1 py-3 text-sm font-semibold text-gray-400">📅 الأقساط</button>
+    </div>
+
+    <!-- Scrollable content -->
+    <div class="overflow-y-auto flex-1 p-4 space-y-3" id="detailContent">
+      <div class="text-center text-gray-400 py-8">جار التحميل...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ Pay Modal ══════════════════════ -->
+<div id="payModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4">
+  <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-6 space-y-4">
+    <h3 class="font-bold text-gray-800 text-lg">💸 تسجيل دفعة</h3>
+    <p id="payCustomerLabel" class="text-sm text-gray-600 bg-gray-50 rounded-xl p-3 font-medium"></p>
+    <div class="bg-green-50 border border-green-200 rounded-xl p-3 space-y-2">
+      <div class="flex items-center gap-2">
+        <span class="text-xs font-semibold text-gray-600 w-24">🪙 كاش ورق</span>
+        <input id="payCash" type="number" min="0" step="0.01" value="0"
+          class="flex-1 border rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-300"/>
+        <span class="text-xs text-gray-400">ج</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs font-semibold text-gray-600 w-24">📱 انستا باي</span>
+        <input id="payInsta" type="number" min="0" step="0.01" value="0"
+          class="flex-1 border rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"/>
+        <span class="text-xs text-gray-400">ج</span>
+      </div>
+    </div>
+    <div>
+      <label class="text-xs font-medium text-gray-600">ملاحظة (اختياري)</label>
+      <input id="payNote" type="text" placeholder="مثال: دفعة شهر مايو"
+        class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-green-200"/>
+    </div>
+    <div class="flex gap-3">
+      <button onclick="submitPayment()" class="flex-1 bg-green-600 text-white font-semibold py-2.5 rounded-xl hover:bg-green-700">✓ تأكيد</button>
+      <button onclick="document.getElementById('payModal').classList.add('hidden')" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ Debt Collection Modal ══════════════════════ -->
+<div id="debtCollectModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-[70] p-4">
+  <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-6 space-y-4">
+    <h3 class="font-bold text-gray-800 text-lg">✅ تسجيل سداد الفاتورة</h3>
+    <p id="debtCollectLabel" class="text-sm text-orange-700 bg-orange-50 rounded-xl p-3 font-medium border border-orange-200"></p>
+    <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
+      <p class="text-xs font-semibold text-blue-700 mb-1">كيف تم استلام المبلغ؟</p>
+      <div class="flex items-center gap-2">
+        <span class="text-xs font-semibold text-gray-600 w-24">🪙 كاش ورق</span>
+        <input id="debtCash" type="number" min="0" step="0.01" value="0"
+          oninput="updateDebtSplitInfo()"
+          class="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-400"/>
+        <span class="text-xs text-gray-400">ج</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs font-semibold text-gray-600 w-24">📱 انستا باي</span>
+        <input id="debtInsta" type="number" min="0" step="0.01" value="0"
+          oninput="updateDebtSplitInfo()"
+          class="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-purple-400"/>
+        <span class="text-xs text-gray-400">ج</span>
+      </div>
+      <div id="debtSplitInfo" class="text-xs text-center font-semibold text-gray-500 pt-1"></div>
+    </div>
+    <div class="flex gap-3">
+      <button onclick="submitDebtCollection()" class="flex-1 bg-green-600 text-white font-semibold py-2.5 rounded-xl hover:bg-green-700">✓ تأكيد السداد</button>
+      <button onclick="document.getElementById('debtCollectModal').classList.add('hidden')" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = "<%- base %>";
+let allCustomers = [];
+let currentCustomer = null;
+let currentTab = 'orders';
+
+// ── Load customers ────────────────────────────────────────────────────────────
+async function loadCustomers() {
+  const res = await fetch(`${BASE}/api/customers`);
+  allCustomers = await res.json();
+  renderCustomers(allCustomers);
+}
+
+function renderCustomers(data) {
+  const totalDebt = data.reduce((s, c) => s + (c.total_debt||0), 0);
+  document.getElementById("totalCustomers").textContent = data.length;
+  document.getElementById("totalDebt").textContent = totalDebt.toLocaleString('ar-EG', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+  const list = document.getElementById("customerList");
+  const noMsg = document.getElementById("noCustomers");
+  if (!data.length) { list.innerHTML=""; noMsg.classList.remove("hidden"); return; }
+  noMsg.classList.add("hidden");
+
+  list.innerHTML = data.map(c => {
+    const hasDebt = c.total_debt > 0;
+    return `
+    <div onclick="openDetail(${c.id})" class="cursor-pointer rounded-2xl border shadow-sm p-4 flex items-center justify-between gap-3 hover:shadow-md transition-all
+      ${hasDebt ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-10 h-10 rounded-full flex items-center justify-center text-white font-black text-lg shrink-0
+          ${hasDebt ? 'bg-red-500' : 'bg-blue-500'}">
+          ${c.name.charAt(0)}
+        </div>
+        <div class="min-w-0">
+          <div class="font-bold text-gray-800 truncate">${c.name}</div>
+          <div class="text-xs text-gray-500">${c.phone || 'بدون هاتف'}</div>
+        </div>
+      </div>
+      <div class="text-right shrink-0">
+        ${hasDebt
+          ? `<div class="text-red-600 font-black text-base">${c.total_debt.toLocaleString('ar-EG', {minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+             <div class="text-xs text-red-400">جنيه آجل</div>`
+          : `<div class="text-green-600 font-bold text-sm">✓ مسدّد</div>`
+        }
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function filterCustomers() {
+  const q = document.getElementById("searchInput").value.toLowerCase();
+  renderCustomers(allCustomers.filter(c =>
+    c.name.toLowerCase().includes(q) || (c.phone||"").includes(q)
+  ));
+}
+
+// ── Add customer ──────────────────────────────────────────────────────────────
+function openAddModal() { document.getElementById("addModal").classList.remove("hidden"); }
+function closeAddModal() {
+  document.getElementById("addModal").classList.add("hidden");
+  ["f-name","f-phone","f-address","f-plan"].forEach(id => document.getElementById(id).value="");
+}
+async function addCustomer(e) {
+  e.preventDefault();
+  await fetch(`${BASE}/api/customers`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      name: document.getElementById("f-name").value,
+      phone: document.getElementById("f-phone").value,
+      address: document.getElementById("f-address").value,
+      installment_plan: document.getElementById("f-plan").value
+    })
+  });
+  closeAddModal(); loadCustomers();
+}
+
+// ── Detail modal ──────────────────────────────────────────────────────────────
+async function openDetail(cid) {
+  const c = allCustomers.find(x => x.id === cid);
+  if (!c) return;
+  currentCustomer = c;
+  currentTab = 'orders';
+
+  document.getElementById("detailName").textContent = c.name;
+  document.getElementById("detailPhone").textContent = c.phone ? `📞 ${c.phone}` : "";
+  document.getElementById("detailAddress").textContent = c.address ? `📍 ${c.address}` : "";
+  const badge = document.getElementById("detailDebtBadge");
+  if (c.total_debt > 0) {
+    badge.textContent = `متبقي: ${c.total_debt.toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه`;
+    badge.className = "text-sm font-bold px-3 py-1 rounded-full bg-red-100 text-red-700";
+  } else {
+    badge.textContent = "✓ لا يوجد آجل";
+    badge.className = "text-sm font-bold px-3 py-1 rounded-full bg-green-100 text-green-700";
+  }
+  document.getElementById("detailPlan").textContent = c.installment_plan ? `خطة: ${c.installment_plan}` : "";
+
+  // WhatsApp button visibility
+  document.getElementById("btnWhatsapp").style.display = c.phone ? "flex" : "none";
+
+  document.getElementById("statementStrip").classList.add("hidden");
+  document.getElementById("detailModal").classList.remove("hidden");
+  switchTab('orders');
+
+  // Load statement if customer has any credit activity
+  fetch(`${BASE}/api/customers/${cid}/statement`).then(r=>r.json()).then(st => {
+    if (!st.error && (st.total_invoiced > 0 || st.total_paid > 0)) {
+      document.getElementById("stmtInvoiced").textContent  = st.net_invoiced.toLocaleString('ar-EG', {minimumFractionDigits:2}) + " ج";
+      document.getElementById("stmtPaid").textContent      = st.total_paid.toLocaleString('ar-EG', {minimumFractionDigits:2}) + " ج";
+      document.getElementById("stmtRemaining").textContent = st.remaining.toLocaleString('ar-EG', {minimumFractionDigits:2}) + " ج";
+      document.getElementById("statementStrip").classList.remove("hidden");
+    }
+  });
+}
+
+function closeDetail() {
+  document.getElementById("detailModal").classList.add("hidden");
+  currentCustomer = null;
+}
+
+async function switchTab(tab) {
+  currentTab = tab;
+  const tabs = ['orders','payments','installments'];
+  tabs.forEach(t => {
+    document.getElementById(`tab${t.charAt(0).toUpperCase()+t.slice(1)}`).className =
+      t === tab
+        ? "flex-1 py-3 text-sm font-semibold text-blue-700 border-b-2 border-blue-700"
+        : "flex-1 py-3 text-sm font-semibold text-gray-400";
+  });
+
+  const content = document.getElementById("detailContent");
+  content.innerHTML = `<div class="text-center text-gray-400 py-8">جار التحميل...</div>`;
+
+  if (tab === 'installments') {
+    const res  = await fetch(`${BASE}/api/installments?customer_id=${currentCustomer.id}`);
+    const data = await res.json();
+    const statusMap = { pending:'🔵 قادم', paid:'✅ مدفوع', overdue:'🔴 متأخر' };
+    const statusColor = { pending:'bg-blue-50 border-blue-200', paid:'bg-green-50 border-green-200', overdue:'bg-red-50 border-red-200' };
+    const textColor   = { pending:'text-blue-700', paid:'text-green-700', overdue:'text-red-700' };
+    const total   = data.reduce((s,i)=>s+(i.status!=='paid'?i.amount:0),0);
+    const totalPd = data.reduce((s,i)=>s+(i.status==='paid'?i.amount:0),0);
+    content.innerHTML = `
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex gap-3 text-xs">
+          <span class="bg-blue-50 text-blue-700 px-2 py-1 rounded-lg font-semibold">المتبقي: ${total.toFixed(2)} ج</span>
+          <span class="bg-green-50 text-green-700 px-2 py-1 rounded-lg font-semibold">المدفوع: ${totalPd.toFixed(2)} ج</span>
+        </div>
+        <button onclick="openAddInstallment()" class="bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-xl hover:bg-blue-800">+ قسط جديد</button>
+      </div>
+      ${!data.length ? '<div class="text-center text-gray-400 py-6 text-sm">لا توجد أقساط مسجّلة</div>' :
+        data.map(inst => `
+          <div class="rounded-xl border p-3 ${statusColor[inst.status]||'bg-gray-50 border-gray-200'}">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm font-bold ${textColor[inst.status]||'text-gray-700'}">قسط #${inst.installment_number} — ${inst.amount.toFixed(2)} جنيه</div>
+                <div class="text-xs text-gray-500 mt-0.5">📅 الاستحقاق: ${inst.due_date}${inst.paid_date ? ' — سُدّد: '+inst.paid_date : ''}</div>
+                ${inst.notes ? `<div class="text-xs text-gray-400 mt-0.5">${inst.notes}</div>` : ''}
+              </div>
+              <div class="flex gap-1.5 items-center">
+                <span class="text-xs font-bold px-2 py-1 rounded-full ${statusColor[inst.status]} ${textColor[inst.status]}">${statusMap[inst.status]||inst.status}</span>
+                ${inst.status !== 'paid' ? `<button onclick="markInstallmentPaid(${inst.id})" class="text-xs bg-green-100 text-green-700 hover:bg-green-200 px-2 py-1 rounded-lg font-medium">✓ سداد</button>` : ''}
+                <button onclick="deleteInstallment(${inst.id})" class="text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded-lg">🗑</button>
+              </div>
+            </div>
+          </div>`).join("")}`;
+    return;
+  }
+
+  if (tab === 'orders') {
+    const res = await fetch(`${BASE}/api/customers/${currentCustomer.id}/orders`);
+    const orders = await res.json();
+    if (!orders.length) { content.innerHTML = `<div class="text-center text-gray-400 py-8">لا توجد طلبات</div>`; return; }
+
+    content.innerHTML = orders.map(o => {
+      const isCredit = o.payment_method === 'credit';
+      const isSplit  = o.payment_method === 'split';
+      const hasDebt  = (isCredit || isSplit) && !o.credit_paid;
+      const isPaid   = (isCredit || isSplit) && o.credit_paid;
+      let payLabel = isCredit ? '📋 آجل' : isSplit ? '✂️ مقسّم' : o.payment_method === 'cash' ? '💵 كاش' : '📱 InstaPay';
+      const itemsPreview = o.items.slice(0,2).map(i => `${i.product_name} ×${i.quantity}`).join("، ") + (o.items.length > 2 ? ` +${o.items.length-2}` : "");
+      const cardClass   = isPaid  ? 'border-green-200 bg-green-50'
+                        : hasDebt ? 'border-red-200 bg-red-50'
+                        : 'border-gray-200 bg-white';
+      const amtClass    = isPaid  ? 'text-green-700'
+                        : hasDebt ? 'text-red-600'
+                        : 'text-gray-800';
+      const badgeClass  = isPaid  ? 'bg-green-600 text-white'
+                        : hasDebt ? 'bg-red-600 text-white'
+                        : 'bg-gray-100 text-gray-600';
+      const paidBadge   = isPaid  ? '<span class="text-xs font-bold text-green-600">✅ مسدّد</span>' : '';
+      const markBtn     = hasDebt
+        ? `<button onclick="markCreditPaid(${o.id})" class="text-xs bg-green-100 text-green-700 hover:bg-green-200 border border-green-300 px-3 py-1.5 rounded-lg font-semibold transition-all">✓ تم الدفع</button>`
+        : '';
+      return `
+      <div id="order-card-${o.id}" class="rounded-xl border p-3.5 ${cardClass}">
+        <div class="flex items-center justify-between mb-1.5">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold px-2.5 py-1 rounded-full ${badgeClass}">${payLabel}</span>
+            <span class="text-xs text-gray-400">#${o.id}</span>
+            ${paidBadge}
+          </div>
+          <span class="font-black text-base ${amtClass}">${o.total_amount.toLocaleString('ar-EG', {minimumFractionDigits:2})} ج</span>
+        </div>
+        <div class="text-xs text-gray-500 mb-2">${o.date?.slice(0,16) || ''} — ${itemsPreview}</div>
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="printInvoice(${o.id})" class="text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 px-3 py-1.5 rounded-lg font-medium">🖨 طباعة الفاتورة</button>
+          ${markBtn}
+        </div>
+      </div>`;
+    }).join("");
+
+  } else {
+    const res = await fetch(`${BASE}/api/customers/${currentCustomer.id}/payments`);
+    const payments = await res.json();
+    if (!payments.length) { content.innerHTML = `<div class="text-center text-gray-400 py-8">لا توجد دفعات مسجّلة</div>`; return; }
+
+    content.innerHTML = payments.map(p => `
+      <div class="rounded-xl border border-green-200 bg-green-50 p-3.5 flex items-center justify-between">
+        <div>
+          <div class="text-sm font-semibold text-green-700">دُفع: ${parseFloat(p.amount).toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه</div>
+          ${p.note ? `<div class="text-xs text-gray-500 mt-0.5">${p.note}</div>` : ''}
+          <div class="text-xs text-gray-400 mt-0.5">${p.date?.slice(0,16)||''}</div>
+        </div>
+        <div class="text-2xl">✅</div>
+      </div>
+    `).join("");
+  }
+}
+
+function printInvoice(saleId) {
+  window.open(`${BASE}/invoice/${saleId}`, '_blank');
+}
+
+let _debtSaleId = null;
+
+function markCreditPaid(saleId) {
+  _debtSaleId = saleId;
+  const card  = document.getElementById(`order-card-${saleId}`);
+  const amtEl = card ? card.querySelector(".font-black") : null;
+  const amtText = amtEl ? amtEl.textContent.trim() : "؟";
+  document.getElementById("debtCollectLabel").textContent = `فاتورة #${saleId} — الإجمالي: ${amtText}`;
+  document.getElementById("debtCash").value  = "0";
+  document.getElementById("debtInsta").value = "0";
+  document.getElementById("debtSplitInfo").textContent = "";
+  document.getElementById("debtCollectModal").classList.remove("hidden");
+  setTimeout(() => document.getElementById("debtCash").focus(), 100);
+}
+
+function updateDebtSplitInfo() {
+  const cash  = parseFloat(document.getElementById("debtCash").value) || 0;
+  const insta = parseFloat(document.getElementById("debtInsta").value) || 0;
+  const total = cash + insta;
+  const el = document.getElementById("debtSplitInfo");
+  if (total > 0) {
+    const parts = [];
+    if (cash  > 0) parts.push(`كاش: ${cash.toFixed(2)} ج`);
+    if (insta > 0) parts.push(`انستا باي: ${insta.toFixed(2)} ج`);
+    el.textContent = `إجمالي السداد: ${total.toFixed(2)} ج (${parts.join(" + ")})`;
+  } else {
+    el.textContent = "";
+  }
+}
+
+async function submitDebtCollection() {
+  const cash  = parseFloat(document.getElementById("debtCash").value) || 0;
+  const insta = parseFloat(document.getElementById("debtInsta").value) || 0;
+  if (cash + insta <= 0) { alert("أدخل مبلغاً كاش أو إنستا باي"); return; }
+  const res = await fetch(`${BASE}/api/sales/${_debtSaleId}/mark-credit-paid`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ cash_amount: cash, instapay_amount: insta })
+  });
+  const data = await res.json();
+  document.getElementById("debtCollectModal").classList.add("hidden");
+  if (!res.ok) { alert(data.error || "حدث خطأ"); return; }
+  const card = document.getElementById(`order-card-${_debtSaleId}`);
+  if (card) {
+    card.className = "rounded-xl border border-green-200 bg-green-50 p-3.5";
+    const badge = card.querySelector(".rounded-full");
+    if (badge) badge.className = "text-xs font-bold px-2.5 py-1 rounded-full bg-green-600 text-white";
+    const amt = card.querySelector(".font-black");
+    if (amt) amt.className = "font-black text-base text-green-700";
+    const btn = card.querySelector("button[onclick^='markCreditPaid']");
+    if (btn) btn.replaceWith(Object.assign(document.createElement("span"), { className:"text-xs font-bold text-green-600", textContent:"✅ مسدّد" }));
+  }
+  if (data.debt_reduced > 0 && currentCustomer) {
+    currentCustomer.total_debt = Math.max(0, currentCustomer.total_debt - data.debt_reduced);
+    const debtBadge = document.getElementById("detailDebtBadge");
+    if (debtBadge) {
+      debtBadge.textContent = currentCustomer.total_debt > 0
+        ? `متبقي: ${currentCustomer.total_debt.toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه`
+        : "✓ لا يوجد آجل";
+      debtBadge.className = currentCustomer.total_debt > 0
+        ? "text-sm font-bold px-3 py-1 rounded-full bg-red-100 text-red-700"
+        : "text-sm font-bold px-3 py-1 rounded-full bg-green-100 text-green-700";
+    }
+  }
+}
+
+// ── WhatsApp ──────────────────────────────────────────────────────────────────
+function openWhatsapp() {
+  if (!currentCustomer) return;
+  const phone = currentCustomer.phone.replace(/[^0-9]/g, "");
+  const intl = phone.startsWith("0") ? "2" + phone : phone;
+  const debt = currentCustomer.total_debt.toLocaleString('ar-EG', {minimumFractionDigits:2});
+  const msg = encodeURIComponent(
+    `عزيزي الدكتور ${currentCustomer.name} 🌟\n\n` +
+    `نرجو أن تكونوا بتمام الصحة والعافية.\n\n` +
+    `نودّ تذكيركم بلطف بأن لديكم رصيداً مستحقاً بمبلغ *${debt} جنيه* في حسابكم لدينا لم يتم سداده بعد.\n\n` +
+    `يسعدنا تسوية الحساب في أي وقت يناسب حضرتكم.\n\n` +
+    `شاكرين ثقتكم ودوام تعاملكم معنا 🙏`
+  );
+  window.open(`https://wa.me/${intl}?text=${msg}`, '_blank');
+}
+
+// ── Pay modal ─────────────────────────────────────────────────────────────────
+function openPayModal() {
+  document.getElementById("payCustomerLabel").textContent =
+    `${currentCustomer.name} — متبقي: ${currentCustomer.total_debt.toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه`;
+  document.getElementById("payCash").value  = "0";
+  document.getElementById("payInsta").value = "0";
+  document.getElementById("payNote").value  = "";
+  document.getElementById("payModal").classList.remove("hidden");
+  setTimeout(() => document.getElementById("payCash").focus(), 100);
+}
+
+async function submitPayment() {
+  const cash  = parseFloat(document.getElementById("payCash").value) || 0;
+  const insta = parseFloat(document.getElementById("payInsta").value) || 0;
+  const amount = cash + insta;
+  const note = document.getElementById("payNote").value;
+  if (amount <= 0) { alert("أدخل مبلغاً كاش أو إنستا باي"); return; }
+  await fetch(`${BASE}/api/customers/${currentCustomer.id}/pay`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ amount, cash_amount: cash, instapay_amount: insta, note })
+  });
+  document.getElementById("payModal").classList.add("hidden");
+  await loadCustomers();
+  const updated = allCustomers.find(x => x.id === currentCustomer.id);
+  if (updated) { currentCustomer = updated; openDetail(updated.id); }
+}
+
+// ── Installments ──────────────────────────────────────────────────────────────
+function openAddInstallment() {
+  const amount   = prompt("مبلغ القسط (جنيه):");
+  if (!amount || isNaN(parseFloat(amount))) return;
+  const due_date = prompt("تاريخ الاستحقاق (مثال: 2026-07-01):", new Date(Date.now()+30*24*3600000).toISOString().split("T")[0]);
+  if (!due_date) return;
+  const notes = prompt("ملاحظة (اختياري):", "") || "";
+  fetch(`${BASE}/api/installments`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ customer_id: currentCustomer.id, amount: parseFloat(amount), due_date, notes })
+  }).then(()=>switchTab('installments'));
+}
+
+async function markInstallmentPaid(id) {
+  await fetch(`${BASE}/api/installments/${id}`, {
+    method:"PUT", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ status:"paid" })
+  });
+  switchTab('installments');
+}
+
+async function deleteInstallment(id) {
+  if (!confirm("حذف هذا القسط؟")) return;
+  await fetch(`${BASE}/api/installments/${id}`, { method:"DELETE" });
+  switchTab('installments');
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+async function confirmDelete() {
+  if (!confirm(`حذف العميل "${currentCustomer.name}" نهائياً؟`)) return;
+  await fetch(`${BASE}/api/customers/${currentCustomer.id}`, { method:"DELETE" });
+  closeDetail();
+  loadCustomers();
+}
+
+loadCustomers();
+</script>
+
+</main>
+<%- include('partials/footer', locals) %>
