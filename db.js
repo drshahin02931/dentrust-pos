@@ -61,6 +61,8 @@ const PG_SCHEMA_SQL = `
     supplier_id INTEGER,
     description TEXT,
     variants TEXT,
+    section TEXT DEFAULT 'dental',
+    checkbox_values TEXT,
     created_at TEXT DEFAULT (NOW()::text)
   );
   CREATE TABLE IF NOT EXISTS customers (
@@ -191,6 +193,8 @@ const MIGRATIONS = [
   "ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT",
   "ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT",
   "ALTER TABLE products ADD COLUMN IF NOT EXISTS dentrust_id INTEGER",
+  "ALTER TABLE products ADD COLUMN IF NOT EXISTS section TEXT DEFAULT 'dental'",
+  "ALTER TABLE products ADD COLUMN IF NOT EXISTS checkbox_values TEXT",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'pos'",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS customer_name TEXT",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS amount_received NUMERIC",
@@ -287,8 +291,6 @@ function checkWerkzeugPbkdf2(password, storedHash) {
 
 function checkWerkzeugScrypt(password, storedHash) {
   try {
-    // Werkzeug format: scrypt:<N>:<r>:<p>$<salt_str>$<hash_b64>
-    // salt is a plain alphanumeric string (NOT base64), hash IS base64
     const parts = storedHash.split('$');
     if (parts.length !== 3) return false;
     const [methodStr, saltStr, hashB64] = parts;
@@ -298,7 +300,6 @@ function checkWerkzeugScrypt(password, storedHash) {
     const r = parseInt(params[2], 10);
     const p = parseInt(params[3], 10);
     const salt = Buffer.from(saltStr, 'utf8');
-    // Werkzeug stores the hash as hex (not base64), dklen=64
     const isHex = /^[0-9a-f]+$/i.test(hashB64);
     const expected = Buffer.from(hashB64, isHex ? 'hex' : 'base64');
     const derived = crypto.scryptSync(password, salt, expected.length, { N, r, p, maxmem: 128 * 1024 * 1024 });
