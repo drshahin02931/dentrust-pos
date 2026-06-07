@@ -25,106 +25,291 @@
     .nav-link:not(.active):hover { background:rgba(255,255,255,0.15); }
     input, select, textarea { direction: rtl; }
     [dir="ltr"] input, [dir="ltr"] select, [dir="ltr"] textarea { direction: ltr; }
+
+    /* ── Website order toast ── */
+    #orderToast {
+      position: fixed; top: 1rem; left: 50%;
+      transform: translateX(-50%) translateY(-140%);
+      transition: transform 0.4s cubic-bezier(0.34,1.56,0.64,1);
+      z-index: 9999; min-width: 320px; max-width: 92vw;
+    }
+    #orderToast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ── Alert panel ── */
+    #alertPanel {
+      display: none; position: fixed; top: 58px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 9998; width: 370px; max-width: 95vw;
+      max-height: 72vh; overflow-y: auto;
+    }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
 
-  <nav class="no-print bg-blue-700 text-white shadow-lg sticky top-0 z-50">
-    <div class="max-w-screen-xl mx-auto px-4 py-2 flex items-center gap-1 overflow-x-auto">
+<!-- ══════════ Website Order Toast ══════════ -->
+<div id="orderToast" class="no-print">
+  <div class="bg-white rounded-2xl shadow-2xl border-2 border-green-400 p-4">
+    <div class="flex items-start gap-3">
+      <div class="text-3xl animate-bounce">🌐</div>
+      <div class="flex-1 min-w-0">
+        <div class="font-black text-gray-800 text-sm">طلب جديد من الموقع!</div>
+        <div id="toastCustomer" class="text-green-700 font-semibold text-sm mt-0.5"></div>
+        <div id="toastItems"    class="text-gray-500 text-xs mt-1 truncate"></div>
+        <div id="toastTotal"    class="text-blue-700 font-black text-base mt-1"></div>
+      </div>
+      <button onclick="dismissToast()" class="text-gray-400 hover:text-gray-600 text-xl leading-none flex-shrink-0">✕</button>
+    </div>
+    <div class="flex gap-2 mt-3">
+      <button onclick="showAlertPanel()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-1.5 rounded-xl">عرض كل الطلبات</button>
+      <button onclick="dismissToast()"   class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-bold py-1.5 rounded-xl">تجاهل</button>
+    </div>
+  </div>
+</div>
 
-      <span class="text-base font-bold ml-3 whitespace-nowrap">
-        <% if (settings && settings.store_name && settings.store_name !== 'اسم المحل') { %>
-          🏪 <span id="navStoreName"><%- settings.store_name %></span>
-        <% } else { %>
-          🏪 <span id="navStoreName" data-ar="نقطة البيع" data-en="POS">نقطة البيع</span>
-        <% } %>
-      </span>
-
-      <% if (!currentUser || (userPerms && userPerms.pos !== false)) { %>
-      <a href="<%- base %>/" class="nav-link <%= (reqPath === base+'/' || reqPath === base) ? 'active' : '' %>">
-        <span data-ar="🛒 البيع" data-en="🛒 Sales">🛒 <span class="lang-text" data-ar="البيع" data-en="Sales">البيع</span></span>
-      </a>
-      <% } %>
-
-      <% if (!currentUser || userPerms.inventory !== false) { %>
-      <a href="<%- base %>/inventory" class="nav-link <%= reqPath.includes('/inventory') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="📦 المخزون" data-en="📦 Inventory">📦 المخزون</span>
-      </a>
-      <a href="<%- base %>/barcodes" class="nav-link <%= reqPath.includes('/barcodes') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="🏷️ الباركود" data-en="🏷️ Barcodes">🏷️ الباركود</span>
-      </a>
-      <% } %>
-
-      <% if (!currentUser || userPerms.expiry !== false) { %>
-      <a href="<%- base %>/expiry" class="nav-link <%= reqPath.includes('/expiry') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="⏰ الصلاحية" data-en="⏰ Expiry">⏰ الصلاحية</span>
-      </a>
-      <% } %>
-
-      <% if (!currentUser || userPerms.customers !== false) { %>
-      <a href="<%- base %>/customers" class="nav-link <%= reqPath.includes('/customers') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="👥 العملاء" data-en="👥 Customers">👥 العملاء</span>
-      </a>
-      <% } %>
-
-      <% if (!currentUser || userPerms.accounting !== false) { %>
-      <a href="<%- base %>/accounting" class="nav-link <%= reqPath.includes('/accounting') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="📊 المحاسبة" data-en="📊 Accounting">📊 المحاسبة</span>
-      </a>
-      <% } %>
-
-      <% if (!currentUser || userPerms.invoices !== false) { %>
-      <a href="<%- base %>/invoices" class="nav-link <%= reqPath.includes('/invoices') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="🧾 الفواتير" data-en="🧾 Invoices">🧾 الفواتير</span>
-      </a>
-      <% } %>
-
-      <a href="<%- base %>/notifications" class="nav-link relative <%= reqPath.includes('/notifications') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="🔔 الإشعارات" data-en="🔔 Alerts">🔔 الإشعارات</span>
-        <span id="lowStockBadge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white font-black rounded-full text-[9px] min-w-[1rem] px-1 leading-none py-0.5 text-center"></span>
-      </a>
-
-      <% if (isMgr) { %>
-      <div class="h-5 w-px bg-blue-500 mx-1"></div>
-      <a href="<%- base %>/admin/users" class="nav-link <%= reqPath.includes('/admin/users') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="👤 المستخدمون" data-en="👤 Users">👤 المستخدمون</span>
-      </a>
-      <a href="<%- base %>/admin/attendance" class="nav-link <%= reqPath.includes('/admin/attendance') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="📅 الحضور" data-en="📅 Attendance">📅 الحضور</span>
-      </a>
-      <a href="<%- base %>/sync" class="nav-link <%= reqPath.includes('/sync') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="🔄 مزامنة" data-en="🔄 Sync">🔄 مزامنة</span>
-      </a>
-      <a href="<%- base %>/suppliers" class="nav-link <%= reqPath.includes('/suppliers') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="🏭 الموردين" data-en="🏭 Suppliers">🏭 الموردين</span>
-      </a>
-      <a href="<%- base %>/cash-register" class="nav-link <%= reqPath.includes('/cash-register') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="💰 الخزينة" data-en="💰 Cash Register">💰 الخزينة</span>
-      </a>
-      <a href="<%- base %>/settings" class="nav-link <%= reqPath.includes('/settings') ? 'active' : '' %>">
-        <span class="lang-text" data-ar="⚙️ الإعدادات" data-en="⚙️ Settings">⚙️ الإعدادات</span>
-      </a>
-      <% } %>
-
-      <div class="mr-auto flex items-center gap-2 flex-shrink-0">
-        <button onclick="toggleLang()" id="langBtn"
-          class="text-xs bg-white/15 hover:bg-white/25 text-white rounded-xl px-3 py-1.5 font-bold transition-colors border border-white/20 flex items-center gap-1">
-          <span id="langBtnText">EN</span>
-        </button>
-
-        <% if (currentUser) { %>
-        <button onclick="openChangePw()"
-          class="text-xs bg-blue-600 hover:bg-blue-500 rounded-xl px-3 py-1.5 flex items-center gap-1.5 transition-colors"
-          title="تغيير كلمة المرور">
-          <% if (isMgr) { %><span class="text-yellow-300">👑</span><% } else { %><span>👤</span><% } %>
-          <span class="font-semibold"><%- currentUser.username %></span>
-        </button>
-        <a href="<%- base %>/logout"
-          class="text-xs bg-red-500/20 hover:bg-red-500/40 text-red-100 rounded-xl px-3 py-1.5 font-medium transition-colors lang-text"
-          data-ar="خروج" data-en="Logout">خروج</a>
-        <% } %>
+<!-- ══════════ Alert Panel ══════════ -->
+<div id="alertPanel" class="no-print">
+  <div class="bg-white rounded-2xl shadow-2xl border border-gray-200">
+    <div class="flex items-center justify-between p-4 border-b">
+      <span class="font-black text-gray-800">🌐 طلبات الموقع الجديدة</span>
+      <div class="flex gap-2">
+        <button onclick="dismissAllAlerts()" class="text-xs bg-green-600 hover:bg-green-700 text-white font-bold px-3 py-1.5 rounded-xl">تم الاطلاع ✓</button>
+        <button onclick="closeAlertPanel()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
       </div>
     </div>
-  </nav>
+    <div id="alertList" class="p-3 space-y-2">
+      <div class="text-center text-gray-400 text-sm py-6">جارٍ التحميل...</div>
+    </div>
+  </div>
+</div>
+<div id="alertOverlay" onclick="closeAlertPanel()" class="no-print hidden fixed inset-0 bg-black/20 z-[9997]"></div>
 
-  <main class="max-w-screen-xl mx-auto px-4 py-6">
+<!-- ══════════ Nav ══════════ -->
+<nav class="no-print bg-blue-700 text-white shadow-lg sticky top-0 z-50">
+  <div class="max-w-screen-xl mx-auto px-4 py-2 flex items-center gap-1 overflow-x-auto">
+
+    <span class="text-base font-bold ml-3 whitespace-nowrap">
+      <% if (settings && settings.store_name && settings.store_name !== 'اسم المحل') { %>
+        🏪 <span id="navStoreName"><%- settings.store_name %></span>
+      <% } else { %>
+        🏪 <span id="navStoreName">نقطة البيع</span>
+      <% } %>
+    </span>
+
+    <% if (!currentUser || (userPerms && userPerms.pos !== false)) { %>
+    <a href="<%- base %>/" class="nav-link <%= (reqPath === base+'/' || reqPath === base) ? 'active' : '' %>">
+      🛒 <span class="lang-text" data-ar="البيع" data-en="Sales">البيع</span>
+    </a>
+    <% } %>
+
+    <% if (!currentUser || userPerms.inventory !== false) { %>
+    <a href="<%- base %>/inventory" class="nav-link <%= reqPath.includes('/inventory') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="📦 المخزون" data-en="📦 Inventory">📦 المخزون</span>
+    </a>
+    <a href="<%- base %>/barcodes" class="nav-link <%= reqPath.includes('/barcodes') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="🏷️ الباركود" data-en="🏷️ Barcodes">🏷️ الباركود</span>
+    </a>
+    <% } %>
+
+    <% if (!currentUser || userPerms.expiry !== false) { %>
+    <a href="<%- base %>/expiry" class="nav-link <%= reqPath.includes('/expiry') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="⏰ الصلاحية" data-en="⏰ Expiry">⏰ الصلاحية</span>
+    </a>
+    <% } %>
+
+    <% if (!currentUser || userPerms.customers !== false) { %>
+    <a href="<%- base %>/customers" class="nav-link <%= reqPath.includes('/customers') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="👥 العملاء" data-en="👥 Customers">👥 العملاء</span>
+    </a>
+    <% } %>
+
+    <% if (!currentUser || userPerms.accounting !== false) { %>
+    <a href="<%- base %>/accounting" class="nav-link <%= reqPath.includes('/accounting') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="📊 المحاسبة" data-en="📊 Accounting">📊 المحاسبة</span>
+    </a>
+    <% } %>
+
+    <% if (!currentUser || userPerms.invoices !== false) { %>
+    <a href="<%- base %>/invoices" class="nav-link <%= reqPath.includes('/invoices') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="🧾 الفواتير" data-en="🧾 Invoices">🧾 الفواتير</span>
+    </a>
+    <% } %>
+
+    <a href="<%- base %>/notifications" class="nav-link relative <%= reqPath.includes('/notifications') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="🔔 الإشعارات" data-en="🔔 Alerts">🔔 الإشعارات</span>
+      <span id="lowStockBadge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white font-black rounded-full text-[9px] min-w-[1rem] px-1 leading-none py-0.5 text-center"></span>
+    </a>
+
+    <!-- 🌐 Website Orders Bell — visible when logged in -->
+    <% if (currentUser) { %>
+    <button onclick="showAlertPanel()" class="nav-link relative" id="ordersBell" title="طلبات جديدة من الموقع">
+      🌐
+      <span id="ordersBadge" class="hidden absolute -top-1 -right-1 bg-green-400 text-white font-black rounded-full text-[9px] min-w-[1rem] px-1 leading-none py-0.5 text-center"></span>
+    </button>
+    <% } %>
+
+    <% if (isMgr) { %>
+    <div class="h-5 w-px bg-blue-500 mx-1"></div>
+    <a href="<%- base %>/admin/users" class="nav-link <%= reqPath.includes('/admin/users') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="👤 المستخدمون" data-en="👤 Users">👤 المستخدمون</span>
+    </a>
+    <a href="<%- base %>/admin/attendance" class="nav-link <%= reqPath.includes('/admin/attendance') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="📅 الحضور" data-en="📅 Attendance">📅 الحضور</span>
+    </a>
+    <a href="<%- base %>/sync" class="nav-link <%= reqPath.includes('/sync') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="🔄 مزامنة" data-en="🔄 Sync">🔄 مزامنة</span>
+    </a>
+    <a href="<%- base %>/suppliers" class="nav-link <%= reqPath.includes('/suppliers') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="🏭 الموردين" data-en="🏭 Suppliers">🏭 الموردين</span>
+    </a>
+    <a href="<%- base %>/cash-register" class="nav-link <%= reqPath.includes('/cash-register') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="💰 الخزينة" data-en="💰 Cash Register">💰 الخزينة</span>
+    </a>
+    <a href="<%- base %>/settings" class="nav-link <%= reqPath.includes('/settings') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="⚙️ الإعدادات" data-en="⚙️ Settings">⚙️ الإعدادات</span>
+    </a>
+    <% } %>
+
+    <div class="mr-auto flex items-center gap-2 flex-shrink-0">
+      <button onclick="toggleLang()" id="langBtn"
+        class="text-xs bg-white/15 hover:bg-white/25 text-white rounded-xl px-3 py-1.5 font-bold transition-colors border border-white/20 flex items-center gap-1">
+        <span id="langBtnText">EN</span>
+      </button>
+
+      <% if (currentUser) { %>
+      <button onclick="openChangePw()"
+        class="text-xs bg-blue-600 hover:bg-blue-500 rounded-xl px-3 py-1.5 flex items-center gap-1.5 transition-colors"
+        title="تغيير كلمة المرور">
+        <% if (isMgr) { %><span class="text-yellow-300">👑</span><% } else { %><span>👤</span><% } %>
+        <span class="font-semibold"><%- currentUser.username %></span>
+      </button>
+      <a href="<%- base %>/logout"
+        class="text-xs bg-red-500/20 hover:bg-red-500/40 text-red-100 rounded-xl px-3 py-1.5 font-medium transition-colors lang-text"
+        data-ar="خروج" data-en="Logout">خروج</a>
+      <% } %>
+    </div>
+  </div>
+</nav>
+
+<main class="max-w-screen-xl mx-auto px-4 py-6">
+
+<script>
+// ─── Website Order Notifications ───────────────────────────────────────
+const _BASE = "<%- base %>";
+let _lastAlertId = parseInt(localStorage.getItem('_lastAlertId') || '0', 10);
+
+async function pollWebsiteOrders() {
+  try {
+    const res = await fetch(`${_BASE}/api/website-orders/alerts/count`);
+    if (!res.ok) return;
+    const { count } = await res.json();
+    const badge = document.getElementById('ordersBadge');
+    if (!badge) return;
+    if (count > 0) {
+      badge.textContent = count > 9 ? '9+' : count;
+      badge.classList.remove('hidden');
+      // Fetch newest to show toast
+      const r2 = await fetch(`${_BASE}/api/website-orders/alerts`);
+      const alerts = await r2.json();
+      const newest = alerts[0];
+      if (newest && newest.id !== _lastAlertId) {
+        _lastAlertId = newest.id;
+        localStorage.setItem('_lastAlertId', newest.id);
+        showToast(newest);
+        beep();
+      }
+    } else {
+      badge.classList.add('hidden');
+    }
+  } catch(_) {}
+}
+
+function showToast(order) {
+  const toast = document.getElementById('orderToast');
+  document.getElementById('toastCustomer').textContent =
+    (order.customer_name || 'عميل') + (order.customer_phone ? ' · ' + order.customer_phone : '');
+  document.getElementById('toastItems').textContent =
+    order.items_summary || (order.items_count + ' منتج');
+  document.getElementById('toastTotal').textContent =
+    order.total_amount ? parseFloat(order.total_amount).toLocaleString('ar-EG') + ' ج.م' : '';
+  toast.classList.add('show');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => toast.classList.remove('show'), 9000);
+}
+
+function dismissToast() {
+  document.getElementById('orderToast').classList.remove('show');
+}
+
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [880, 1100].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.connect(g); g.connect(ctx.destination);
+      osc.frequency.value = freq;
+      g.gain.setValueAtTime(0.25, ctx.currentTime + i*0.15);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i*0.15 + 0.3);
+      osc.start(ctx.currentTime + i*0.15);
+      osc.stop(ctx.currentTime + i*0.15 + 0.3);
+    });
+  } catch(_) {}
+}
+
+async function showAlertPanel() {
+  dismissToast();
+  document.getElementById('alertPanel').style.display = 'block';
+  document.getElementById('alertOverlay').classList.remove('hidden');
+  document.getElementById('alertList').innerHTML =
+    '<div class="text-center text-gray-400 text-sm py-6">جارٍ التحميل...</div>';
+  try {
+    const res = await fetch(`${_BASE}/api/website-orders/alerts`);
+    const alerts = await res.json();
+    const list = document.getElementById('alertList');
+    if (!alerts.length) {
+      list.innerHTML = '<div class="text-center text-gray-400 text-sm py-6">لا توجد طلبات جديدة ✓</div>';
+      return;
+    }
+    list.innerHTML = alerts.map(a => `
+      <div class="bg-green-50 border border-green-200 rounded-xl p-3">
+        <div class="flex items-start gap-2">
+          <span class="text-xl">🌐</span>
+          <div class="flex-1 min-w-0">
+            <div class="font-bold text-gray-800 text-sm">${escHtml(a.customer_name || 'عميل')}</div>
+            ${a.customer_phone ? `<div class="text-gray-500 text-xs">${escHtml(a.customer_phone)}</div>` : ''}
+            <div class="text-gray-600 text-xs mt-1 truncate">${escHtml(a.items_summary || (a.items_count+' منتج'))}</div>
+            <div class="flex items-center justify-between mt-1.5">
+              <span class="text-blue-700 font-black text-sm">${parseFloat(a.total_amount||0).toLocaleString('ar-EG')} ج.م</span>
+              <span class="text-gray-400 text-xs">${new Date(a.created_at).toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'})}</span>
+            </div>
+          </div>
+        </div>
+      </div>`).join('');
+  } catch(_) {
+    document.getElementById('alertList').innerHTML =
+      '<div class="text-center text-red-400 text-sm py-4">خطأ في التحميل</div>';
+  }
+}
+
+function closeAlertPanel() {
+  document.getElementById('alertPanel').style.display = 'none';
+  document.getElementById('alertOverlay').classList.add('hidden');
+}
+
+async function dismissAllAlerts() {
+  await fetch(`${_BASE}/api/website-orders/alerts/dismiss`, { method:'POST' });
+  const badge = document.getElementById('ordersBadge');
+  if (badge) badge.classList.add('hidden');
+  closeAlertPanel();
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Start polling every 30s
+if (document.getElementById('ordersBell')) {
+  pollWebsiteOrders();
+  setInterval(pollWebsiteOrders, 30000);
+}
+</script>
