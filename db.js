@@ -10,12 +10,13 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const SUPABASE_DATABASE_URL = process.env.SUPABASE_DATABASE_URL;
 const POS_SCHEMA = 'pos_data';
 
-const posDb = new Pool({ connectionString: DATABASE_URL });
+const sslConfig = process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false;
+const posDb = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig });
 posDb.on('connect', client => {
   client.query(`SET search_path TO ${POS_SCHEMA}, public`);
 });
 
-const dentrustDb = new Pool({ connectionString: SUPABASE_DATABASE_URL || DATABASE_URL });
+const dentrustDb = new Pool({ connectionString: SUPABASE_DATABASE_URL || DATABASE_URL, ssl: sslConfig });
 
 const ALL_PERMS = {
   pos: true, inventory: true, expiry: true,
