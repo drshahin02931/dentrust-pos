@@ -450,10 +450,17 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
        d.description || null, variantsJson, d.section || 'dental', cbJson, pid]
     );
     if (SUPABASE_DATABASE_URL) {
-      try { await syncUpdateProductToDentrust(pid, d); } catch (_) {}
+      try {
+        await syncUpdateProductToDentrust(pid, d);
+      } catch (syncErr) {
+        console.error('[SYNC ERROR] syncUpdateProductToDentrust failed for pid', pid, ':', syncErr.message, syncErr.stack);
+      }
     }
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) {
+    console.error('[PRODUCT UPDATE ERROR] pid:', pid, 'body:', JSON.stringify(d), 'error:', err.message, err.stack);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
 });
 
 app.delete(`${BASE}/api/products/:pid`, async (req, res) => {
