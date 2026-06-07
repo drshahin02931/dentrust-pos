@@ -1876,6 +1876,360 @@ if (SUPABASE_DATABASE_URL) {
 
 function r2(n) { return Math.round(parseFloat(n || 0) * 100) / 100; }
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── WEBSITE API (called from dentrust.site — no POS session required) ─────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
+const SUPABASE_BASE = 'https://ywfunodybcqakhweuxwn.supabase.co';
+const WEBSITE_ORIGINS = (process.env.WEBSITE_ORIGIN || 'https://dentrust.site')
+  .split(',').map(s => s.trim());
+
+const webCors = cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (WEBSITE_ORIGINS.some(o => origin === o) || /localhost/.test(origin)) return cb(null, true);
+    cb(null, false);
+  },
+  credentials: false,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+});
+app.options('/api/*', webCors);
+
+// ── Products (public, from Supabase) ─────────────────────────────────────────
+app.get('/api/products', webCors, async (req, res) => {
+  if (!SUPABASE_DATABASE_URL) return res.json([]);
+  try {
+    const client = await dentrustDb.connect();
+    try {
+      const { rows } = await client.query(
+        `SELECT p.id, p.name, p.price, p.purchase_price, p.stock,
+                p.image_url, p.expiry_date, p.description,
+                c.name AS category_name, p.category_id
+         FROM products p
+         LEFT JOIN categories c ON c.id = p.category_id
+         ORDER BY p.name`
+      );
+      res.json(rows);
+    } finally { client.release(); }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Storage proxy (Supabase storage images) ───────────────────────────────────
+app.get('/api/storage/*', webCors, async (req, res) => {
+  const storagePath = req.path.replace('/api/storage', '');
+  const target = `${SUPABASE_BASE}/storage/v1${storagePath}`;
+  try {
+    const r = await fetch(target, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return res.status(r.status).send('Not found');
+    const ct = r.headers.get('content-type');
+    if (ct) res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(Buffer.from(await r.arrayBuffer()));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── AI – shared helper ────────────────────────────────────────────────────────
+async function callOpenRouter(payload) {
+  const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENROUTER_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://dentrust.site',
+      'X-Title': 'DenTrust DenBot',
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(30000),
+  });
+  return resp.json();
+}
+
+// POST /api/ai/fashion-chat  (text chat)
+app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
+  if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
+  try {
+    const { messages = [], system = '', model = 'openai/gpt-4o-mini', max_tokens = 600 } = req.body;
+    const data = await callOpenRouter({
+      model, max_tokens,
+      messages: [{ role: 'system', content: system }, ...messages],
+    });
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/ai/fashion-tryon  (vision)
+app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
+  if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
+  try {
+    const { image = '', prompt = '', system = '' } = req.body;
+    const imgUrl = image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}`;
+    const data = await callOpenRouter({
+      model: 'google/gemini-2.0-flash-001',
+      max_tokens: 900,
+      messages: [
+        ...(system ? [{ role: 'system', content: system }] : []),
+        { role: 'user', content: [
+          { type: 'image_url', image_url: { url: imgUrl } },
+          { type: 'text', text: prompt },
+        ]},
+      ],
+    });
+    res.json(data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Price Tracker ─────────────────────────────────────────────────────────────
+const PT_INIT_SQL = `
+  CREATE TABLE IF NOT EXISTS pt_sites (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+  CREATE TABLE IF NOT EXISTS pt_products (
+    id SERIAL PRIMARY KEY,
+    site_id INTEGER REFERENCES pt_sites(id) ON DELETE CASCADE,
+    title TEXT,
+    price NUMERIC,
+    url TEXT,
+    image_url TEXT,
+    scraped_at TIMESTAMPTZ DEFAULT NOW()
+  );
+  CREATE TABLE IF NOT EXISTS pt_matches (
+    id SERIAL PRIMARY KEY,
+    our_product_id INTEGER,
+    pt_product_id INTEGER REFERENCES pt_products(id) ON DELETE CASCADE,
+    status TEXT DEFAULT 'pending',
+    matched_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(our_product_id, pt_product_id)
+  );
+  CREATE TABLE IF NOT EXISTS pt_history (
+    id SERIAL PRIMARY KEY,
+    our_product_id INTEGER,
+    our_price NUMERIC,
+    competitor_price NUMERIC,
+    site_name TEXT,
+    recorded_at TIMESTAMPTZ DEFAULT NOW()
+  );
+`;
+
+async function initPriceTracker() {
+  try { await posDb.query(PT_INIT_SQL); }
+  catch (e) { console.error('Price tracker init error:', e.message); }
+}
+
+// Simple scraper – fetch HTML and extract price patterns
+async function scrapePageProducts(siteUrl) {
+  const products = [];
+  try {
+    const r = await fetch(siteUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DenTrustPriceBot/1.0)' },
+      signal: AbortSignal.timeout(15000),
+    });
+    const html = await r.text();
+    // Extract heading texts as product titles
+    const titles = [];
+    let m;
+    const hRe = /<h[1-5][^>]*>([^<]{4,150})<\/h[1-5]>/gi;
+    while ((m = hRe.exec(html)) !== null) titles.push(m[1].replace(/<[^>]+>/g, '').trim());
+    // Extract prices (Arabic & English formats)
+    const priceRe = /(\d[\d\s,\.]*)\s*(?:جنيه|EGP|LE|ج\.م|L\.E\.?)/gi;
+    let pi = 0;
+    while ((m = priceRe.exec(html)) !== null && pi < 80) {
+      const price = parseFloat(m[1].replace(/[\s,]/g, ''));
+      if (price >= 1 && price < 2000000) {
+        products.push({ title: titles[pi] || `منتج ${pi + 1}`, price, url: siteUrl });
+        pi++;
+      }
+    }
+  } catch (e) { console.error('Scrape error for', siteUrl, ':', e.message); }
+  return products.slice(0, 100);
+}
+
+// GET  /api/admin/price-tracker/sites
+app.get('/api/admin/price-tracker/sites', webCors, async (req, res) => {
+  try {
+    const { rows } = await posDb.query('SELECT * FROM pt_sites ORDER BY created_at DESC');
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/admin/price-tracker/sites
+app.post('/api/admin/price-tracker/sites', webCors, async (req, res) => {
+  const { name, url } = req.body;
+  if (!name || !url) return res.status(400).json({ error: 'name and url required' });
+  try {
+    const { rows: [site] } = await posDb.query(
+      `INSERT INTO pt_sites (name, url) VALUES ($1,$2)
+       ON CONFLICT (url) DO UPDATE SET name=EXCLUDED.name RETURNING *`,
+      [name, url]
+    );
+    res.json(site);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/admin/price-tracker/sites/:id
+app.delete('/api/admin/price-tracker/sites/:id', webCors, async (req, res) => {
+  await posDb.query('DELETE FROM pt_sites WHERE id=$1', [req.params.id]).catch(() => {});
+  res.json({ ok: true });
+});
+
+// GET  /api/admin/price-tracker/sites/:id/products
+app.get('/api/admin/price-tracker/sites/:id/products', webCors, async (req, res) => {
+  try {
+    const { rows } = await posDb.query(
+      'SELECT * FROM pt_products WHERE site_id=$1 ORDER BY scraped_at DESC LIMIT 200',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/admin/price-tracker/sites/:id/crawl
+app.post('/api/admin/price-tracker/sites/:id/crawl', webCors, async (req, res) => {
+  try {
+    const { rows: [site] } = await posDb.query('SELECT * FROM pt_sites WHERE id=$1', [req.params.id]);
+    if (!site) return res.status(404).json({ error: 'Site not found' });
+    const scraped = await scrapePageProducts(site.url);
+    await posDb.query('DELETE FROM pt_products WHERE site_id=$1', [site.id]);
+    let newMatches = 0;
+    for (const p of scraped) {
+      const { rows: [pp] } = await posDb.query(
+        'INSERT INTO pt_products (site_id, title, price, url) VALUES ($1,$2,$3,$4) RETURNING id',
+        [site.id, p.title, p.price, p.url]
+      );
+      if (pp && p.title) {
+        const words = p.title.split(/\s+/).filter(w => w.length > 3).slice(0, 3);
+        if (words.length > 0) {
+          const likes = words.map((_, i) => `LOWER(product_name) LIKE $${i + 1}`).join(' OR ');
+          const params = words.map(w => `%${w.toLowerCase()}%`);
+          const { rows: ms } = await posDb.query(`SELECT id FROM products WHERE ${likes} LIMIT 1`, params);
+          if (ms.length > 0) {
+            await posDb.query(
+              'INSERT INTO pt_matches (our_product_id, pt_product_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+              [ms[0].id, pp.id]
+            );
+            newMatches++;
+          }
+        }
+      }
+    }
+    res.json({ scraped: scraped.length, newMatches });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/admin/price-tracker/sites/:id/search-by-name
+app.post('/api/admin/price-tracker/sites/:id/search-by-name', webCors, async (req, res) => {
+  const { name = '' } = req.body;
+  try {
+    const { rows } = await posDb.query(
+      `SELECT * FROM pt_products WHERE site_id=$1 AND LOWER(title) LIKE $2 LIMIT 20`,
+      [req.params.id, `%${name.toLowerCase()}%`]
+    );
+    res.json({ searched: 1, matched: rows.length, skipped: 0, results: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/admin/price-tracker/sites/:id/rematch
+app.post('/api/admin/price-tracker/sites/:id/rematch', webCors, async (req, res) => {
+  try {
+    const { rows: prods } = await posDb.query('SELECT * FROM pt_products WHERE site_id=$1', [req.params.id]);
+    let matched = 0;
+    for (const p of prods) {
+      if (!p.title) continue;
+      const words = p.title.split(/\s+/).filter(w => w.length > 3).slice(0, 3);
+      if (!words.length) continue;
+      const likes = words.map((_, i) => `LOWER(product_name) LIKE $${i + 1}`).join(' OR ');
+      const params = words.map(w => `%${w.toLowerCase()}%`);
+      const { rows: ms } = await posDb.query(`SELECT id FROM products WHERE ${likes} LIMIT 1`, params);
+      if (ms.length > 0) {
+        await posDb.query(
+          'INSERT INTO pt_matches (our_product_id, pt_product_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+          [ms[0].id, p.id]
+        );
+        matched++;
+      }
+    }
+    res.json({ matched, skipped: prods.length - matched });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET  /api/admin/price-tracker/matches/pending
+app.get('/api/admin/price-tracker/matches/pending', webCors, async (req, res) => {
+  try {
+    const { rows } = await posDb.query(`
+      SELECT m.id, m.our_product_id, m.status, m.matched_at,
+             pp.title  AS competitor_title,  pp.price AS competitor_price, pp.url AS competitor_url,
+             s.name   AS site_name,
+             p.product_name AS our_product_name, p.sale_price AS our_price
+      FROM pt_matches m
+      LEFT JOIN pt_products pp ON pp.id = m.pt_product_id
+      LEFT JOIN pt_sites    s  ON s.id  = pp.site_id
+      LEFT JOIN products    p  ON p.id  = m.our_product_id
+      WHERE m.status = 'pending'
+      ORDER BY m.matched_at DESC
+      LIMIT 100
+    `);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET  /api/admin/price-tracker/matches/count
+app.get('/api/admin/price-tracker/matches/count', webCors, async (req, res) => {
+  try {
+    const { rows: [r] } = await posDb.query("SELECT COUNT(*) AS count FROM pt_matches WHERE status='pending'");
+    res.json({ count: parseInt(r.count, 10) });
+  } catch { res.json({ count: 0 }); }
+});
+
+// GET  /api/admin/price-tracker/history/:productId
+app.get('/api/admin/price-tracker/history/:productId', webCors, async (req, res) => {
+  try {
+    const { rows } = await posDb.query(
+      'SELECT * FROM pt_history WHERE our_product_id=$1 ORDER BY recorded_at DESC LIMIT 90',
+      [req.params.productId]
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/admin/price-tracker/manual-match
+app.post('/api/admin/price-tracker/manual-match', webCors, async (req, res) => {
+  const { ourProductId, competitorTitle, siteName, competitorPrice } = req.body;
+  try {
+    if (ourProductId && competitorPrice) {
+      const { rows: [p] } = await posDb.query('SELECT sale_price FROM products WHERE id=$1', [ourProductId]);
+      await posDb.query(
+        'INSERT INTO pt_history (our_product_id, our_price, competitor_price, site_name) VALUES ($1,$2,$3,$4)',
+        [ourProductId, p?.sale_price || 0, competitorPrice, siteName || 'Manual']
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET  /api/admin/price-tracker/analytics
+app.get('/api/admin/price-tracker/analytics', webCors, async (req, res) => {
+  try {
+    const { rows: history } = await posDb.query(`
+      SELECT h.our_product_id, p.product_name, h.our_price, h.competitor_price,
+             h.site_name, h.recorded_at,
+             CASE WHEN h.our_price > 0 AND h.competitor_price > 0
+                  THEN ROUND((h.competitor_price / h.our_price)::numeric, 2) END AS ratio
+      FROM pt_history h
+      LEFT JOIN products p ON p.id = h.our_product_id
+      ORDER BY h.recorded_at DESC LIMIT 200
+    `);
+    const { rows: [totals] } = await posDb.query(
+      'SELECT COUNT(DISTINCT our_product_id) AS tracked_products, COUNT(*) AS total_records FROM pt_history'
+    );
+    res.json({ history, totals });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
 // ── Start Server ──────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1889,6 +2243,7 @@ async function main() {
   }
   try {
     await initDb();
+    await initPriceTracker();
     await seedManager();
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`POS server running on port ${PORT} at ${BASE}`);
