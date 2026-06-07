@@ -1687,6 +1687,17 @@ app.post(`${BASE}/api/sync/upsert-customer`, async (req, res) => {
 app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
   const d = req.body;
   try {
+    // 🔔 Insert alert for POS staff
+    const alertItems = (d.items || []);
+    const alertSummary = alertItems.slice(0, 3).map(i => `${i.product_name || i.name || '?'} x${i.quantity || 1}`).join('، ');
+    const alertTotal = parseFloat(d.total_amount || d.total || 0) ||
+      alertItems.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
+    await posDb.query(
+      `INSERT INTO website_order_alerts (customer_name, customer_phone, total_amount, items_count, items_summary)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [d.customer_name || 'عميل', d.customer_phone || '', alertTotal, alertItems.length, alertSummary || '—']
+    ).catch(() => {});
+
     const customerId = await upsertCustomerInPOS({
       name: d.customer_name,
       phone: d.customer_phone,
@@ -2005,6 +2016,17 @@ const PT_INIT_SQL = `
     matched_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(our_product_id, pt_product_id)
   );
+
+  CREATE TABLE IF NOT EXISTS website_order_alerts (
+    id SERIAL PRIMARY KEY,
+    customer_name TEXT,
+    customer_phone TEXT,
+    total_amount NUMERIC DEFAULT 0,
+    items_count INTEGER DEFAULT 0,
+    items_summary TEXT,
+    seen BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
   CREATE TABLE IF NOT EXISTS pt_history (
     id SERIAL PRIMARY KEY,
     our_product_id INTEGER,
@@ -2229,6 +2251,37 @@ app.get('/api/admin/price-tracker/analytics', webCors, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+
+// ── Website Order Alerts (POS staff notifications) ───────────────────────────
+// GET unseen alerts count (for badge)
+app.get(`${BASE}/api/website-orders/alerts/count`, async (req, res) => {
+  if (!req.session?.user_id) return res.json({ count: 0 });
+  try {
+    const { rows: [r] } = await posDb.query('SELECT COUNT(*) AS count FROM website_order_alerts WHERE seen=false');
+    res.json({ count: parseInt(r.count, 10) });
+  } catch { res.json({ count: 0 }); }
+});
+
+// GET unseen alerts (for popup)
+app.get(`${BASE}/api/website-orders/alerts`, async (req, res) => {
+  if (!req.session?.user_id) return res.json([]);
+  try {
+    const { rows } = await posDb.query(
+      'SELECT * FROM website_order_alerts WHERE seen=false ORDER BY created_at DESC LIMIT 20'
+    );
+    res.json(rows);
+  } catch (err) { res.json([]); }
+});
+
+// POST mark all as seen
+app.post(`${BASE}/api/website-orders/alerts/dismiss`, async (req, res) => {
+  if (!req.session?.user_id) return res.json({ ok: false });
+  try {
+    await posDb.query('UPDATE website_order_alerts SET seen=true WHERE seen=false');
+    res.json({ ok: true });
+  } catch (err) { res.json({ ok: false }); }
+});
 
 // ── Start Server ──────────────────────────────────────────────────────────────
 
