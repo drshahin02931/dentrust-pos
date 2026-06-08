@@ -168,7 +168,14 @@
         </div>
         <div class="col-span-2">
           <label class="text-xs font-medium text-gray-600">الفئة</label>
-          <input id="f-category" autocomplete="off" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="مثال: أدوات طبية"/>
+          <input id="f-category" autocomplete="off"
+            class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            placeholder="اكتب فئة جديدة أو اختر من القائمة أدناه"/>
+          <select id="f-category-select"
+            onchange="if(this.value){document.getElementById('f-category').value=this.value;this.value='';}" 
+            class="w-full border rounded-xl px-3 py-2 text-sm mt-2 focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white text-gray-600">
+            <option value="">اختر فئة موجودة...</option>
+          </select>
         </div>
         <div class="col-span-2">
           <label class="text-xs font-medium text-gray-600">الوصف</label>
@@ -286,6 +293,12 @@ async function loadProducts() {
 
   // Build category filter buttons
   const categories = [...new Set(allProducts.map(p => p.category).filter(Boolean))].sort();
+  // Populate category dropdown in add/edit form
+  const catSelect = document.getElementById("f-category-select");
+  if (catSelect) {
+    catSelect.innerHTML = '<option value="">اختر فئة موجودة...</option>' +
+      categories.map(c => `<option value="${c}">${c}</option>`).join("");
+  }
   const filterDiv = document.getElementById("categoryFilters");
   const datalist = document.getElementById("categoryList");
   if (categories.length > 0) {
