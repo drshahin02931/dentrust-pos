@@ -1702,9 +1702,20 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     const alertTotal = parseFloat(d.total_amount || d.total || 0) ||
       alertItems.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
     await posDb.query(
-      `INSERT INTO website_order_alerts (customer_name, customer_phone, total_amount, items_count, items_summary)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [d.customer_name || 'عميل', d.customer_phone || '', alertTotal, alertItems.length, alertSummary || '—']
+      `INSERT INTO website_order_alerts
+         (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id,
+          total_amount, items_count, items_summary)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [
+        d.customer_name || 'عميل',
+        d.customer_phone || '',
+        d.customer_city || d.city || '',
+        [d.customer_region || d.region, d.customer_street || d.street,
+         d.customer_building || d.building_number, d.customer_landmark || d.landmark
+        ].filter(Boolean).join(' - ') || '',
+        d.dentrust_order_id || null,
+        alertTotal, alertItems.length, alertSummary || '—'
+      ]
     ).catch(() => {});
 
     const customerId = await upsertCustomerInPOS({
@@ -2096,12 +2107,22 @@ const PT_INIT_SQL = `
     id SERIAL PRIMARY KEY,
     customer_name TEXT,
     customer_phone TEXT,
+    customer_city TEXT,
+    customer_address TEXT,
+    dentrust_order_id TEXT,
     total_amount NUMERIC DEFAULT 0,
     items_count INTEGER DEFAULT 0,
     items_summary TEXT,
+    status TEXT DEFAULT 'pending',
+    notes TEXT,
     seen BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT NOW()
   );
+  ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending';
+  ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS notes TEXT;
+  ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS customer_city TEXT;
+  ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS customer_address TEXT;
+  ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS dentrust_order_id TEXT;
   CREATE TABLE IF NOT EXISTS pt_history (
     id SERIAL PRIMARY KEY,
     our_product_id INTEGER,
@@ -2356,6 +2377,114 @@ app.post(`${BASE}/api/website-orders/alerts/dismiss`, async (req, res) => {
     await posDb.query('UPDATE website_order_alerts SET seen=true WHERE seen=false');
     res.json({ ok: true });
   } catch (err) { res.json({ ok: false }); }
+});
+
+
+// ─── WhatsApp notification message builder ────────────────────────────────────
+function buildWhatsAppMsg(status, name, total, notes) {
+  const t = parseFloat(total || 0).toLocaleString('ar-EG');
+  const n = name || 'عميل';
+  const footer = '\n\n— دينتراست 🌸';
+  const msgs = {
+    pending:   `مرحباً ${n} 👋\nتم استلام طلبك بنجاح وجارٍ مراجعته.\nإجمالي الطلب: ${t} ج.م\nسنتواصل معك قريباً.${footer}`,
+    confirmed: `مرحباً ${n} ✅\nتم تأكيد طلبك وجارٍ التجهيز للشحن.\nإجمالي الطلب: ${t} ج.م\nشكراً لثقتك فينا!${footer}`,
+    shipped:   `مرحباً ${n} 🚚\nطلبك في الطريق إليك الآن!\nإجمالي الطلب: ${t} ج.م\n${notes ? 'رقم التتبع: ' + notes + '\n' : ''}نراك قريباً 😊${footer}`,
+    delivered: `مرحباً ${n} 📦\nتم توصيل طلبك بنجاح!\nنتمنى أن تكون سعيداً بمنتجاتك.\nشاركنا رأيك وساعد الآخرين 🌟${footer}`,
+    cancelled: `مرحباً ${n}\nنأسف، تم إلغاء طلبك.\n${notes ? 'السبب: ' + notes + '\n' : ''}للاستفسار تواصل معنا.${footer}`,
+  };
+  return msgs[status] || '';
+}
+
+// ── Website Orders Dashboard (page) ──────────────────────────────────────────
+app.get(`${BASE}/website-orders`, (req, res) => {
+  if (!req.session?.user_id) return res.redirect(`${BASE}/login`);
+  return renderPage(req, res, 'website_orders');
+});
+
+// GET all orders — paginated + filtered
+app.get(`${BASE}/api/website-orders/all`, async (req, res) => {
+  if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const status = req.query.status || 'all';
+    const search = (req.query.search || '').trim();
+    const page   = Math.max(1, parseInt(req.query.page || '1', 10));
+    const limit  = 20;
+    const offset = (page - 1) * limit;
+
+    let where = 'WHERE 1=1';
+    const params = [];
+    if (status !== 'all') { params.push(status); where += ` AND status=$${params.length}`; }
+    if (search) {
+      params.push(`%${search}%`);
+      where += ` AND (customer_name ILIKE $${params.length} OR customer_phone ILIKE $${params.length})`;
+    }
+    const { rows } = await posDb.query(
+      `SELECT * FROM website_order_alerts ${where} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`,
+      params
+    );
+    const { rows: [{ count }] } = await posDb.query(
+      `SELECT COUNT(*) AS count FROM website_order_alerts ${where}`, params
+    );
+    res.json({ orders: rows, total: parseInt(count, 10), page, limit });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PATCH order status — returns WhatsApp message + optional Twilio auto-send
+app.patch(`${BASE}/api/website-orders/:id/status`, async (req, res) => {
+  if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
+  const { id } = req.params;
+  const { status, notes } = req.body;
+  const allowed = ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'];
+  if (!allowed.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  try {
+    const { rows: [order] } = await posDb.query('SELECT * FROM website_order_alerts WHERE id=$1', [id]);
+    await posDb.query(
+      'UPDATE website_order_alerts SET status=$1, notes=$2, seen=true WHERE id=$3',
+      [status, notes || null, id]
+    );
+    const waMsg  = buildWhatsAppMsg(status, order?.customer_name, order?.total_amount, notes);
+    const phone  = (order?.customer_phone || '').replace(/[^0-9+]/g, '');
+    const waLink = phone
+      ? `https://wa.me/${phone.startsWith('+') ? phone.slice(1) : phone}?text=${encodeURIComponent(waMsg)}`
+      : null;
+
+    // Optional Twilio auto-send
+    let twilioSent = false;
+    const TWILIO_SID  = process.env.TWILIO_ACCOUNT_SID;
+    const TWILIO_AUTH = process.env.TWILIO_AUTH_TOKEN;
+    const TWILIO_FROM = process.env.TWILIO_WHATSAPP_FROM;
+    if (TWILIO_SID && TWILIO_AUTH && TWILIO_FROM && phone && waMsg) {
+      try {
+        const body = new URLSearchParams({
+          From: TWILIO_FROM,
+          To:   `whatsapp:+${phone.replace(/^\+/, '')}`,
+          Body: waMsg,
+        });
+        const twRes = await fetch(
+          `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: 'Basic ' + Buffer.from(`${TWILIO_SID}:${TWILIO_AUTH}`).toString('base64'),
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: body.toString(),
+          }
+        );
+        twilioSent = twRes.ok;
+      } catch(_) {}
+    }
+    res.json({ ok: true, wa_message: waMsg, wa_link: waLink, twilio_sent: twilioSent });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE order alert
+app.delete(`${BASE}/api/website-orders/:id`, async (req, res) => {
+  if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    await posDb.query('DELETE FROM website_order_alerts WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Start Server ──────────────────────────────────────────────────────────────
