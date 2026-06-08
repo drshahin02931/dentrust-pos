@@ -55,6 +55,8 @@ const OPEN_PATHS = new Set([`${BASE}/login`, `${BASE}/logout`, `${BASE}/sw.js`])
 const OPEN_API = [
   '/api/sync/order-placed', '/api/stats', '/api/sync/confirm-online-order',
   '/api/sync/upsert-product', '/api/sync/delete-product', '/api/settings',
+  '/api/ai/fashion-chat', '/api/ai/fashion-chat-stream', '/api/ai/fashion-tryon',
+  '/api/ai/stylebot', '/api/products', '/api/storage',
 ];
 
 function authGuard(req, res, next) {
