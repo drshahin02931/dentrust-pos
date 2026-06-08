@@ -902,7 +902,7 @@ function cbRender() {
       <div class="p-2 space-y-1">
         ${optRows || '<p class="text-xs text-gray-400 px-1 py-1 italic">لا توجد خيارات — أضف أدناه</p>'}
         <div class="flex gap-2 pt-1">
-          <input type="text" id="cb-opt-inp-${cat}" placeholder="اسم الخيار..."
+          <input type="text" id="cb-opt-inp-${CSS.escape(cat)}" placeholder="اسم الخيار..."
             class="flex-1 border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white"
             onkeydown="if(event.key==='Enter'){event.preventDefault();cbAddOption('${cat.replace(/'/g,"\\'")}');}"/>
           <button type="button" onclick="cbAddOption('${cat.replace(/'/g,"\\'")}')"
