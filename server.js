@@ -1961,6 +1961,28 @@ app.get('/api/storage/*', webCors, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── Bot Knowledge – cache + loader ────────────────────────────────────────────
+let _knowledgeCache = null;
+let _knowledgeCacheAt = 0;
+const KNOWLEDGE_TTL = 60_000; // 60s cache
+
+async function getBotKnowledgeText() {
+  const now = Date.now();
+  if (_knowledgeCache !== null && now - _knowledgeCacheAt < KNOWLEDGE_TTL) {
+    return _knowledgeCache;
+  }
+  try {
+    const { rows } = await posDb.query(
+      "SELECT category, title, content FROM bot_knowledge WHERE active=true ORDER BY category, id"
+    );
+    if (!rows.length) { _knowledgeCache = ''; _knowledgeCacheAt = now; return ''; }
+    const lines = rows.map(r => `[${r.category}] ${r.title}: ${r.content}`).join('\n');
+    _knowledgeCache = `\n\n=== معلومات مخزّنة من إدارة المتجر — التزم بها تماماً وأجب منها مباشرةً ===\n${lines}\n===`;
+    _knowledgeCacheAt = now;
+    return _knowledgeCache;
+  } catch { return ''; }
+}
+
 // ── AI – shared helper ────────────────────────────────────────────────────────
 async function callOpenRouter(payload) {
   const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -1982,9 +2004,11 @@ app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
     const { messages = [], system = '', model = 'openai/gpt-4o-mini', max_tokens = 600 } = req.body;
+    const knowledge = await getBotKnowledgeText();
+    const fullSystem = (system || '') + knowledge;
     const data = await callOpenRouter({
       model, max_tokens,
-      messages: [{ role: 'system', content: system }, ...messages],
+      messages: [{ role: 'system', content: fullSystem }, ...messages],
     });
     res.json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2016,6 +2040,17 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
     const { model = 'openai/gpt-4o-mini', messages = [], max_tokens = 600, stream = true } = req.body;
+    // Inject stored knowledge into the first system message (or prepend one)
+    const knowledge = await getBotKnowledgeText();
+    let patchedMessages = [...messages];
+    if (knowledge) {
+      const sysIdx = patchedMessages.findIndex(m => m.role === 'system');
+      if (sysIdx >= 0) {
+        patchedMessages[sysIdx] = { ...patchedMessages[sysIdx], content: patchedMessages[sysIdx].content + knowledge };
+      } else {
+        patchedMessages = [{ role: 'system', content: knowledge }, ...patchedMessages];
+      }
+    }
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -2024,7 +2059,7 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
         'HTTP-Referer': 'https://dentrust.site',
         'X-Title': 'DenTrust DenBot',
       },
-      body: JSON.stringify({ model, messages, max_tokens, stream }),
+      body: JSON.stringify({ model, messages: patchedMessages, max_tokens, stream }),
       signal: AbortSignal.timeout(30000),
     });
     if (stream) {
@@ -2074,6 +2109,64 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
     } else {
       res.json(await resp.json());
     }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Bot Knowledge CRUD (POS admin) ────────────────────────────────────────────
+
+// GET all knowledge entries
+app.get(`${BASE}/api/bot-knowledge`, async (req, res) => {
+  if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const { rows } = await posDb.query(
+      'SELECT * FROM bot_knowledge ORDER BY category, id'
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST — add new knowledge entry
+app.post(`${BASE}/api/bot-knowledge`, async (req, res) => {
+  if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
+  const { category = 'general', title, content } = req.body;
+  if (!title || !content) return res.status(400).json({ error: 'title and content required' });
+  try {
+    const { rows: [row] } = await posDb.query(
+      'INSERT INTO bot_knowledge (category, title, content) VALUES ($1,$2,$3) RETURNING *',
+      [category.trim(), title.trim(), content.trim()]
+    );
+    _knowledgeCache = null; // invalidate cache immediately
+    res.status(201).json(row);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT — update existing entry
+app.put(`${BASE}/api/bot-knowledge/:id`, async (req, res) => {
+  if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
+  const { category, title, content, active } = req.body;
+  try {
+    const { rows: [row] } = await posDb.query(
+      `UPDATE bot_knowledge SET
+         category = COALESCE($1, category),
+         title    = COALESCE($2, title),
+         content  = COALESCE($3, content),
+         active   = COALESCE($4, active),
+         updated_at = NOW()
+       WHERE id=$5 RETURNING *`,
+      [category ?? null, title ?? null, content ?? null, active ?? null, req.params.id]
+    );
+    _knowledgeCache = null;
+    res.json(row || { ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE — remove entry
+app.delete(`${BASE}/api/bot-knowledge/:id`, async (req, res) => {
+  if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    await posDb.query('DELETE FROM bot_knowledge WHERE id=$1', [req.params.id]);
+    _knowledgeCache = null;
+    res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2130,6 +2223,15 @@ const PT_INIT_SQL = `
     competitor_price NUMERIC,
     site_name TEXT,
     recorded_at TIMESTAMPTZ DEFAULT NOW()
+  );
+  CREATE TABLE IF NOT EXISTS bot_knowledge (
+    id SERIAL PRIMARY KEY,
+    category TEXT NOT NULL DEFAULT 'general',
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
   );
 `;
 
@@ -2394,6 +2496,12 @@ function buildWhatsAppMsg(status, name, total, notes) {
   };
   return msgs[status] || '';
 }
+
+// ── Bot Knowledge Management Page ────────────────────────────────────────────
+app.get(`${BASE}/bot-knowledge`, (req, res) => {
+  if (!req.session?.user_id) return res.redirect(`${BASE}/login`);
+  return renderPage(req, res, 'bot_knowledge');
+});
 
 // ── Website Orders Dashboard (page) ──────────────────────────────────────────
 app.get(`${BASE}/website-orders`, (req, res) => {
