@@ -205,45 +205,12 @@
           </div>
         </div>
 
-        <!-- Variants Toggle -->
-        <div class="col-span-2">
-          <label class="flex items-center gap-3 bg-teal-50 border border-teal-200 rounded-xl px-4 py-3 cursor-pointer">
-            <input type="checkbox" id="f-use-variants" onchange="toggleVariants(this.checked)" class="w-4 h-4 accent-teal-600 rounded flex-shrink-0"/>
-            <div>
-              <div class="text-sm font-semibold text-teal-800">📦 تقسيم الكميات بالبوكسات</div>
-              <div class="text-xs text-teal-600 mt-0.5">حدد العنوان + عدد البوكسات + الكمية في كل بوكس</div>
-            </div>
-          </label>
-        </div>
-      </div>
-
-      <!-- Variants Section -->
-      <div id="variantsSection" class="hidden space-y-4 border border-teal-200 bg-teal-50/40 rounded-2xl p-4">
-        <div class="flex items-center justify-between mb-1">
-          <label class="text-xs font-semibold text-gray-600">أصناف البوكسات</label>
-          <span class="text-xs text-gray-500">الإجمالي: <span id="totalQtyPreview" class="font-bold text-teal-700">0</span> قطعة</span>
-        </div>
-        <!-- Add row -->
-        <div class="grid grid-cols-7 gap-2">
-          <input type="text" id="f-item-label" placeholder="العنوان (مثال: بوكس كبير)"
-            autocomplete="off"
-            class="col-span-3 border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-200"
-            onkeydown="if(event.key==='Enter'){event.preventDefault();addItem();}"/>
-          <input type="number" id="f-item-boxes" min="1" placeholder="بوكسات"
-            class="col-span-2 border rounded-xl px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-teal-200"
-            onkeydown="if(event.key==='Enter'){event.preventDefault();addItem();}"/>
-          <input type="number" id="f-item-qpb" min="1" placeholder="قطعة/بوكس"
-            class="col-span-2 border rounded-xl px-3 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-teal-200"
-            onkeydown="if(event.key==='Enter'){event.preventDefault();addItem();}"/>
-        </div>
-        <button type="button" onclick="addItem()" class="w-full bg-teal-700 text-white px-3 py-2 rounded-xl text-sm font-medium hover:bg-teal-800">+ إضافة صنف</button>
-        <div id="itemsTable" class="space-y-2 max-h-52 overflow-y-auto"></div>
-        <div id="noItemsMsg" class="text-xs text-gray-400 text-center py-2">أضف صنفاً لتظهر هنا</div>
-      </div>
-
       <!-- Checkbox Options Builder -->
       <div class="border border-gray-200 rounded-2xl p-4 space-y-3">
-        <label class="text-xs font-semibold text-gray-600 block">خيارات المنتج (Custom Options)</label>
+        <div class="flex items-center justify-between">
+          <label class="text-xs font-semibold text-gray-600">خيارات المنتج (Custom Options)</label>
+          <span class="text-xs text-gray-500">الإجمالي: <span id="cbTotalQty" class="font-bold text-blue-700">0</span> قطعة</span>
+        </div>
         <div id="cbCategoriesContainer" class="space-y-2"></div>
         <!-- Add category -->
         <div id="cbAddCatRow" class="flex gap-2">
@@ -533,7 +500,6 @@ async function saveProduct(e) {
   errDiv.classList.add("hidden");
   try {
     const id = document.getElementById("editId").value;
-    const useVariants = document.getElementById("f-use-variants").checked;
     const body = {
       product_name: document.getElementById("f-name").value,
       barcode: document.getElementById("f-barcode").value || null,
@@ -545,7 +511,7 @@ async function saveProduct(e) {
       category: document.getElementById("f-category").value.trim() || null,
       min_stock: parseInt(document.getElementById("f-min-stock").value) || 0,
       description: document.getElementById("f-description").value.trim() || null,
-      variants: useVariants ? { items: variantItems } : null,
+      variants: null,
       section: document.querySelector('input[name="f-section"]:checked')?.value || 'dental',
       checkbox_values: cbGetValues(),
     };
@@ -837,7 +803,33 @@ function cbSetStock(cat, label, val) {
   const n = val === "" ? null : Math.max(0, parseInt(val) || 0);
   o.stock = n;
   if (n !== null && n <= 0) o.disabled = true;
+  // Recalculate total quantity from all option stocks
+  cbUpdateTotalQty();
   cbRender();
+}
+
+function cbUpdateTotalQty() {
+  let total = 0;
+  for (const cat of Object.keys(cbData)) {
+    for (const label of Object.keys(cbData[cat])) {
+      const s = cbData[cat][label].stock;
+      if (s !== null && s > 0) total += s;
+    }
+  }
+  // Only update qty field if there are options with stock
+  const allStocks = Object.values(cbData).flatMap(opts => Object.values(opts).map(o => o.stock));
+  const hasAnyStock = allStocks.some(s => s !== null);
+  if (hasAnyStock) {
+    const qtyEl = document.getElementById('f-qty');
+    if (qtyEl) qtyEl.value = total;
+  }
+  const totalSpan = document.getElementById('cbTotalQty');
+  if (totalSpan) totalSpan.textContent = total;
+}
+
+function cbFocusOpt(cat) {
+  const el = document.getElementById(`cb-opt-inp-${CSS.escape(cat)}`);
+  if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
 }
 
 function cbRender() {
@@ -878,6 +870,7 @@ function cbRender() {
     return `<div class="rounded-xl border border-gray-200 bg-gray-50 overflow-hidden">
       <div class="flex items-center gap-2 px-3 py-2 bg-white border-b border-gray-200">
         <span class="text-xs font-bold uppercase tracking-wider text-blue-700 flex-1">${cat}</span>
+        <button type="button" onclick="cbFocusOpt('${cat}')" class="flex items-center gap-1 text-xs font-medium text-blue-700 hover:opacity-70">+ Add option</button>
         <button type="button" onclick="cbRemoveCategory('${cat.replace(/'/g,"\\'")}')"
           class="text-gray-300 hover:text-red-500 text-lg leading-none">×</button>
       </div>
