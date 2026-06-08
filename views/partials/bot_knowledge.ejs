@@ -1,0 +1,312 @@
+<%- include('partials/header', Object.assign({pageTitle: 'تعليمات DenBot'}, locals)) %>
+
+<style>
+  .cat-badge { display:inline-block; padding:2px 10px; border-radius:9999px; font-size:11px; font-weight:700; background:#e0e7ff; color:#3730a3; }
+  .entry-card { transition: box-shadow .15s; }
+  .entry-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.10); }
+</style>
+
+<div class="space-y-5">
+
+  <!-- Header -->
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-2xl font-black text-gray-800">🤖 تعليمات DenBot</h1>
+      <p class="text-sm text-gray-500 mt-0.5">المعلومات اللي بتحفظها هنا بتتحقن تلقائياً في كل رد للبوت على الموقع</p>
+    </div>
+    <button onclick="openAddModal()"
+      class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl text-sm flex items-center gap-1.5">
+      ➕ إضافة معلومة
+    </button>
+  </div>
+
+  <!-- Quick-add bar -->
+  <div class="bg-blue-50 border border-blue-200 rounded-2xl p-4">
+    <div class="text-xs font-bold text-blue-700 mb-3">⚡ إضافة سريعة</div>
+    <div class="flex flex-wrap gap-2">
+      <input id="qaTitle" type="text" placeholder="العنوان (مثال: سرنجة كومبوزيت 4 جرام)"
+        class="flex-1 min-w-[180px] border border-blue-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"/>
+      <input id="qaContent" type="text" placeholder="المعلومة (مثال: تكفي من 20 إلى 30 مريض)"
+        class="flex-[2] min-w-[220px] border border-blue-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"/>
+      <select id="qaCategory" class="border border-blue-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none">
+        <option value="products">منتجات</option>
+        <option value="usage">استخدام</option>
+        <option value="pricing">أسعار</option>
+        <option value="policy">سياسة المتجر</option>
+        <option value="general">عام</option>
+      </select>
+      <button onclick="quickAdd()"
+        class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded-xl text-sm whitespace-nowrap">
+        حفظ ⟵
+      </button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div id="statsRow" class="grid grid-cols-2 sm:grid-cols-4 gap-3 hidden">
+    <div class="bg-white border rounded-2xl p-3 text-center">
+      <div class="text-xl font-black text-blue-700" id="statTotal">—</div>
+      <div class="text-xs text-gray-500">إجمالي المعلومات</div>
+    </div>
+    <div class="bg-white border rounded-2xl p-3 text-center">
+      <div class="text-xl font-black text-green-600" id="statActive">—</div>
+      <div class="text-xs text-gray-500">مفعّل</div>
+    </div>
+    <div class="bg-white border rounded-2xl p-3 text-center">
+      <div class="text-xl font-black text-purple-600" id="statCats">—</div>
+      <div class="text-xs text-gray-500">تصنيفات</div>
+    </div>
+    <div class="bg-green-50 border-2 border-green-300 rounded-2xl p-3 text-center">
+      <div class="text-sm font-black text-green-700">✅ تلقائي</div>
+      <div class="text-xs text-green-600">يحقن في كل رد</div>
+    </div>
+  </div>
+
+  <!-- Entries list -->
+  <div id="listContainer">
+    <div class="flex items-center justify-center py-16 text-gray-400 gap-2">
+      <svg class="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+      </svg>
+      جارٍ التحميل...
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Add / Edit Modal ── -->
+<div id="entryModal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4">
+    <div class="flex items-center justify-between">
+      <h2 class="font-black text-gray-800 text-lg" id="modalTitle">إضافة معلومة</h2>
+      <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">✕</button>
+    </div>
+
+    <input type="hidden" id="editId"/>
+
+    <div class="space-y-1">
+      <label class="text-xs font-bold text-gray-500 block">التصنيف</label>
+      <select id="editCategory" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300">
+        <option value="products">🧪 منتجات</option>
+        <option value="usage">📋 استخدام</option>
+        <option value="pricing">💰 أسعار</option>
+        <option value="policy">📜 سياسة المتجر</option>
+        <option value="general">🌐 عام</option>
+      </select>
+    </div>
+
+    <div class="space-y-1">
+      <label class="text-xs font-bold text-gray-500 block">العنوان</label>
+      <input id="editTitle" type="text" placeholder="مثال: سرنجة كومبوزيت 4 جرام"
+        class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+    </div>
+
+    <div class="space-y-1">
+      <label class="text-xs font-bold text-gray-500 block">المعلومة (البوت هيحفظها ويجاوب بيها)</label>
+      <textarea id="editContent" rows="4" placeholder="مثال: تكفي من 20 إلى 30 مريض، حسب حجم المنطقة وعدد الأسنان."
+        class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-300"></textarea>
+      <p class="text-xs text-gray-400">اكتب المعلومة بنفس الأسلوب اللي عاوز البوت يرد بيه</p>
+    </div>
+
+    <div class="flex gap-2">
+      <button onclick="saveEntry()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl text-sm" id="saveEntryBtn">
+        💾 حفظ
+      </button>
+      <button onclick="closeModal()" class="px-5 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-2.5 rounded-xl text-sm">
+        إلغاء
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = "<%- base %>";
+let _entries = [];
+
+async function load() {
+  try {
+    const res = await fetch(`${BASE}/api/bot-knowledge`);
+    _entries = await res.json();
+    render();
+    renderStats();
+  } catch(e) {
+    document.getElementById('listContainer').innerHTML =
+      `<div class="text-center text-red-400 py-10">❌ خطأ في التحميل: ${e.message}</div>`;
+  }
+}
+
+function renderStats() {
+  const active = _entries.filter(e => e.active).length;
+  const cats   = new Set(_entries.map(e => e.category)).size;
+  document.getElementById('statTotal').textContent  = _entries.length;
+  document.getElementById('statActive').textContent = active;
+  document.getElementById('statCats').textContent   = cats;
+  document.getElementById('statsRow').classList.remove('hidden');
+}
+
+const CAT_LABELS = {
+  products: '🧪 منتجات',
+  usage:    '📋 استخدام',
+  pricing:  '💰 أسعار',
+  policy:   '📜 سياسة',
+  general:  '🌐 عام',
+};
+
+function render() {
+  const c = document.getElementById('listContainer');
+  if (!_entries.length) {
+    c.innerHTML = `
+      <div class="text-center py-16 text-gray-400">
+        <div class="text-4xl mb-3">🤖</div>
+        <div class="font-semibold text-gray-500">لا توجد معلومات محفوظة بعد</div>
+        <div class="text-sm mt-1">أضف معلومات ليجاوب البوت بيها تلقائياً</div>
+      </div>`;
+    return;
+  }
+
+  // Group by category
+  const groups = {};
+  _entries.forEach(e => {
+    if (!groups[e.category]) groups[e.category] = [];
+    groups[e.category].push(e);
+  });
+
+  c.innerHTML = Object.entries(groups).map(([cat, items]) => `
+    <div class="mb-5">
+      <div class="text-xs font-black text-gray-500 uppercase mb-2 px-1">${CAT_LABELS[cat] || cat}</div>
+      <div class="space-y-2">
+        ${items.map(e => `
+          <div class="entry-card bg-white border rounded-2xl p-4 flex gap-3 items-start ${!e.active ? 'opacity-50' : ''}">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="font-bold text-gray-800 text-sm">${escHtml(e.title)}</span>
+                ${!e.active ? '<span class="text-xs bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full font-medium">معطّل</span>' : ''}
+              </div>
+              <div class="text-gray-600 text-sm leading-relaxed">${escHtml(e.content)}</div>
+              <div class="text-xs text-gray-400 mt-1.5">${new Date(e.created_at).toLocaleDateString('ar-EG', {year:'numeric',month:'long',day:'numeric'})}</div>
+            </div>
+            <div class="flex flex-col gap-1.5 flex-shrink-0">
+              <button onclick="openEdit(${e.id})"
+                class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold px-3 py-1.5 rounded-xl">✏️ تعديل</button>
+              <button onclick="toggleActive(${e.id}, ${e.active})"
+                class="text-xs ${e.active ? 'bg-yellow-50 hover:bg-yellow-100 text-yellow-700' : 'bg-green-50 hover:bg-green-100 text-green-700'} font-bold px-3 py-1.5 rounded-xl">
+                ${e.active ? '⏸ إيقاف' : '▶ تفعيل'}
+              </button>
+              <button onclick="deleteEntry(${e.id}, this)"
+                class="text-xs text-red-400 hover:text-red-600 font-medium text-center">حذف</button>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+// ── Quick add ──
+async function quickAdd() {
+  const title   = document.getElementById('qaTitle').value.trim();
+  const content = document.getElementById('qaContent').value.trim();
+  const category = document.getElementById('qaCategory').value;
+  if (!title || !content) { alert('أكمل العنوان والمعلومة'); return; }
+  try {
+    const res = await fetch(`${BASE}/api/bot-knowledge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category, title, content })
+    });
+    if (!res.ok) throw new Error((await res.json()).error);
+    document.getElementById('qaTitle').value = '';
+    document.getElementById('qaContent').value = '';
+    await load();
+    flash('✅ تم الحفظ! البوت هيستخدمها من دلوقتي');
+  } catch(e) { alert('خطأ: ' + e.message); }
+}
+
+// ── Modal ──
+function openAddModal() {
+  document.getElementById('editId').value       = '';
+  document.getElementById('editTitle').value    = '';
+  document.getElementById('editContent').value  = '';
+  document.getElementById('editCategory').value = 'products';
+  document.getElementById('modalTitle').textContent = '➕ إضافة معلومة جديدة';
+  document.getElementById('entryModal').classList.remove('hidden');
+}
+
+function openEdit(id) {
+  const e = _entries.find(x => x.id === id);
+  if (!e) return;
+  document.getElementById('editId').value       = e.id;
+  document.getElementById('editTitle').value    = e.title;
+  document.getElementById('editContent').value  = e.content;
+  document.getElementById('editCategory').value = e.category || 'general';
+  document.getElementById('modalTitle').textContent = '✏️ تعديل المعلومة';
+  document.getElementById('entryModal').classList.remove('hidden');
+}
+
+function closeModal() {
+  document.getElementById('entryModal').classList.add('hidden');
+}
+
+async function saveEntry() {
+  const id      = document.getElementById('editId').value;
+  const title   = document.getElementById('editTitle').value.trim();
+  const content = document.getElementById('editContent').value.trim();
+  const category = document.getElementById('editCategory').value;
+  if (!title || !content) { alert('أكمل الحقول'); return; }
+  const btn = document.getElementById('saveEntryBtn');
+  btn.disabled = true; btn.textContent = '⏳ جارٍ الحفظ...';
+  try {
+    const url    = id ? `${BASE}/api/bot-knowledge/${id}` : `${BASE}/api/bot-knowledge`;
+    const method = id ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method, headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category, title, content })
+    });
+    if (!res.ok) throw new Error((await res.json()).error);
+    closeModal();
+    await load();
+    flash(id ? '✅ تم التعديل' : '✅ تم الحفظ! البوت جاهز');
+  } catch(e) { alert('خطأ: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '💾 حفظ'; }
+}
+
+async function toggleActive(id, currentActive) {
+  try {
+    await fetch(`${BASE}/api/bot-knowledge/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: !currentActive })
+    });
+    await load();
+  } catch(e) { alert('خطأ: ' + e.message); }
+}
+
+async function deleteEntry(id, btn) {
+  if (!confirm('تحذف المعلومة دي؟ البوت مش هيعرفها تاني.')) return;
+  btn.disabled = true;
+  try {
+    await fetch(`${BASE}/api/bot-knowledge/${id}`, { method: 'DELETE' });
+    await load();
+  } catch(e) { alert('خطأ: ' + e.message); btn.disabled = false; }
+}
+
+function flash(msg) {
+  const d = document.createElement('div');
+  d.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-sm font-bold px-5 py-3 rounded-2xl shadow-2xl z-[9999] transition-opacity';
+  d.textContent = msg;
+  document.body.appendChild(d);
+  setTimeout(() => { d.style.opacity = '0'; setTimeout(() => d.remove(), 600); }, 3000);
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Enter key on quick-add content triggers save
+document.getElementById('qaContent')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') quickAdd();
+});
+
+load();
+</script>
+
+<%- include('partials/footer') %>
