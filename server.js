@@ -1998,6 +1998,72 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// POST /api/ai/fashion-chat-stream  (DenBot – streaming chat proxy)
+app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
+  if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
+  try {
+    const { model = 'openai/gpt-4o-mini', messages = [], max_tokens = 600, stream = true } = req.body;
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://dentrust.site',
+        'X-Title': 'DenTrust DenBot',
+      },
+      body: JSON.stringify({ model, messages, max_tokens, stream }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (stream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(decoder.decode(value));
+      }
+      res.end();
+    } else {
+      res.json(await resp.json());
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/ai/stylebot  (StyleBot – vision + chat proxy)
+app.post('/api/ai/stylebot', webCors, async (req, res) => {
+  if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
+  try {
+    const { messages = [], max_tokens = 800, stream = true, _model = 'google/gemini-2.0-flash-001' } = req.body;
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://dentrust.site',
+        'X-Title': 'DenTrust StyleBot',
+      },
+      body: JSON.stringify({ model: _model, messages, max_tokens, stream }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (stream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(decoder.decode(value));
+      }
+      res.end();
+    } else {
+      res.json(await resp.json());
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── Price Tracker ─────────────────────────────────────────────────────────────
 const PT_INIT_SQL = `
   CREATE TABLE IF NOT EXISTS pt_sites (
