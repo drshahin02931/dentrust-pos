@@ -1984,7 +1984,7 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
     const { image = '', prompt = '', system = '' } = req.body;
     const imgUrl = image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}`;
     const data = await callOpenRouter({
-     _model: 'google/gemini-2.5-flash',
+      model: 'google/gemini-2.5-flash',
       max_tokens: 900,
       messages: [
         ...(system ? [{ role: 'system', content: system }] : []),
