@@ -1984,7 +1984,7 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
     const { image = '', prompt = '', system = '' } = req.body;
     const imgUrl = image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}`;
     const data = await callOpenRouter({
-      model: 'google/gemini-2.0-flash-001',
+      model: 'model: 'google/gemini-2.0-flash'',
       max_tokens: 900,
       messages: [
         ...(system ? [{ role: 'system', content: system }] : []),
@@ -2035,7 +2035,7 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
 app.post('/api/ai/stylebot', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { messages = [], max_tokens = 800, stream = true, _model = 'google/gemini-2.0-flash-001' } = req.body;
+    const { messages = [], max_tokens = 800, stream = true, _model = 'model: 'google/gemini-2.0-flash'' } = req.body;
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
