@@ -139,12 +139,12 @@
       <span id="lowStockBadge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white font-black rounded-full text-[9px] min-w-[1rem] px-1 leading-none py-0.5 text-center"></span>
     </a>
 
-    <!-- 🌐 Website Orders Bell — visible when logged in -->
+    <!-- 🌐 Website Orders Bell + Dashboard link — visible when logged in -->
     <% if (currentUser) { %>
-    <button onclick="showAlertPanel()" class="nav-link relative" id="ordersBell" title="طلبات جديدة من الموقع">
-      🌐
+    <a href="<%- base %>/website-orders" class="nav-link relative <%= reqPath.includes('/website-orders') ? 'active' : '' %>" id="ordersBell" title="طلبات الموقع">
+      🌐 <span class="lang-text" data-ar="الطلبات" data-en="Orders">الطلبات</span>
       <span id="ordersBadge" class="hidden absolute -top-1 -right-1 bg-green-400 text-white font-black rounded-full text-[9px] min-w-[1rem] px-1 leading-none py-0.5 text-center"></span>
-    </button>
+    </a>
     <% } %>
 
     <% if (isMgr) { %>
