@@ -11,12 +11,20 @@ const SUPABASE_DATABASE_URL = process.env.SUPABASE_DATABASE_URL;
 const POS_SCHEMA = 'pos_data';
 
 const sslConfig = process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false;
+
+// posDb: POS-specific tables under pos_data schema
 const posDb = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig });
 posDb.on('connect', client => {
   client.query(`SET search_path TO ${POS_SCHEMA}, public`);
 });
 
-const dentrustDb = new Pool({ connectionString: SUPABASE_DATABASE_URL || DATABASE_URL, ssl: sslConfig });
+// dentrustDb: website public schema (products, orders, categories…)
+// In single-DB mode (DATABASE_URL = Supabase) this is the SAME database,
+// but a separate pool with no search_path override → defaults to public schema.
+const WEBSITE_DB_URL = SUPABASE_DATABASE_URL || DATABASE_URL;
+const isSingleDb = !SUPABASE_DATABASE_URL || SUPABASE_DATABASE_URL === DATABASE_URL;
+const dentrustDb = new Pool({ connectionString: WEBSITE_DB_URL, ssl: sslConfig });
+// No search_path override → defaults to public schema ✓
 
 const ALL_PERMS = {
   pos: true, inventory: true, expiry: true,
@@ -163,7 +171,32 @@ const PG_SCHEMA_SQL = `
     notes TEXT,
     created_at TEXT DEFAULT (NOW()::text)
   );
-  CREATE TABLE IF NOT EXISTS cash_sessions (
+  CREATE TABLE IF NOT EXISTS bot_knowledge (
+    id SERIAL PRIMARY KEY,
+    category TEXT NOT NULL DEFAULT 'general',
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  );
+  CREATE TABLE IF NOT EXISTS website_order_alerts (
+    id SERIAL PRIMARY KEY,
+    customer_name TEXT,
+    customer_phone TEXT,
+    customer_city TEXT,
+    customer_address TEXT,
+    dentrust_order_id INTEGER,
+    total_amount NUMERIC,
+    items_count INTEGER DEFAULT 0,
+    items_summary TEXT,
+    promo_code TEXT,
+    discount_amount NUMERIC,
+    seen BOOLEAN NOT NULL DEFAULT false,
+    sale_item_id INTEGER,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+    CREATE TABLE IF NOT EXISTS cash_sessions (
     id SERIAL PRIMARY KEY,
     cashier_id INTEGER,
     date TEXT,
@@ -337,7 +370,7 @@ async function getSettings() {
 }
 
 module.exports = {
-  posDb, dentrustDb,
+  posDb, dentrustDb, isSingleDb, WEBSITE_DB_URL,
   initDb, seedManager,
   verifyPassword, hashPassword,
   getSettings,
