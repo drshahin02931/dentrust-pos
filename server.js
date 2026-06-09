@@ -854,7 +854,9 @@ app.delete(`${BASE}/api/customers/:cid`, async (req, res) => {
 
 app.get(`${BASE}/api/expenses`, async (req, res) => {
   try {
-    const { rows } = await posDb.query('SELECT * FROM expenses ORDER BY date DESC');
+    const period = req.query.period || 'all';
+    const pf = periodFilter(period, 'date');
+    const { rows } = await posDb.query(`SELECT * FROM expenses WHERE ${pf} ORDER BY date DESC`);
     res.json(rows);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
@@ -1707,8 +1709,8 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     await posDb.query(
       `INSERT INTO website_order_alerts
          (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id,
-          total_amount, items_count, items_summary)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          total_amount, items_count, items_summary, promo_code, discount_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [
         d.customer_name || 'عميل',
         d.customer_phone || '',
@@ -1717,7 +1719,9 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
          d.customer_building || d.building_number, d.customer_landmark || d.landmark
         ].filter(Boolean).join(' - ') || '',
         d.dentrust_order_id || null,
-        alertTotal, alertItems.length, alertSummary || '—'
+        alertTotal, alertItems.length, alertSummary || '—',
+        d.promo_code || null,
+        d.discount_amount ? parseFloat(d.discount_amount) : null
       ]
     ).catch(() => {});
 
@@ -2610,19 +2614,65 @@ app.post(`${BASE}/api/website-orders/alerts/dismiss`, async (req, res) => {
 
 
 // ─── WhatsApp notification message builder ────────────────────────────────────
-function buildWhatsAppMsg(status, name, total, notes) {
+// Templates stored in store_settings key='whatsapp_templates' (editable via /whatsapp-settings)
+// Placeholders: {name} {total} {tracking} {reason}
+const WA_DEFAULTS = {
+  pending:   'مرحباً {name} 👋\nتم استلام طلبك بنجاح وجارٍ مراجعته.\nإجمالي الطلب: {total} ج.م\nسنتواصل معك قريباً.\n\n— دينتراست 🌸',
+  confirmed: 'مرحباً {name} ✅\nتم تأكيد طلبك وجارٍ التجهيز للشحن.\nإجمالي الطلب: {total} ج.م\nشكراً لثقتك فينا!\n\n— دينتراست 🌸',
+  shipped:   'مرحباً {name} 🚚\nطلبك في الطريق إليك الآن!\nإجمالي الطلب: {total} ج.م\n{tracking}نراك قريباً 😊\n\n— دينتراست 🌸',
+  delivered: 'مرحباً {name} 📦\nتم توصيل طلبك بنجاح!\nنتمنى أن تكون سعيداً بمنتجاتك.\nشاركنا رأيك وساعد الآخرين 🌟\n\n— دينتراست 🌸',
+  cancelled: 'مرحباً {name}\nنأسف، تم إلغاء طلبك.\n{reason}للاستفسار تواصل معنا.\n\n— دينتراست 🌸',
+};
+
+async function getWaTemplates() {
+  try {
+    const { rows } = await posDb.query(
+      "SELECT value FROM store_settings WHERE key='whatsapp_templates' LIMIT 1"
+    );
+    if (rows.length && rows[0].value) return { ...WA_DEFAULTS, ...JSON.parse(rows[0].value) };
+  } catch (_) {}
+  return { ...WA_DEFAULTS };
+}
+
+async function buildWhatsAppMsg(status, name, total, notes) {
+  const templates = await getWaTemplates();
+  const tmpl = templates[status] || '';
+  if (!tmpl) return '';
   const t = parseFloat(total || 0).toLocaleString('ar-EG');
   const n = name || 'عميل';
-  const footer = '\n\n— دينتراست 🌸';
-  const msgs = {
-    pending:   `مرحباً ${n} 👋\nتم استلام طلبك بنجاح وجارٍ مراجعته.\nإجمالي الطلب: ${t} ج.م\nسنتواصل معك قريباً.${footer}`,
-    confirmed: `مرحباً ${n} ✅\nتم تأكيد طلبك وجارٍ التجهيز للشحن.\nإجمالي الطلب: ${t} ج.م\nشكراً لثقتك فينا!${footer}`,
-    shipped:   `مرحباً ${n} 🚚\nطلبك في الطريق إليك الآن!\nإجمالي الطلب: ${t} ج.م\n${notes ? 'رقم التتبع: ' + notes + '\n' : ''}نراك قريباً 😊${footer}`,
-    delivered: `مرحباً ${n} 📦\nتم توصيل طلبك بنجاح!\nنتمنى أن تكون سعيداً بمنتجاتك.\nشاركنا رأيك وساعد الآخرين 🌟${footer}`,
-    cancelled: `مرحباً ${n}\nنأسف، تم إلغاء طلبك.\n${notes ? 'السبب: ' + notes + '\n' : ''}للاستفسار تواصل معنا.${footer}`,
-  };
-  return msgs[status] || '';
+  return tmpl
+    .replace(/{name}/g, n)
+    .replace(/{total}/g, t)
+    .replace(/{tracking}/g, notes ? 'رقم التتبع: ' + notes + '\n' : '')
+    .replace(/{reason}/g, notes ? 'السبب: ' + notes + '\n' : '');
 }
+
+// ── WhatsApp Templates API ────────────────────────────────────────────────────
+app.get(`${BASE}/api/settings/whatsapp-templates`, async (req, res) => {
+  if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
+  try { res.json(await getWaTemplates()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post(`${BASE}/api/settings/whatsapp-templates`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    const allowed = ['pending','confirmed','shipped','delivered','cancelled'];
+    const toSave  = {};
+    for (const k of allowed) { if (typeof req.body[k] === 'string') toSave[k] = req.body[k]; }
+    await posDb.query(
+      "INSERT INTO store_settings (key,value) VALUES ('whatsapp_templates',$1) ON CONFLICT (key) DO UPDATE SET value=$1",
+      [JSON.stringify(toSave)]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── WhatsApp Settings Page ────────────────────────────────────────────────────
+app.get(`${BASE}/whatsapp-settings`, (req, res) => {
+  if (!req.session?.user_id) return res.redirect(`${BASE}/login`);
+  return renderPage(req, res, 'whatsapp_settings');
+});
 
 // ── Bot Knowledge Management Page ────────────────────────────────────────────
 app.get(`${BASE}/bot-knowledge`, (req, res) => {
@@ -2677,10 +2727,15 @@ app.patch(`${BASE}/api/website-orders/:id/status`, async (req, res) => {
       'UPDATE website_order_alerts SET status=$1, notes=$2, seen=true WHERE id=$3',
       [status, notes || null, id]
     );
-    const waMsg  = buildWhatsAppMsg(status, order?.customer_name, order?.total_amount, notes);
-    const phone  = (order?.customer_phone || '').replace(/[^0-9+]/g, '');
+    const waMsg  = await buildWhatsAppMsg(status, order?.customer_name, order?.total_amount, notes);
+    const rawPhone = (order?.customer_phone || '').replace(/[^0-9+]/g, '');
+    const phone = rawPhone.startsWith('+')
+      ? rawPhone.slice(1)
+      : (rawPhone.startsWith('0') && rawPhone.length === 11)
+        ? '20' + rawPhone
+        : rawPhone;
     const waLink = phone
-      ? `https://wa.me/${phone.startsWith('+') ? phone.slice(1) : phone}?text=${encodeURIComponent(waMsg)}`
+      ? `https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}`
       : null;
 
     // Optional Twilio auto-send
