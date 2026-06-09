@@ -220,6 +220,8 @@ const MIGRATIONS = [
   "ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS cash_amount NUMERIC DEFAULT 0",
   "ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS instapay_amount NUMERIC DEFAULT 0",
   "ALTER TABLE return_items ADD COLUMN IF NOT EXISTS sale_item_id INTEGER",
+  "ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS promo_code TEXT",
+  "ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS discount_amount NUMERIC",
 ];
 
 const DEFAULT_SETTINGS = {
