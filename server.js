@@ -1524,7 +1524,7 @@ app.post(`${BASE}/api/sync/push-stock`, async (req, res) => {
     let updated = 0;
     try {
       for (const p of linked) {
-        try { await client.query('UPDATE products SET stock=$1 WHERE id=$2', [p.quantity, p.dentrust_id]); updated++; } catch (_) {}
+        try { await client.query('UPDATE products SET stock=$1, is_sold_out=$2 WHERE id=$3', [p.quantity, p.quantity <= 0, p.dentrust_id]); updated++; } catch (_) {}
       }
     } finally { client.release(); }
     res.json({ ok: true, updated });
