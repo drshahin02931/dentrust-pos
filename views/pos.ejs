@@ -1082,7 +1082,7 @@ async function submitQuickAddCustomer(e) {
     });
 
     // Auto-select the newly added customer
-    const newCustomer = updated.find(c => c.name === name && c.phone === (phone||""));
+    const newCustomer = updated.find(c => c.name === name && (c.phone||'') === (phone||''));
     if (newCustomer) sel.value = newCustomer.id;
 
     closeQuickAddCustomer();
