@@ -2240,31 +2240,127 @@ async function initPriceTracker() {
   catch (e) { console.error('Price tracker init error:', e.message); }
 }
 
-// Simple scraper – fetch HTML and extract price patterns
+// AI-powered scraper — JSON-LD → meta tags → OpenRouter AI → regex fallback
 async function scrapePageProducts(siteUrl) {
   const products = [];
+  let html = '';
+
+  // ── Step 1: Fetch HTML ───────────────────────────────────────────────────
   try {
     const r = await fetch(siteUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DenTrustPriceBot/1.0)' },
-      signal: AbortSignal.timeout(15000),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'ar,en;q=0.9',
+      },
+      signal: AbortSignal.timeout(20000),
     });
-    const html = await r.text();
-    // Extract heading texts as product titles
-    const titles = [];
-    let m;
-    const hRe = /<h[1-5][^>]*>([^<]{4,150})<\/h[1-5]>/gi;
-    while ((m = hRe.exec(html)) !== null) titles.push(m[1].replace(/<[^>]+>/g, '').trim());
-    // Extract prices (Arabic & English formats)
-    const priceRe = /(\d[\d\s,\.]*)\s*(?:جنيه|EGP|LE|ج\.م|L\.E\.?)/gi;
+    html = await r.text();
+  } catch (e) {
+    console.error('Scrape fetch error for', siteUrl, ':', e.message);
+    return [];
+  }
+
+  // ── Step 2: JSON-LD / Schema.org (most reliable) ─────────────────────────
+  const jsonLdRe = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = jsonLdRe.exec(html)) !== null && products.length < 100) {
+    try {
+      const data = JSON.parse(m[1].trim());
+      const items = Array.isArray(data) ? data : [data];
+      for (const item of items) {
+        const type = (item['@type'] || '').toLowerCase();
+        if (type === 'product') {
+          const name = item.name || '';
+          const offers = item.offers;
+          let price = null;
+          if (offers) {
+            const o = Array.isArray(offers) ? offers[0] : offers;
+            price = parseFloat(o.price || o.lowPrice || 0);
+          }
+          if (name && price > 0) products.push({ title: name, price, url: item.url || siteUrl });
+        }
+        if (type === 'itemlist' && item.itemListElement) {
+          for (const el of item.itemListElement) {
+            const prod = el.item || el;
+            const name = prod.name || '';
+            const offers = prod.offers;
+            let price = null;
+            if (offers) {
+              const o = Array.isArray(offers) ? offers[0] : offers;
+              price = parseFloat(o.price || o.lowPrice || 0);
+            }
+            if (name && price > 0) products.push({ title: name, price, url: prod.url || siteUrl });
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  // ── Step 3: OpenGraph / meta price tags ──────────────────────────────────
+  if (products.length === 0) {
+    const ogTitle = (/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i.exec(html) || [])[1];
+    const ogPrice = (/<meta[^>]+(?:property=["']product:price:amount["']|name=["']price["'])[^>]+content=["']([^"']+)["']/i.exec(html) || [])[1];
+    if (ogTitle && ogPrice) {
+      const price = parseFloat(ogPrice.replace(/[^\d.]/g, ''));
+      if (price > 0) products.push({ title: ogTitle, price, url: siteUrl });
+    }
+  }
+
+  // ── Step 4: OpenRouter AI extraction (key fallback) ───────────────────────
+  if (products.length < 3 && OPENROUTER_KEY) {
+    try {
+      const visibleText = html
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+        .replace(/\s+/g, ' ').trim().slice(0, 7000);
+
+      const aiData = await callOpenRouter({
+        model: 'openai/gpt-4o-mini',
+        max_tokens: 1500,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a product price extractor for dental supply websites. Extract ALL product names and prices from the given text. Return ONLY a JSON array: [{"title":"product name","price":123.50}]. Prices must be numbers only (no currency). Return [] if nothing found.',
+          },
+          { role: 'user', content: `Extract products and prices:\n\n${visibleText}` },
+        ],
+      });
+
+      const raw = aiData.choices?.[0]?.message?.content || '[]';
+      const jsonMatch = raw.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const aiProducts = JSON.parse(jsonMatch[0]);
+        for (const p of aiProducts) {
+          const price = parseFloat(p.price);
+          if (p.title && price > 0 && products.length < 100)
+            products.push({ title: String(p.title).slice(0, 200), price, url: siteUrl });
+        }
+      }
+    } catch (e) { console.error('AI scraper error:', e.message); }
+  }
+
+  // ── Step 5: Regex fallback (last resort) ─────────────────────────────────
+  if (products.length === 0) {
+    const titleRe = /class=["'][^"']*(?:product[_-]?(?:name|title)|item[_-]?name|card[_-]?title)[^"']*["'][^>]*>\s*([^<]{3,120})/gi;
+    const extractedTitles = [];
+    while ((m = titleRe.exec(html)) !== null && extractedTitles.length < 80) {
+      const t = m[1].trim();
+      if (t) extractedTitles.push(t);
+    }
+    const priceRe = /(?:جنيه|EGP|LE|ج\.م|L\.E\.?)[\s]*(\d[\d\s,\.]{0,10})|(\d[\d\s,\.]{1,10})[\s]*(?:جنيه|EGP|LE|ج\.م|L\.E\.?)/gi;
     let pi = 0;
     while ((m = priceRe.exec(html)) !== null && pi < 80) {
-      const price = parseFloat(m[1].replace(/[\s,]/g, ''));
+      const price = parseFloat((m[1] || m[2] || '').replace(/[\s,]/g, ''));
       if (price >= 1 && price < 2000000) {
-        products.push({ title: titles[pi] || `منتج ${pi + 1}`, price, url: siteUrl });
+        products.push({ title: extractedTitles[pi] || `منتج ${pi + 1}`, price, url: siteUrl });
         pi++;
       }
     }
-  } catch (e) { console.error('Scrape error for', siteUrl, ':', e.message); }
+  }
+
   return products.slice(0, 100);
 }
 
@@ -2412,6 +2508,34 @@ app.get('/api/admin/price-tracker/history/:productId', webCors, async (req, res)
       [req.params.productId]
     );
     res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// PUT /api/admin/price-tracker/matches/:id  (approve / reject)
+app.put('/api/admin/price-tracker/matches/:id', webCors, async (req, res) => {
+  const { status } = req.body;
+  if (!['approved', 'rejected'].includes(status))
+    return res.status(400).json({ error: 'status must be approved or rejected' });
+  try {
+    const { rows: [match] } = await posDb.query(
+      'UPDATE pt_matches SET status=$1 WHERE id=$2 RETURNING *',
+      [status, req.params.id]
+    );
+    if (!match) return res.status(404).json({ error: 'Match not found' });
+
+    if (status === 'approved') {
+      const { rows: [pp] } = await posDb.query('SELECT * FROM pt_products WHERE id=$1', [match.pt_product_id]);
+      const { rows: [p] }  = await posDb.query('SELECT sale_price FROM products WHERE id=$1', [match.our_product_id]);
+      const { rows: [s] }  = await posDb.query('SELECT name FROM pt_sites WHERE id=(SELECT site_id FROM pt_products WHERE id=$1)', [match.pt_product_id]);
+      if (pp && p) {
+        await posDb.query(
+          'INSERT INTO pt_history (our_product_id, our_price, competitor_price, site_name) VALUES ($1,$2,$3,$4)',
+          [match.our_product_id, p.sale_price || 0, pp.price || 0, s?.name || 'Unknown']
+        );
+      }
+    }
+    res.json({ ok: true, status });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
