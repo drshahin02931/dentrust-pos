@@ -524,15 +524,35 @@ async function submitPayment() {
 
 // ── Installments ──────────────────────────────────────────────────────────────
 function openAddInstallment() {
-  const amount   = prompt("مبلغ القسط (جنيه):");
-  if (!amount || isNaN(parseFloat(amount))) return;
-  const due_date = prompt("تاريخ الاستحقاق (مثال: 2026-07-01):", new Date(Date.now()+30*24*3600000).toISOString().split("T")[0]);
-  if (!due_date) return;
-  const notes = prompt("ملاحظة (اختياري):", "") || "";
-  fetch(`${BASE}/api/installments`, {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ customer_id: currentCustomer.id, amount: parseFloat(amount), due_date, notes })
-  }).then(()=>switchTab('installments'));
+  const tomorrow = new Date(Date.now()+30*24*3600000).toISOString().split("T")[0];
+  document.getElementById("inst-amount").value = "";
+  document.getElementById("inst-date").value   = tomorrow;
+  document.getElementById("inst-notes").value  = "";
+  document.getElementById("inst-err").classList.add("hidden");
+  document.getElementById("instModal").classList.remove("hidden");
+  setTimeout(()=>document.getElementById("inst-amount").focus(),100);
+}
+async function submitInstallment(e) {
+  e.preventDefault();
+  const amount   = parseFloat(document.getElementById("inst-amount").value);
+  const due_date = document.getElementById("inst-date").value;
+  const notes    = document.getElementById("inst-notes").value.trim();
+  const errEl    = document.getElementById("inst-err");
+  if (!amount || amount <= 0) { errEl.textContent="أدخل مبلغاً صحيحاً"; errEl.classList.remove("hidden"); return; }
+  if (!due_date) { errEl.textContent="أدخل تاريخ الاستحقاق"; errEl.classList.remove("hidden"); return; }
+  const btn = document.getElementById("inst-submit");
+  btn.disabled = true; btn.textContent = "...";
+  try {
+    await fetch(`${BASE}/api/installments`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ customer_id: currentCustomer.id, amount, due_date, notes })
+    });
+    document.getElementById("instModal").classList.add("hidden");
+    switchTab('installments');
+  } catch(_) {
+    errEl.textContent = "حدث خطأ، حاول مرة أخرى"; errEl.classList.remove("hidden");
+    btn.disabled = false; btn.textContent = "حفظ القسط";
+  }
 }
 
 async function markInstallmentPaid(id) {
@@ -560,5 +580,39 @@ async function confirmDelete() {
 loadCustomers();
 </script>
 
+
+<!-- ══ Installment Modal ══ -->
+<div id="instModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl">
+    <div class="p-5 border-b flex items-center justify-between">
+      <h3 class="font-bold text-gray-800">➕ إضافة قسط جديد</h3>
+      <button onclick="document.getElementById('instModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+    </div>
+    <form onsubmit="submitInstallment(event)" class="p-5 space-y-3">
+      <div>
+        <label class="text-xs font-medium text-gray-600">المبلغ (جنيه) *</label>
+        <input id="inst-amount" type="number" step="0.01" min="0.01" required placeholder="0.00"
+          class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+      <div>
+        <label class="text-xs font-medium text-gray-600">تاريخ الاستحقاق *</label>
+        <input id="inst-date" type="date" required
+          class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+      <div>
+        <label class="text-xs font-medium text-gray-600">ملاحظة (اختياري)</label>
+        <input id="inst-notes" placeholder="مثال: قسط شهر يوليو"
+          class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+      </div>
+      <div id="inst-err" class="hidden text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2"></div>
+      <div class="flex gap-3 pt-1">
+        <button type="submit" id="inst-submit"
+          class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800 text-sm">حفظ القسط</button>
+        <button type="button" onclick="document.getElementById('instModal').classList.add('hidden')"
+          class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">إلغاء</button>
+      </div>
+    </form>
+  </div>
+</div>
 </main>
 <%- include('partials/footer', locals) %>
