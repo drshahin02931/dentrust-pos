@@ -1,0 +1,149 @@
+<%- include('partials/header', Object.assign({pageTitle: 'رسائل الواتساب'}, locals)) %>
+<div class="max-w-3xl mx-auto space-y-6">
+
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold text-gray-800">📱 إعدادات رسائل الواتساب</h1>
+    <a href="<%- base %>/website-orders" class="text-sm text-blue-600 hover:underline">← طلبات الموقع</a>
+  </div>
+
+  <div class="bg-blue-50 border border-blue-200 rounded-2xl px-5 py-4 text-sm text-blue-800">
+    <strong>البلاسهولدرز المتاحة في كل رسالة:</strong><br/>
+    <code class="bg-blue-100 px-1 rounded">{name}</code> اسم العميل &nbsp;|&nbsp;
+    <code class="bg-blue-100 px-1 rounded">{total}</code> إجمالي الطلب &nbsp;|&nbsp;
+    <code class="bg-blue-100 px-1 rounded">{tracking}</code> رقم التتبع (حالة شحن فقط) &nbsp;|&nbsp;
+    <code class="bg-blue-100 px-1 rounded">{reason}</code> سبب الإلغاء (حالة إلغاء فقط)
+  </div>
+
+  <div id="saveMsg" class="hidden rounded-xl px-4 py-3 text-sm font-semibold text-center"></div>
+
+  <form id="templatesForm" class="space-y-5">
+
+    <% const statuses = [
+      { key: 'pending',   label: '⏳ انتظار', color: 'yellow' },
+      { key: 'confirmed', label: '✅ مؤكد',   color: 'green'  },
+      { key: 'shipped',   label: '🚚 شحن',    color: 'blue'   },
+      { key: 'delivered', label: '📦 تسليم',  color: 'purple' },
+      { key: 'cancelled', label: '❌ إلغاء',  color: 'red'    },
+    ]; %>
+
+    <% statuses.forEach(s => { %>
+    <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
+      <div class="px-5 py-3 border-b bg-gray-50 flex items-center justify-between">
+        <span class="font-bold text-gray-700 text-sm"><%= s.label %></span>
+        <button type="button" onclick="resetTemplate('<%= s.key %>')"
+          class="text-xs text-gray-400 hover:text-gray-600">↺ إعادة للافتراضي</button>
+      </div>
+      <div class="p-4">
+        <textarea name="<%= s.key %>" id="tmpl-<%= s.key %>" rows="5"
+          class="w-full border rounded-xl px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200 resize-y"
+          placeholder="نص الرسالة..."></textarea>
+        <div class="mt-2 flex gap-2">
+          <button type="button" onclick="previewMsg('<%= s.key %>')"
+            class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg font-medium">👁️ معاينة</button>
+          <div id="preview-<%= s.key %>" class="hidden text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 flex-1 whitespace-pre-wrap font-mono"></div>
+        </div>
+      </div>
+    </div>
+    <% }) %>
+
+    <div class="flex gap-3 pb-6">
+      <button type="submit" id="saveBtn"
+        class="flex-1 bg-blue-700 hover:bg-blue-800 text-white font-bold py-3 rounded-2xl text-sm transition-all">
+        💾 حفظ كل الرسائل
+      </button>
+      <button type="button" onclick="resetAll()"
+        class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-3 px-5 rounded-2xl text-sm">
+        إعادة كل الافتراضيات
+      </button>
+    </div>
+  </form>
+</div>
+
+<script>
+const BASE = "<%- base %>";
+
+const DEFAULTS = {
+  pending:   'مرحباً {name} 👋\nتم استلام طلبك بنجاح وجارٍ مراجعته.\nإجمالي الطلب: {total} ج.م\nسنتواصل معك قريباً.\n\n— دينتراست 🌸',
+  confirmed: 'مرحباً {name} ✅\nتم تأكيد طلبك وجارٍ التجهيز للشحن.\nإجمالي الطلب: {total} ج.م\nشكراً لثقتك فينا!\n\n— دينتراست 🌸',
+  shipped:   'مرحباً {name} 🚚\nطلبك في الطريق إليك الآن!\nإجمالي الطلب: {total} ج.م\n{tracking}نراك قريباً 😊\n\n— دينتراست 🌸',
+  delivered: 'مرحباً {name} 📦\nتم توصيل طلبك بنجاح!\nنتمنى أن تكون سعيداً بمنتجاتك.\nشاركنا رأيك وساعد الآخرين 🌟\n\n— دينتراست 🌸',
+  cancelled: 'مرحباً {name}\nنأسف، تم إلغاء طلبك.\n{reason}للاستفسار تواصل معنا.\n\n— دينتراست 🌸',
+};
+
+async function loadTemplates() {
+  try {
+    const data = await fetch(`${BASE}/api/settings/whatsapp-templates`).then(r => r.json());
+    for (const [k, v] of Object.entries(data)) {
+      const el = document.getElementById(`tmpl-${k}`);
+      if (el) el.value = v;
+    }
+  } catch(e) {
+    // fill with defaults on error
+    for (const [k, v] of Object.entries(DEFAULTS)) {
+      const el = document.getElementById(`tmpl-${k}`);
+      if (el && !el.value) el.value = v;
+    }
+  }
+}
+
+function resetTemplate(key) {
+  const el = document.getElementById(`tmpl-${key}`);
+  if (el && DEFAULTS[key]) {
+    el.value = DEFAULTS[key];
+    el.classList.add('ring-2','ring-yellow-300');
+    setTimeout(() => el.classList.remove('ring-2','ring-yellow-300'), 800);
+  }
+}
+
+function resetAll() {
+  if (!confirm('إعادة كل الرسائل للنصوص الافتراضية؟')) return;
+  for (const k of Object.keys(DEFAULTS)) resetTemplate(k);
+}
+
+function previewMsg(key) {
+  const el  = document.getElementById(`tmpl-${key}`);
+  const pre = document.getElementById(`preview-${key}`);
+  const txt = (el?.value || '').replace(/{name}/g, 'محمد أحمد')
+    .replace(/{total}/g, '٣٥٠')
+    .replace(/{tracking}/g, 'رقم التتبع: EG123456\n')
+    .replace(/{reason}/g, 'السبب: العميل طلب الإلغاء\n');
+  pre.textContent = txt;
+  pre.classList.toggle('hidden');
+}
+
+document.getElementById('templatesForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn  = document.getElementById('saveBtn');
+  const msg  = document.getElementById('saveMsg');
+  btn.disabled = true; btn.textContent = '...';
+  const body = {};
+  ['pending','confirmed','shipped','delivered','cancelled'].forEach(k => {
+    const el = document.getElementById(`tmpl-${k}`);
+    if (el) body[k] = el.value;
+  });
+  try {
+    const res = await fetch(`${BASE}/api/settings/whatsapp-templates`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (res.ok) {
+      msg.className = 'rounded-xl px-4 py-3 text-sm font-semibold text-center bg-green-50 text-green-700 border border-green-200';
+      msg.textContent = '✅ تم حفظ الرسائل بنجاح!';
+    } else {
+      msg.className = 'rounded-xl px-4 py-3 text-sm font-semibold text-center bg-red-50 text-red-700 border border-red-200';
+      msg.textContent = data.error || 'حدث خطأ';
+    }
+  } catch(_) {
+    msg.className = 'rounded-xl px-4 py-3 text-sm font-semibold text-center bg-red-50 text-red-700 border border-red-200';
+    msg.textContent = 'حدث خطأ في الاتصال';
+  }
+  msg.classList.remove('hidden');
+  btn.disabled = false; btn.textContent = '💾 حفظ كل الرسائل';
+  setTimeout(() => msg.classList.add('hidden'), 4000);
+});
+
+loadTemplates();
+</script>
+
+</main>
+<%- include('partials/footer', locals) %>
