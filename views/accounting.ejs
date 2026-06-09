@@ -149,6 +149,7 @@ function setPeriod(p) {
   document.getElementById(`p-${p}`).classList.add("active");
   loadSummary();
   loadDetailTab(currentDetailTab);
+  loadExpenses();
 }
 
 async function loadSummary() {
@@ -273,7 +274,7 @@ async function loadDetailTab(tab) {
 
 // ── Expenses ───────────────────────────────────────────────────────────────
 async function loadExpenses() {
-  const res  = await fetch(`${BASE}/api/expenses`);
+  const res  = await fetch(`${BASE}/api/expenses?period=${currentPeriod}`);
   const data = await res.json();
   const tbody   = document.getElementById("expenseTable");
   const noMsg   = document.getElementById("noExpenses");
