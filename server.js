@@ -1381,7 +1381,10 @@ async function syncDentrustBatch(updates) {
     for (const { pid, delta } of updates) {
       const { rows: [row] } = await posDb.query('SELECT dentrust_id FROM products WHERE id=$1', [pid]);
       if (!row?.dentrust_id) continue;
-      await client.query('UPDATE products SET stock = GREATEST(0, COALESCE(stock,0) + $1) WHERE id=$2', [delta, row.dentrust_id]);
+      await client.query(
+        'UPDATE products SET stock = GREATEST(0, COALESCE(stock,0) + $1), is_sold_out = (GREATEST(0, COALESCE(stock,0) + $1) <= 0) WHERE id=$2',
+        [delta, row.dentrust_id]
+      );
     }
   } finally { client.release(); }
 }
