@@ -167,9 +167,10 @@ let _searchTimer = null;
 async function loadStats() {
   const statuses = ['all','pending','confirmed','shipped','delivered','cancelled'];
   const results = await Promise.all(statuses.map(async s => {
-    const qs = s === 'all' ? '' : `?status=${s}`;
     try {
-      const r = await fetch(`${BASE}/api/website-orders/all${qs}&limit=1`);
+      const _p = new URLSearchParams({ limit: '1' });
+      if (s !== 'all') _p.set('status', s);
+      const r = await fetch(`${BASE}/api/website-orders/all?${_p}`);
       const d = await r.json();
       return { s, total: d.total || 0 };
     } catch { return { s, total: 0 }; }
