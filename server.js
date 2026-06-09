@@ -10,12 +10,14 @@ const { v4: uuidv4 } = require('uuid');
 const cron = require('node-cron');
 const cors = require('cors');
 const bwip = require('bwip-js');
-const { posDb, dentrustDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
+const { posDb, dentrustDb, isSingleDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
 
 const BASE = (process.env.BASE_PATH || '/pos-system').replace(/\/$/, '');
 const PORT = parseInt(process.env.PORT || '5000', 10);
 const DATABASE_URL = process.env.DATABASE_URL;
 const SUPABASE_DATABASE_URL = process.env.SUPABASE_DATABASE_URL;
+// HAS_WEBSITE_DB: true when connected to website DB (Supabase or single-DB mode)
+const HAS_WEBSITE_DB = !!(SUPABASE_DATABASE_URL || isSingleDb);
 const UPLOAD_FOLDER = path.join(__dirname, 'static', 'uploads');
 const ALLOWED_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
 
@@ -415,9 +417,7 @@ app.post(`${BASE}/api/products`, async (req, res) => {
     );
     const posId = ins.id;
     let syncError = null;
-    if (SUPABASE_DATABASE_URL) {
-      try { await syncNewProductToDentrust(posId, d); } catch (e) { syncError = e.message; }
-    }
+    try { await syncNewProductToDentrust(posId, d); } catch (e) { syncError = e.message; }
     const resp = { ok: true };
     if (syncError) resp.sync_warning = `تم الحفظ في POS لكن فشل الربط بـ DenTrust: ${syncError}`;
     res.status(201).json(resp);
@@ -451,12 +451,10 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
        d.category || null, parseInt(d.min_stock || 0, 10),
        d.description || null, variantsJson, d.section || 'dental', cbJson, pid]
     );
-    if (SUPABASE_DATABASE_URL) {
-      try {
-        await syncUpdateProductToDentrust(pid, d);
-      } catch (syncErr) {
-        console.error('[SYNC ERROR] syncUpdateProductToDentrust failed for pid', pid, ':', syncErr.message, syncErr.stack);
-      }
+    try {
+      await syncUpdateProductToDentrust(pid, d);
+    } catch (syncErr) {
+      console.error('[SYNC ERROR] syncUpdateProductToDentrust failed for pid', pid, ':', syncErr.message, syncErr.stack);
     }
     res.json({ ok: true });
   } catch (err) {
@@ -683,7 +681,7 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
       );
       lowStock = lsRows.map(r => ({ id: r.id, name: r.product_name, qty: r.quantity, min: r.min_stock }));
     }
-    if (SUPABASE_DATABASE_URL) syncDentrustBatch(items.map(i => ({ pid: i.product_id, delta: -i.quantity }))).catch(() => {});
+    syncDentrustBatch(items.map(i => ({ pid: i.product_id, delta: -i.quantity }))).catch(() => {});
     res.status(201).json({ ok: true, sale_id: saleId, low_stock: lowStock });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -983,22 +981,28 @@ app.get(`${BASE}/api/stats`, async (req, res) => {
       posDb.query(`SELECT COUNT(*) as total_products,
                           COALESCE(SUM(CASE WHEN quantity <= min_stock AND min_stock > 0 THEN 1 ELSE 0 END), 0) as low_stock
                    FROM products`),
-      posDb.query(`SELECT COALESCE(SUM(s.total_amount),0) as revenue,
+      posDb.query(`SELECT
+                          COALESCE(SUM(CASE WHEN COALESCE(s.source,'pos')='pos' THEN s.total_amount ELSE 0 END),0) as pos_revenue,
+                          COALESCE(SUM(CASE WHEN s.source='online' THEN s.total_amount ELSE 0 END),0) as online_revenue,
+                          COALESCE(SUM(s.total_amount),0) as revenue,
                           COALESCE(SUM(si.unit_price * si.quantity * COALESCE(p.purchase_price / NULLIF(p.sale_price,0), 0)),0) as cost
                    FROM sales s
                    LEFT JOIN sale_items si ON si.sale_id = s.id
                    LEFT JOIN products p ON p.id = si.product_id
-                   WHERE s.payment_method != 'refund'
-                     AND COALESCE(s.source,'pos') = 'pos'`),
+                   WHERE s.payment_method != 'refund'`),
       posDb.query(`SELECT COALESCE(SUM(amount),0) as total_expenses FROM expenses`),
     ]);
     const revenue = parseFloat(fin.rows[0].revenue);
     const cost    = parseFloat(fin.rows[0].cost);
     const expenses = parseFloat(exp.rows[0].total_expenses);
+    const posRevenue = parseFloat(fin.rows[0].pos_revenue || fin.rows[0].revenue);
+    const onlineRevenue = parseFloat(fin.rows[0].online_revenue || 0);
     res.json({
       total_products: parseInt(inv.rows[0].total_products, 10),
       low_stock:      parseInt(inv.rows[0].low_stock, 10),
-      posRevenue:  revenue,
+      posRevenue,
+      onlineRevenue,
+      totalRevenue: posRevenue + onlineRevenue,
       posCost:     cost,
       posExpenses: expenses,
       posNetProfit: revenue - cost - expenses,
@@ -1113,9 +1117,7 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
     await client.query('INSERT INTO expenses (title, amount, date) VALUES ($1,$2,CURRENT_DATE::text)',
       [`مردود فاتورة #${sid}${reason ? ` (${reason})` : ''}`, totalRefund]);
     await client.query('COMMIT');
-    if (SUPABASE_DATABASE_URL) {
-      syncDentrustBatch(validated.filter(v => v.item.product_id).map(v => ({ pid: v.item.product_id, delta: v.quantity }))).catch(() => {});
-    }
+    syncDentrustBatch(validated.filter(v => v.item.product_id).map(v => ({ pid: v.item.product_id, delta: v.quantity }))).catch(() => {});
     res.status(201).json({ ok: true, refund_amount: totalRefund });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -1377,7 +1379,7 @@ app.get(`${BASE}/api/export/csv`, async (req, res) => {
 // ── DenTrust Sync Helpers ─────────────────────────────────────────────────────
 
 async function syncDentrustBatch(updates) {
-  if (!SUPABASE_DATABASE_URL || !updates.length) return;
+  if (!updates.length) return;  // works in both single-DB and dual-DB mode
   const client = await dentrustDb.connect();
   try {
     for (const { pid, delta } of updates) {
@@ -1457,7 +1459,7 @@ async function upsertCustomerInPOS(data) {
 
 app.get(`${BASE}/api/sync/dentrust-products`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
-  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  // connected to website DB (single-DB or Supabase mode)
   try {
     const client = await dentrustDb.connect();
     try {
@@ -1477,7 +1479,7 @@ app.get(`${BASE}/api/sync/pos-products`, async (req, res) => {
 
 app.get(`${BASE}/api/sync/dentrust-customers`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
-  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  // connected to website DB (single-DB or Supabase mode)
   try {
     const client = await dentrustDb.connect();
     try {
@@ -1506,7 +1508,7 @@ app.post(`${BASE}/api/sync/link`, async (req, res) => {
 
 app.post(`${BASE}/api/sync/push-unlinked`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
-  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  // connected to website DB (single-DB or Supabase mode)
   try {
     const { rows: unlinked } = await posDb.query('SELECT * FROM products WHERE dentrust_id IS NULL');
     let pushed = 0, failed = 0;
@@ -1522,7 +1524,7 @@ app.post(`${BASE}/api/sync/push-unlinked`, async (req, res) => {
 
 app.post(`${BASE}/api/sync/push-stock`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
-  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  // connected to website DB (single-DB or Supabase mode)
   try {
     const { rows: linked } = await posDb.query('SELECT * FROM products WHERE dentrust_id IS NOT NULL');
     const client = await dentrustDb.connect();
@@ -1538,7 +1540,7 @@ app.post(`${BASE}/api/sync/push-stock`, async (req, res) => {
 
 app.post(`${BASE}/api/sync/push-purchase-prices`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
-  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  // connected to website DB (single-DB or Supabase mode)
   try {
     const { rows: linked } = await posDb.query('SELECT * FROM products WHERE dentrust_id IS NOT NULL AND purchase_price > 0');
     const client = await dentrustDb.connect();
@@ -1554,7 +1556,7 @@ app.post(`${BASE}/api/sync/push-purchase-prices`, async (req, res) => {
 
 app.post(`${BASE}/api/sync/pull-stock`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
-  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  // connected to website DB (single-DB or Supabase mode)
   try {
     const { rows: linked } = await posDb.query('SELECT * FROM products WHERE dentrust_id IS NOT NULL');
     const client = await dentrustDb.connect();
@@ -1573,7 +1575,7 @@ app.post(`${BASE}/api/sync/pull-stock`, async (req, res) => {
 
 app.post(`${BASE}/api/sync/import-products`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
-  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  // connected to website DB (single-DB or Supabase mode)
   try {
     const client = await dentrustDb.connect();
     let created = 0, updated = 0;
@@ -1605,7 +1607,7 @@ app.post(`${BASE}/api/sync/import-products`, async (req, res) => {
 
 app.post(`${BASE}/api/sync/import-customers`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
-  if (!SUPABASE_DATABASE_URL) return res.status(503).json({ error: "لا يوجد اتصال بـ DenTrust" });
+  // connected to website DB (single-DB or Supabase mode)
   try {
     const client = await dentrustDb.connect();
     let created = 0, skipped = 0;
@@ -1629,7 +1631,7 @@ app.post(`${BASE}/api/sync/import-customers`, async (req, res) => {
 
 async function doFullSync() {
   let synced_products = 0, synced_customers = 0;
-  if (!SUPABASE_DATABASE_URL) throw new Error('لا يوجد اتصال بـ DenTrust');
+  // website DB available via dentrustDb
   const client = await dentrustDb.connect();
   try {
     // Sync products
@@ -1745,21 +1747,57 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     );
     const saleId = sale.id;
     let deducted = 0;
-    for (const item of items) {
-      // Accept dentrust_product_id or legacy productId alias
+    // Helper: find POS product by dentrust_id first, then barcode, then name
+    async function findPosProduct(item) {
       const dtProdId = item.dentrust_product_id || item.productId || item.product_id;
-      const { rows: [prod] } = await posDb.query(
-        'SELECT id, product_name FROM products WHERE dentrust_id=$1', [dtProdId]
-      );
+      // 1. Try by dentrust_id (fastest — requires sync setup)
+      if (dtProdId) {
+        const { rows: [r] } = await posDb.query(
+          'SELECT id, product_name, purchase_price FROM products WHERE dentrust_id=$1', [dtProdId]
+        );
+        if (r) return r;
+      }
+      // 2. Try by barcode
+      if (item.barcode) {
+        const { rows: [r] } = await posDb.query(
+          'SELECT id, product_name, purchase_price FROM products WHERE barcode=$1', [item.barcode]
+        );
+        if (r) {
+          // Auto-link dentrust_id so future orders find it instantly
+          if (dtProdId) posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2 AND dentrust_id IS NULL', [dtProdId, r.id]).catch(() => {});
+          return r;
+        }
+      }
+      // 3. Try by product_name (case-insensitive exact match)
+      const pname = (item.product_name || item.name || '').trim();
+      if (pname) {
+        const { rows: [r] } = await posDb.query(
+          'SELECT id, product_name, purchase_price FROM products WHERE LOWER(product_name)=LOWER($1)', [pname]
+        );
+        if (r) {
+          // Auto-link dentrust_id for next time
+          if (dtProdId) posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2 AND dentrust_id IS NULL', [dtProdId, r.id]).catch(() => {});
+          return r;
+        }
+      }
+      return null;
+    }
+
+    const deductedProdIds = [];
+    for (const item of items) {
+      const prod = await findPosProduct(item);
       await posDb.query(
-        'INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_unit_price) VALUES ($1,$2,$3,$4,$5,$6)',
-        [saleId, prod?.id || null, item.product_name || prod?.product_name || '', item.quantity || 1, item.unit_price || 0, item.unit_price || 0]
+        'INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_unit_price, snapshot_purchase_price) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [saleId, prod?.id || null, item.product_name || item.name || prod?.product_name || '', item.quantity || 1, item.unit_price || 0, item.unit_price || 0, prod?.purchase_price || 0]
       );
       if (prod?.id) {
         await posDb.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [item.quantity || 1, prod.id]);
         deducted++;
+        deductedProdIds.push({ pid: prod.id, delta: -(item.quantity || 1) });
       }
     }
+    // Sync deducted quantities back to Supabase
+    if (deductedProdIds.length > 0) syncDentrustBatch(deductedProdIds).catch(() => {});
     // Flask: online orders do NOT increment customer debt on order-placed;
     // debt tracking is handled separately via confirm-online-order / credit payments.
     res.json({ ok: true, sale_id: saleId, deducted, customer_id: customerId });
@@ -1789,26 +1827,24 @@ app.post(`${BASE}/api/sync/confirm-online-order`, async (req, res) => {
       const creditPaid = (method === 'credit') ? 0 : 1;
       let custId = null;
       let saleItems = [];
-      if (SUPABASE_DATABASE_URL) {
+      try {
+        const dtClient = await dentrustDb.connect();
         try {
-          const dtClient = await dentrustDb.connect();
-          try {
-            // Look up DenTrust order for customer + items
-            const { rows: [dtOrder] } = await dtClient.query('SELECT * FROM orders WHERE id=$1', [orderId]);
-            if (dtOrder) {
-              custId = await upsertCustomerInPOS({
-                name: dtOrder.customer_name || customer_name || '',
-                phone: dtOrder.customer_phone || '',
-                city: dtOrder.customer_city || dtOrder.city,
-                region: dtOrder.customer_region || dtOrder.region,
-                street: dtOrder.customer_street || dtOrder.street,
-              });
-              const { rows: dtItems } = await dtClient.query('SELECT * FROM order_items WHERE order_id=$1', [orderId]);
-              saleItems = dtItems;
-            }
-          } finally { dtClient.release(); }
-        } catch (_) {}
-      }
+          // Look up DenTrust order for customer + items
+          const { rows: [dtOrder] } = await dtClient.query('SELECT * FROM orders WHERE id=$1', [orderId]);
+          if (dtOrder) {
+            custId = await upsertCustomerInPOS({
+              name: dtOrder.customer_name || customer_name || '',
+              phone: dtOrder.customer_phone || '',
+              city: dtOrder.customer_city || dtOrder.city,
+              region: dtOrder.customer_region || dtOrder.region,
+              street: dtOrder.customer_street || dtOrder.street,
+            });
+            const { rows: dtItems } = await dtClient.query('SELECT * FROM order_items WHERE order_id=$1', [orderId]);
+            saleItems = dtItems;
+          }
+        } finally { dtClient.release(); }
+      } catch (_) {}
       const { rows: [newSale] } = await posDb.query(
         `INSERT INTO sales (total_amount, payment_method, source, dentrust_order_id, customer_name, customer_id, credit_paid)
          VALUES ($1,$2,'online',$3,$4,$5,$6) RETURNING *`,
@@ -1879,7 +1915,6 @@ app.post(`${BASE}/api/sync/delete-product`, async (req, res) => {
 // ── Background Sync ───────────────────────────────────────────────────────────
 
 async function doProductSync(incremental = true) {
-  if (!SUPABASE_DATABASE_URL) return;
   try {
     const client = await dentrustDb.connect();
     try {
@@ -1906,9 +1941,8 @@ async function doProductSync(incremental = true) {
   } catch (_) {}
 }
 
-if (SUPABASE_DATABASE_URL) {
-  cron.schedule('*/5 * * * *', () => doProductSync(true).catch(() => {}));
-}
+// Product sync cron — runs every 5 min when connected to website DB
+cron.schedule('*/5 * * * *', () => doProductSync(true).catch(() => {}));
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
@@ -1937,7 +1971,7 @@ app.options('/api/*', webCors);
 
 // ── Products (public, from Supabase) ─────────────────────────────────────────
 app.get('/api/products', webCors, async (req, res) => {
-  if (!SUPABASE_DATABASE_URL) return res.json([]);
+  // products served from website DB (public schema)
   try {
     const client = await dentrustDb.connect();
     try {
