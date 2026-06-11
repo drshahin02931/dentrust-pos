@@ -3,7 +3,7 @@ services:
     name: dentrust-pos
     runtime: node
     plan: free
-    buildCommand: npm install --production
+    buildCommand: npm install
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
