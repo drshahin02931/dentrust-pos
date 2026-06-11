@@ -2,6 +2,9 @@
   "name": "@workspace/pos-system",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"
@@ -22,6 +25,7 @@
     "node-cron": "^3.0.3",
     "on-headers": "~1.0.2",
     "pg": "^8.11.5",
+    "pg-types": "^2.2.0",
     "uuid": "^9.0.1"
   }
 }
