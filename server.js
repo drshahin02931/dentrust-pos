@@ -9,6 +9,8 @@ const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const cron = require('node-cron');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const bwip = require('bwip-js');
 const { posDb, dentrustDb, isSingleDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
 
@@ -25,7 +27,15 @@ const app = express();
 app.set('trust proxy', 1);
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
-app.use(cors());
+const POS_ORIGINS = (process.env.TRUSTED_ORIGINS || 'https://dentrust-pos.onrender.com,http://localhost:5000').split(',').map(s => s.trim());
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || POS_ORIGINS.includes(origin) || /localhost/.test(origin)) return cb(null, true);
+    cb(null, false);
+  },
+  credentials: true,
+}));
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(`${BASE}/static`, express.static(path.join(__dirname, 'static')));
@@ -42,8 +52,12 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'pos-dev-secret-key-2024',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 30 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax' },
+  cookie: { maxAge: 30 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' },
 }));
+
+// ── Rate Limiters ─────────────────────────────────────────────────────────────
+const loginLimiter = rateLimit({ windowMs: 15*60*1000, max: 20, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many login attempts — try again in 15 minutes.' } });
+const apiLimiter = rateLimit({ windowMs: 60*1000, max: 200, standardHeaders: true, legacyHeaders: false, skip: (req) => !!req.session?.user_id, message: { error: 'Too many requests.' } });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -56,9 +70,9 @@ function hasPerm(req, perm) {
 const OPEN_PATHS = new Set([`${BASE}/login`, `${BASE}/logout`, `${BASE}/sw.js`]);
 const OPEN_API = [
   '/api/sync/order-placed', '/api/stats', '/api/sync/confirm-online-order',
-  '/api/sync/upsert-product', '/api/sync/delete-product', '/api/settings',
+  '/api/sync/upsert-product', '/api/settings',
   '/api/ai/fashion-chat', '/api/ai/fashion-chat-stream', '/api/ai/fashion-tryon',
-  '/api/ai/stylebot', '/api/admin/price-tracker', '/api/products',
+  '/api/ai/stylebot', '/api/products',
 ];
 
 function authGuard(req, res, next) {
@@ -72,6 +86,8 @@ function authGuard(req, res, next) {
   }
   return res.redirect(`${BASE}/login`);
 }
+app.post(`${BASE}/login`, loginLimiter);
+app.use(`${BASE}/api`, apiLimiter);
 app.use(authGuard);
 
 function periodFilter(period, col) {
@@ -102,11 +118,12 @@ fs.mkdirSync(UPLOAD_FOLDER, { recursive: true });
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => { fs.mkdirSync(UPLOAD_FOLDER, { recursive: true }); cb(null, UPLOAD_FOLDER); },
-    filename: (req, file, cb) => { const ext = file.originalname.rsplit ? file.originalname.rsplit('.')[1] : file.originalname.split('.').pop(); cb(null, `${uuidv4().replace(/-/g, '')}.${ext.toLowerCase()}`); },
+    filename: (req, file, cb) => { const ext = file.originalname.split('.').pop(); cb(null, `${uuidv4().replace(/-/g, '')}.${ext.toLowerCase()}`); },
   }),
   fileFilter: (req, file, cb) => {
     const ext = file.originalname.split('.').pop().toLowerCase();
-    cb(null, ALLOWED_EXT.has(ext));
+    const ALLOWED_MIME = new Set(['image/png','image/jpeg','image/gif','image/webp']);
+    cb(null, ALLOWED_EXT.has(ext) && ALLOWED_MIME.has(file.mimetype));
   },
   limits: { fileSize: 10 * 1024 * 1024 },
 });
@@ -714,11 +731,10 @@ app.post(`${BASE}/api/sales/:sid/mark-credit-paid`, async (req, res) => {
       const splitData = JSON.parse(sale.payment_split || '{}');
       debtAmount = parseFloat(splitData.credit || 0);
     } else {
-      const ps = JSON.parse(sale.payment_split || '{}');
-      const upfront = parseFloat(ps.cash || 0) + parseFloat(ps.instapay || 0);
-      debtAmount = Math.max(0, parseFloat(sale.total_amount) - Math.max(parseFloat(sale.amount_received || 0), upfront));
+      // آجل كامل: الدين = إجمالي الفاتورة بالكامل
+      debtAmount = parseFloat(sale.total_amount || 0);
     }
-    await posDb.query('UPDATE sales SET credit_paid=1 WHERE id=$1', [sid]);
+    await posDb.query('UPDATE sales SET credit_paid=true WHERE id=$1', [sid]);
     if (debtAmount > 0 && sale.customer_id) {
       await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [debtAmount, sale.customer_id]);
     }
@@ -1237,7 +1253,7 @@ app.post(`${BASE}/api/restore`, async (req, res) => {
       }
     }
     res.json({ ok: true, restored });
-  } catch (err) { res.status(500).json({ error: 'خطأ في الاستعادة: ' + err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ في الاستعادة' }); }
 });
 
 app.get(`${BASE}/api/settings`, async (req, res) => {
@@ -1379,7 +1395,7 @@ app.get(`${BASE}/api/export/csv`, async (req, res) => {
 // ── DenTrust Sync Helpers ─────────────────────────────────────────────────────
 
 async function syncDentrustBatch(updates) {
-  if (!updates.length) return;  // works in both single-DB and dual-DB mode
+  if (!updates.length || !HAS_WEBSITE_DB) return;
   const client = await dentrustDb.connect();
   try {
     for (const { pid, delta } of updates) {
@@ -1391,6 +1407,21 @@ async function syncDentrustBatch(updates) {
       );
     }
   } finally { client.release(); }
+}
+
+async function doPushStockToSite() {
+  if (!HAS_WEBSITE_DB) return;
+  try {
+    const { rows: linked } = await posDb.query('SELECT id, dentrust_id, quantity FROM products WHERE dentrust_id IS NOT NULL');
+    if (!linked.length) return;
+    const client = await dentrustDb.connect();
+    try {
+      for (const p of linked) {
+        try { await client.query('UPDATE products SET stock=$1, is_sold_out=$2 WHERE id=$3', [p.quantity, p.quantity <= 0, p.dentrust_id]); } catch (_) {}
+      }
+      cacheDel('site_products');
+    } finally { client.release(); }
+  } catch (_) {}
 }
 
 async function syncNewProductToDentrust(posId, d) {
@@ -1670,7 +1701,7 @@ app.post(`${BASE}/api/sync/full`, async (req, res) => {
   try {
     const result = await doFullSync();
     res.json({ ok: true, ...result });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 app.post(`${BASE}/api/sync/force-full`, async (req, res) => {
@@ -1678,7 +1709,7 @@ app.post(`${BASE}/api/sync/force-full`, async (req, res) => {
   try {
     const result = await doFullSync();
     res.json({ ok: true, ...result });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 app.post(`${BASE}/api/sync/upsert-customer`, async (req, res) => {
@@ -1697,7 +1728,7 @@ app.post(`${BASE}/api/sync/upsert-customer`, async (req, res) => {
       dentrust_id: d.dentrust_id || d.dentrust_customer_id,
     });
     res.json({ ok: true, customer_id: posId });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
@@ -1801,7 +1832,7 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     // Flask: online orders do NOT increment customer debt on order-placed;
     // debt tracking is handled separately via confirm-online-order / credit payments.
     res.json({ ok: true, sale_id: saleId, deducted, customer_id: customerId });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // Flask-equivalent payment method normalization for online orders
@@ -1865,7 +1896,7 @@ app.post(`${BASE}/api/sync/confirm-online-order`, async (req, res) => {
       // Flask behavior: if sale already exists, return idempotently without mutating financial state
     }
     res.json({ ok: true, sale_id: sale.id });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 app.post(`${BASE}/api/sync/upsert-product`, async (req, res) => {
@@ -1903,7 +1934,7 @@ app.post(`${BASE}/api/sync/upsert-product`, async (req, res) => {
       }
     }
     res.json({ ok: true, action });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 app.post(`${BASE}/api/sync/delete-product`, async (req, res) => {
@@ -1942,7 +1973,10 @@ async function doProductSync(incremental = true) {
 }
 
 // Product sync cron — runs every 5 min when connected to website DB
-cron.schedule('*/5 * * * *', () => doProductSync(true).catch(() => {}));
+// Pull: Supabase → POS every 1 minute (incremental)
+cron.schedule('* * * * *', () => doProductSync(true).catch(() => {}));
+// Push: POS → Supabase every 3 minutes
+cron.schedule('*/3 * * * *', () => doPushStockToSite().catch(() => {}));
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
@@ -1970,8 +2004,15 @@ const webCors = cors({
 app.options('/api/*', webCors);
 
 // ── Products (public, from Supabase) ─────────────────────────────────────────
+const _memCache = {};
+function cacheSet(k, v, ttlMs) { _memCache[k] = { v, exp: Date.now() + ttlMs }; }
+function cacheGet(k) { const e = _memCache[k]; return e && e.exp > Date.now() ? e.v : null; }
+function cacheDel(k) { delete _memCache[k]; }
+
 app.get('/api/products', webCors, async (req, res) => {
-  // products served from website DB (public schema)
+  // products served from website DB — 30s in-memory cache
+  const cached = cacheGet('site_products');
+  if (cached) return res.json(cached);
   try {
     const client = await dentrustDb.connect();
     try {
@@ -1983,9 +2024,10 @@ app.get('/api/products', webCors, async (req, res) => {
          LEFT JOIN categories c ON c.id = p.category_id
          ORDER BY p.name`
       );
+      cacheSet('site_products', rows, 30000);
       res.json(rows);
     } finally { client.release(); }
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // ── Storage proxy (Supabase storage images) ───────────────────────────────────
@@ -1999,7 +2041,7 @@ app.get('/api/storage/*', webCors, async (req, res) => {
     if (ct) res.setHeader('Content-Type', ct);
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.send(Buffer.from(await r.arrayBuffer()));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // ── Bot Knowledge – cache + loader ────────────────────────────────────────────
@@ -2052,7 +2094,7 @@ app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
       messages: [{ role: 'system', content: fullSystem }, ...messages],
     });
     res.json(data);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // POST /api/ai/fashion-tryon  (vision)
@@ -2073,7 +2115,7 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
       ],
     });
     res.json(data);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // POST /api/ai/fashion-chat-stream  (DenBot – streaming chat proxy)
@@ -2117,7 +2159,7 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
     } else {
       res.json(await resp.json());
     }
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // POST /api/ai/stylebot  (StyleBot – vision + chat proxy)
@@ -2150,7 +2192,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
     } else {
       res.json(await resp.json());
     }
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // ── Bot Knowledge CRUD (POS admin) ────────────────────────────────────────────
@@ -2163,7 +2205,7 @@ app.get(`${BASE}/api/bot-knowledge`, async (req, res) => {
       'SELECT * FROM bot_knowledge ORDER BY category, id'
     );
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // POST — add new knowledge entry
@@ -2178,7 +2220,7 @@ app.post(`${BASE}/api/bot-knowledge`, async (req, res) => {
     );
     _knowledgeCache = null; // invalidate cache immediately
     res.status(201).json(row);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // PUT — update existing entry
@@ -2198,7 +2240,7 @@ app.put(`${BASE}/api/bot-knowledge/:id`, async (req, res) => {
     );
     _knowledgeCache = null;
     res.json(row || { ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // DELETE — remove entry
@@ -2208,7 +2250,7 @@ app.delete(`${BASE}/api/bot-knowledge/:id`, async (req, res) => {
     await posDb.query('DELETE FROM bot_knowledge WHERE id=$1', [req.params.id]);
     _knowledgeCache = null;
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // ── Price Tracker ─────────────────────────────────────────────────────────────
@@ -2410,7 +2452,7 @@ app.get('/api/admin/price-tracker/sites', webCors, async (req, res) => {
   try {
     const { rows } = await posDb.query('SELECT * FROM pt_sites ORDER BY created_at DESC');
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // POST /api/admin/price-tracker/sites
@@ -2424,7 +2466,7 @@ app.post('/api/admin/price-tracker/sites', webCors, async (req, res) => {
       [name, url]
     );
     res.json(site);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // DELETE /api/admin/price-tracker/sites/:id
@@ -2441,7 +2483,7 @@ app.get('/api/admin/price-tracker/sites/:id/products', webCors, async (req, res)
       [req.params.id]
     );
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // POST /api/admin/price-tracker/sites/:id/crawl
@@ -2474,7 +2516,7 @@ app.post('/api/admin/price-tracker/sites/:id/crawl', webCors, async (req, res) =
       }
     }
     res.json({ scraped: scraped.length, newMatches });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // POST /api/admin/price-tracker/sites/:id/search-by-name
@@ -2486,7 +2528,7 @@ app.post('/api/admin/price-tracker/sites/:id/search-by-name', webCors, async (re
       [req.params.id, `%${name.toLowerCase()}%`]
     );
     res.json({ searched: 1, matched: rows.length, skipped: 0, results: rows });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // POST /api/admin/price-tracker/sites/:id/rematch
@@ -2510,7 +2552,7 @@ app.post('/api/admin/price-tracker/sites/:id/rematch', webCors, async (req, res)
       }
     }
     res.json({ matched, skipped: prods.length - matched });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // GET  /api/admin/price-tracker/matches/pending
@@ -2530,7 +2572,7 @@ app.get('/api/admin/price-tracker/matches/pending', webCors, async (req, res) =>
       LIMIT 100
     `);
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // GET  /api/admin/price-tracker/matches/count
@@ -2549,7 +2591,7 @@ app.get('/api/admin/price-tracker/history/:productId', webCors, async (req, res)
       [req.params.productId]
     );
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 
@@ -2577,7 +2619,7 @@ app.put('/api/admin/price-tracker/matches/:id', webCors, async (req, res) => {
       }
     }
     res.json({ ok: true, status });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // POST /api/admin/price-tracker/manual-match
@@ -2592,7 +2634,7 @@ app.post('/api/admin/price-tracker/manual-match', webCors, async (req, res) => {
       );
     }
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // GET  /api/admin/price-tracker/analytics
@@ -2611,7 +2653,7 @@ app.get('/api/admin/price-tracker/analytics', webCors, async (req, res) => {
       'SELECT COUNT(DISTINCT our_product_id) AS tracked_products, COUNT(*) AS total_records FROM pt_history'
     );
     res.json({ history, totals });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 
@@ -2685,7 +2727,7 @@ async function buildWhatsAppMsg(status, name, total, notes) {
 app.get(`${BASE}/api/settings/whatsapp-templates`, async (req, res) => {
   if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
   try { res.json(await getWaTemplates()); }
-  catch (err) { res.status(500).json({ error: err.message }); }
+  catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 app.post(`${BASE}/api/settings/whatsapp-templates`, async (req, res) => {
@@ -2699,7 +2741,7 @@ app.post(`${BASE}/api/settings/whatsapp-templates`, async (req, res) => {
       [JSON.stringify(toSave)]
     );
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // ── WhatsApp Settings Page ────────────────────────────────────────────────────
@@ -2745,7 +2787,7 @@ app.get(`${BASE}/api/website-orders/all`, async (req, res) => {
       `SELECT COUNT(*) AS count FROM website_order_alerts ${where}`, params
     );
     res.json({ orders: rows, total: parseInt(count, 10), page, limit });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // PATCH order status — returns WhatsApp message + optional Twilio auto-send
@@ -2774,6 +2816,7 @@ app.patch(`${BASE}/api/website-orders/:id/status`, async (req, res) => {
 
     // Optional Twilio auto-send
     let twilioSent = false;
+    let twilioError = null;
     const TWILIO_SID  = process.env.TWILIO_ACCOUNT_SID;
     const TWILIO_AUTH = process.env.TWILIO_AUTH_TOKEN;
     const TWILIO_FROM = process.env.TWILIO_WHATSAPP_FROM;
@@ -2795,11 +2838,15 @@ app.patch(`${BASE}/api/website-orders/:id/status`, async (req, res) => {
             body: body.toString(),
           }
         );
-        twilioSent = twRes.ok;
-      } catch(_) {}
+        if (twRes.ok) { twilioSent = true; } else {
+          const eb = await twRes.json().catch(() => ({}));
+          twilioError = `${twRes.status}: ${eb?.message || eb?.code || 'unknown'}`;
+          console.warn('[Twilio]', twilioError);
+        }
+      } catch(e) { twilioError = e.message; }
     }
-    res.json({ ok: true, wa_message: waMsg, wa_link: waLink, twilio_sent: twilioSent });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    res.json({ ok: true, wa_message: waMsg, wa_link: waLink, twilio_sent: twilioSent, twilio_error: twilioError||null });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // DELETE order alert
@@ -2808,7 +2855,7 @@ app.delete(`${BASE}/api/website-orders/:id`, async (req, res) => {
   try {
     await posDb.query('DELETE FROM website_order_alerts WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // ── Start Server ──────────────────────────────────────────────────────────────
@@ -2826,8 +2873,15 @@ async function main() {
     await initDb();
     await initPriceTracker();
     await seedManager();
+    app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`POS server running on port ${PORT} at ${BASE}`);
+      const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
+      if (RENDER_URL) {
+        const _m = RENDER_URL.startsWith('https') ? require('https') : require('http');
+        setInterval(() => { _m.get(`${RENDER_URL}/health`, () => {}).on('error', () => {}); }, 14 * 60 * 1000);
+        console.log('Keep-alive enabled:', RENDER_URL);
+      }
     });
   } catch (err) {
     console.error('Startup error:', err);
