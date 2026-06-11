@@ -27,7 +27,7 @@ const app = express();
 app.set('trust proxy', 1);
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
-const POS_ORIGINS = (process.env.TRUSTED_ORIGINS || 'https://dentrust-pos.onrender.com,http://localhost:5000').split(',').map(s => s.trim());
+const POS_ORIGINS = (process.env.TRUSTED_ORIGINS || 'https://dentrust-pos.onrender.com,http://localhost:5000,https://dentrust.site,https://www.dentrust.site').split(',').map(s => s.trim());
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin || POS_ORIGINS.includes(origin) || /localhost/.test(origin)) return cb(null, true);
