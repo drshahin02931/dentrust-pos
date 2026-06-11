@@ -25,7 +25,11 @@
     "node-cron": "^3.0.3",
     "on-headers": "~1.0.2",
     "pg": "^8.11.5",
+    "pg-connection-string": "^2.7.0",
+    "pg-pool": "^3.7.0",
+    "pg-protocol": "^1.7.0",
     "pg-types": "^2.2.0",
+    "pgpass": "^1.0.5",
     "uuid": "^9.0.1"
   }
 }
