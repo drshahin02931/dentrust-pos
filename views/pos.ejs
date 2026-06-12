@@ -442,22 +442,113 @@ function setPosCategory(cat) {
   }
 }
 
+// ── Card quantity tracker ─────────────────────────────────────────────────────
+const cardQty = {};
+
+function getCartQtyForProduct(productId) {
+  return cart.filter(i => i.product_id === productId && !i._cartKey)
+             .reduce((s, i) => s + i.quantity, 0);
+}
+
+function getCardAvail(product) {
+  return Math.max(0, product.quantity - getCartQtyForProduct(product.id));
+}
+
+function incrCardQty(id, event) {
+  if (event) event.stopPropagation();
+  const p = (_posCatProducts || []).find(x => x.id === id);
+  if (!p) return;
+  const avail = getCardAvail(p);
+  cardQty[id] = Math.min((cardQty[id] || 1) + 1, avail);
+  refreshCardUI(id, p);
+}
+
+function decrCardQty(id, event) {
+  if (event) event.stopPropagation();
+  const p = (_posCatProducts || []).find(x => x.id === id);
+  cardQty[id] = Math.max(1, (cardQty[id] || 1) - 1);
+  if (p) refreshCardUI(id, p);
+}
+
+function refreshCardUI(id, product) {
+  const card = document.querySelector(`[data-card-id="${id}"]`);
+  if (!card) return;
+  const avail  = getCardAvail(product);
+  const qty    = Math.min(cardQty[id] || 1, avail || 1);
+  cardQty[id]  = qty;
+  const remaining = avail - qty;
+
+  const qtyEl   = card.querySelector('.cqv');
+  const plusBtn = card.querySelector('.cqp');
+  const minBtn  = card.querySelector('.cqm');
+  const addBtn  = card.querySelector('.cadd');
+  const stEl    = card.querySelector('.cst');
+
+  if (qtyEl)   qtyEl.textContent = qty;
+  if (plusBtn) plusBtn.disabled  = avail <= 0 || qty >= avail;
+  if (minBtn)  minBtn.disabled   = qty <= 1;
+  if (addBtn)  { addBtn.disabled = avail <= 0; addBtn.style.opacity = avail <= 0 ? '0.4' : '1'; }
+  if (stEl) {
+    if (avail <= 0) {
+      stEl.textContent = 'نفذ من المخزون';
+      stEl.style.color = '#ef4444';
+    } else {
+      stEl.textContent = `متبقي: ${remaining}`;
+      stEl.style.color = remaining <= 2 ? '#f97316' : '#16a34a';
+    }
+  }
+}
+
+function refreshAllCardUIs() {
+  (_posCatProducts || []).forEach(p => refreshCardUI(p.id, p));
+}
+
+function addToCartWithQty(id, event) {
+  if (event) event.stopPropagation();
+  const p = (_posCatProducts || []).find(x => x.id === id);
+  if (!p) return;
+  const v = parseVariants(p);
+  if (v && v.sizes && v.sizes.length > 0) { openVariantPicker(p, v); return; }
+  const qty = cardQty[id] || 1;
+  const avail = getCardAvail(p);
+  if (avail <= 0) { alert(`⚠️ "${p.product_name}" غير متوفر في المخزون`); return; }
+  const toAdd = Math.min(qty, avail);
+  for (let i = 0; i < toAdd; i++) addToCart(p);
+  cardQty[id] = 1;
+  refreshCardUI(id, p);
+}
+
 function showProductGrid(products) {
   const grid = document.getElementById("productGrid");
   if (!products.length) { grid.style.display = "none"; return; }
   grid.innerHTML = products.map(p => {
     const outOfStock = p.quantity <= 0;
-    const lowStock = !outOfStock && p.quantity <= 5;
+    const initQty    = cardQty[p.id] || 1;
+    const avail      = getCardAvail(p);
+    const remaining  = avail - initQty;
     return `
-    <button onclick="addToCartById(${p.id})" ${outOfStock ? 'disabled' : ''}
-      style="text-align:right; padding:0.75rem; border-radius:0.75rem; border:1px solid ${outOfStock ? '#e5e7eb' : '#e5e7eb'}; background:${outOfStock ? '#f9fafb' : '#fff'}; opacity:${outOfStock ? '0.6' : '1'}; cursor:${outOfStock ? 'not-allowed' : 'pointer'}; transition:all 0.15s; box-shadow:0 1px 3px rgba(0,0,0,0.06);"
-      onmouseover="${outOfStock ? '' : "this.style.borderColor='#60a5fa';this.style.background='#eff6ff'"}"
-      onmouseout="${outOfStock ? '' : "this.style.borderColor='#e5e7eb';this.style.background='#fff'"}">
-      ${p.image_url ? `<img src="${p.image_url}" style="width:100%;height:3.5rem;object-fit:cover;border-radius:0.5rem;margin-bottom:0.5rem;" onerror="this.style.display='none'"/>` : '<div style="width:100%;height:2.5rem;background:#f3f4f6;border-radius:0.5rem;margin-bottom:0.5rem;display:flex;align-items:center;justify-content:center;font-size:1.25rem;">📦</div>'}
+    <div data-card-id="${p.id}"
+      style="text-align:right; padding:0.6rem; border-radius:0.75rem; border:1px solid ${outOfStock ? '#e5e7eb' : '#e5e7eb'}; background:${outOfStock ? '#f9fafb' : '#fff'}; opacity:${outOfStock ? '0.6' : '1'}; transition:all 0.15s; box-shadow:0 1px 3px rgba(0,0,0,0.06); display:flex; flex-direction:column; gap:0.3rem;">
+      ${p.image_url
+        ? `<img src="${p.image_url}" style="width:100%;height:3.5rem;object-fit:cover;border-radius:0.5rem;" onerror="this.style.display='none'"/>`
+        : '<div style="width:100%;height:2.5rem;background:#f3f4f6;border-radius:0.5rem;display:flex;align-items:center;justify-content:center;font-size:1.25rem;">📦</div>'}
       <div style="font-size:0.7rem;font-weight:600;color:#1f2937;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.product_name}</div>
-      <div style="font-size:0.8rem;font-weight:900;color:#1d4ed8;margin-top:0.25rem;">${p.sale_price.toFixed(2)} ج</div>
-      ${outOfStock ? '<div style="font-size:0.65rem;color:#ef4444;font-weight:700;">نفذ</div>' : lowStock ? `<div style="font-size:0.65rem;color:#f97316;">(${p.quantity} متبقي)</div>` : ''}
-    </button>`;
+      <div style="font-size:0.8rem;font-weight:900;color:#1d4ed8;">${p.sale_price.toFixed(2)} ج</div>
+      <div class="cst" style="font-size:0.65rem;font-weight:700;color:${outOfStock ? '#ef4444' : remaining <= 2 ? '#f97316' : '#16a34a'};">
+        ${outOfStock ? 'نفذ من المخزون' : `متبقي: ${remaining}`}
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:4px;margin-top:2px;">
+        <button class="cqm" onclick="decrCardQty(${p.id},event)" ${outOfStock || initQty<=1 ? 'disabled' : ''}
+          style="width:22px;height:22px;border-radius:6px;border:1px solid #d1d5db;background:#f3f4f6;font-weight:900;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;">−</button>
+        <span class="cqv" style="width:24px;text-align:center;font-weight:900;font-size:0.85rem;color:#1e3a8a;">${initQty}</span>
+        <button class="cqp" onclick="incrCardQty(${p.id},event)" ${outOfStock || initQty>=avail ? 'disabled' : ''}
+          style="width:22px;height:22px;border-radius:6px;border:1px solid #d1d5db;background:#f3f4f6;font-weight:900;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;">+</button>
+      </div>
+      <button class="cadd" onclick="addToCartWithQty(${p.id},event)" ${outOfStock ? 'disabled' : ''}
+        style="width:100%;margin-top:3px;padding:4px 0;border-radius:8px;border:none;background:${outOfStock ? '#e5e7eb' : '#1d4ed8'};color:${outOfStock ? '#9ca3af' : '#fff'};font-size:0.68rem;font-weight:700;cursor:${outOfStock ? 'not-allowed' : 'pointer'};opacity:${outOfStock ? '0.4' : '1'};">
+        🛒 إضافة للكارت
+      </button>
+    </div>`;
   }).join("");
   grid.style.display = "grid";
 }
@@ -470,6 +561,86 @@ function addToCartById(id) {
   addToCart(p);
 }
 loadPosCategories();
+
+// ── Real-time stock polling (online orders) ───────────────────────────────────
+setInterval(async () => {
+  if (!_posCatProducts || !_posCatProducts.length) return;
+  try {
+    const r = await fetch(`${BASE}/api/stock-snapshot`);
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!Array.isArray(data)) return;
+    const qMap = {};
+    data.forEach(p => { qMap[p.id] = p.quantity; });
+    let changed = false;
+    _posCatProducts.forEach(p => {
+      if (qMap[p.id] !== undefined && qMap[p.id] !== p.quantity) {
+        p.quantity = qMap[p.id];
+        changed = true;
+      }
+    });
+    if (changed) refreshAllCardUIs();
+  } catch(e) {}
+}, 3000);
+
+// ── Online Order Bell Notification ───────────────────────────────────────────
+let _lastAlertCount = null;
+let _toastTimer     = null;
+
+function playBellSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const tone = (freq, start, dur, vol = 0.45) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = freq;
+      o.type = 'sine';
+      g.gain.setValueAtTime(vol, ctx.currentTime + start);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+      o.start(ctx.currentTime + start);
+      o.stop(ctx.currentTime + start + dur + 0.05);
+    };
+    tone(880,  0,    0.30);
+    tone(1100, 0.18, 0.30);
+    tone(880,  0.40, 0.55);
+  } catch(e) {}
+}
+
+function showOrderToast(order) {
+  const toast = document.getElementById('pos-order-toast');
+  const body  = document.getElementById('pos-order-toast-body');
+  if (!toast || !body) return;
+  body.textContent = order
+    ? `${order.customer_name || 'عميل'} — ${order.items_summary || '—'} — ${parseFloat(order.total_amount || 0).toFixed(2)} ج`
+    : 'تحقق من طلبات الموقع';
+  toast.style.display = 'flex';
+  toast.style.animation = 'none';
+  void toast.offsetWidth;
+  toast.style.animation = 'posToastSlide 0.4s ease';
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { toast.style.display = 'none'; }, 9000);
+}
+
+setInterval(async () => {
+  try {
+    const r = await fetch(`${BASE}/api/website-orders/alerts/count`);
+    if (!r.ok) return;
+    const { count } = await r.json();
+    if (_lastAlertCount === null) { _lastAlertCount = count; return; }
+    if (count > _lastAlertCount) {
+      _lastAlertCount = count;
+      playBellSound();
+      try {
+        const r2 = await fetch(`${BASE}/api/website-orders/alerts`);
+        if (r2.ok) { const orders = await r2.json(); showOrderToast(orders[0] || null); }
+        else showOrderToast(null);
+      } catch(e) { showOrderToast(null); }
+    } else {
+      _lastAlertCount = count;
+    }
+  } catch(e) {}
+}, 3000);
 
 // ── Product Search ────────────────────────────────────────────────────────────
 const scanInput = document.getElementById("scanInput");
@@ -707,6 +878,8 @@ function renderCart() {
     </div>`;
   }).join("");
   updateTotal();
+  // Update product card available-stock display after cart changes
+  refreshAllCardUIs();
 }
 
 function updateCreditSplit() {
@@ -1096,6 +1269,30 @@ async function submitQuickAddCustomer(e) {
 }
 
 </script>
+
+<!-- ── Online Order Toast ─────────────────────────────────────────────────── -->
+<div id="pos-order-toast"
+  style="display:none; position:fixed; top:1.25rem; left:50%; transform:translateX(-50%);
+         z-index:9999; min-width:300px; max-width:440px;
+         background:#1d4ed8; color:#fff; border-radius:1rem;
+         box-shadow:0 8px 32px rgba(0,0,0,0.28); padding:0.9rem 1.1rem;
+         align-items:flex-start; gap:0.75rem; direction:rtl;">
+  <span style="font-size:1.6rem; line-height:1; flex-shrink:0;">🛒</span>
+  <div style="flex:1;">
+    <div style="font-weight:800; font-size:0.95rem; margin-bottom:0.2rem;">طلب أونلاين جديد! 🔔</div>
+    <div id="pos-order-toast-body" style="font-size:0.78rem; opacity:0.92; line-height:1.5;"></div>
+  </div>
+  <button onclick="document.getElementById('pos-order-toast').style.display='none'"
+    style="background:rgba(255,255,255,0.18); border:none; color:#fff; border-radius:50%;
+           width:26px; height:26px; cursor:pointer; font-size:15px;
+           display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:2px;">✕</button>
+</div>
+<style>
+@keyframes posToastSlide {
+  from { opacity:0; transform:translateX(-50%) translateY(-18px); }
+  to   { opacity:1; transform:translateX(-50%) translateY(0); }
+}
+</style>
 
 </main>
 <%- include('partials/footer', locals) %>
