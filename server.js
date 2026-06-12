@@ -346,6 +346,13 @@ app.post(`${BASE}/api/upload-image`, upload.single('file'), (req, res) => {
 
 // ── API: Products ─────────────────────────────────────────────────────────────
 
+app.get(`${BASE}/api/stock-snapshot`, async (req, res) => {
+  try {
+    const { rows } = await posDb.query('SELECT id, quantity FROM products');
+    res.json(rows);
+  } catch(err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
 app.get(`${BASE}/api/products/generate-barcode`, async (req, res) => {
   try {
     const { randomInt } = require('crypto');
@@ -643,13 +650,19 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
     await client.query('BEGIN');
     for (const item of items) {
       const { rows: [prod] } = await client.query('SELECT quantity, product_name, sale_price FROM products WHERE id=$1', [item.product_id]);
-      if (prod && prod.quantity < item.quantity) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: `الكمية المطلوبة (${item.quantity}) تتجاوز المخزون المتاح (${prod.quantity}) للمنتج: ${prod.product_name}` });
-      }
-      if (prod && prod.quantity <= 0) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: `المنتج "${prod.product_name}" غير متوفر في المخزون` });
+      if (item.product_id) {
+        if (!prod) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `المنتج "${item.product_name || '#' + item.product_id}" غير موجود في قاعدة البيانات` });
+        }
+        if (prod.quantity <= 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `المنتج "${prod.product_name}" غير متوفر في المخزون (الكمية: 0)` });
+        }
+        if (prod.quantity < item.quantity) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `الكمية المطلوبة (${item.quantity}) تتجاوز المخزون المتاح (${prod.quantity}) للمنتج: ${prod.product_name}` });
+        }
       }
       if (prod && !hasPerm(req, 'edit_prices')) {
         const dbPrice = parseFloat(prod.sale_price || 0);
@@ -699,6 +712,7 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
       lowStock = lsRows.map(r => ({ id: r.id, name: r.product_name, qty: r.quantity, min: r.min_stock }));
     }
     syncDentrustBatch(items.map(i => ({ pid: i.product_id, delta: -i.quantity }))).catch(() => {});
+    doPushStockToSite().catch(() => {});
     res.status(201).json({ ok: true, sale_id: saleId, low_stock: lowStock });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
