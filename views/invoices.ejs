@@ -26,6 +26,7 @@
         <option value="visa">💳 فيزا</option>
         <option value="instapay">📱 InstaPay</option>
         <option value="credit">📋 آجل</option>
+        <option value="online">🌐 أونلاين</option>
       </select>
     </div>
     <div>
@@ -203,8 +204,8 @@
 const BASE = "<%- base %>";
 const CAN_RETURN = <%= canReturn ? true : false %>;
 const IS_MGR = <%= isMgr ? true : false %>;
-const PAY_LABELS = { cash:"💵 كاش", visa:"💳 فيزا", instapay:"📱 InstaPay", credit:"📋 آجل" };
-const PAY_COLORS = { cash:"bg-green-100 text-green-700", visa:"bg-blue-100 text-blue-700", instapay:"bg-purple-100 text-purple-700", credit:"bg-orange-100 text-orange-700" };
+const PAY_LABELS = { cash:"💵 كاش", visa:"💳 فيزا", instapay:"📱 InstaPay", credit:"📋 آجل", online:"🌐 أونلاين" };
+const PAY_COLORS = { cash:"bg-green-100 text-green-700", visa:"bg-blue-100 text-blue-700", instapay:"bg-purple-100 text-purple-700", credit:"bg-orange-100 text-orange-700", online:"bg-teal-100 text-teal-700" };
 
 let allInvoices = [];
 let filteredInvoices = [];
@@ -268,9 +269,11 @@ function renderTable() {
   tbody.innerHTML = toShow.map(inv => {
     const fullyReturned = inv.return_status === 2;
     const payBadge = `<span class="text-xs font-medium px-2.5 py-1 rounded-full ${PAY_COLORS[inv.payment_method]||'bg-gray-100 text-gray-600'}">${PAY_LABELS[inv.payment_method]||inv.payment_method}</span>`;
+    const isOnline = inv.dentrust_order_id || inv.payment_method === 'online';
+    const onlineBadge = isOnline ? `<span class="mr-1 text-xs font-bold px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">🌐 أونلاين</span>` : '';
     const canReturnThis = CAN_RETURN && inv.return_status < 2;
-    return `<tr class="${fullyReturned?'bg-red-50/40 opacity-75':'hover:bg-gray-50'} transition-colors cursor-pointer" onclick="viewInvoice(${inv.id})">
-      <td class="px-4 py-3 font-mono font-bold text-blue-700">#${String(inv.id).padStart(5,'0')}</td>
+    return `<tr class="${fullyReturned?'bg-red-50/40 opacity-75':isOnline?'bg-teal-50/30 hover:bg-teal-50':'hover:bg-gray-50'} transition-colors cursor-pointer" onclick="viewInvoice(${inv.id})">
+      <td class="px-4 py-3 font-mono font-bold text-blue-700">#${String(inv.id).padStart(5,'0')}${onlineBadge}</td>
       <td class="px-4 py-3 text-gray-600 text-xs">${inv.date.replace('T',' ').slice(0,16)}</td>
       <td class="px-4 py-3 text-gray-700">${inv.customer_name||'—'}</td>
       <td class="px-4 py-3">${payBadge}</td>
@@ -304,8 +307,9 @@ async function viewInvoice(id) {
   const data = await res.json();
   const inv = data.invoice; const items = data.items; const returns = data.returns || [];
 
-  document.getElementById("modalTitle").textContent = `فاتورة رقم #${String(inv.id).padStart(5,'0')}`;
-  const payBadge = `<span class="text-xs font-medium px-2.5 py-1 rounded-full ${PAY_COLORS[inv.payment_method]||''}">${PAY_LABELS[inv.payment_method]||inv.payment_method}</span>`;
+  const isOnlineInv = inv.dentrust_order_id || inv.payment_method === 'online';
+  document.getElementById("modalTitle").innerHTML = `فاتورة رقم #${String(inv.id).padStart(5,'0')} ${isOnlineInv ? '<span class="text-sm font-bold px-2.5 py-1 rounded-full bg-teal-100 text-teal-700">🌐 أونلاين</span>' : ''}`;
+  const payBadge = `<span class="text-xs font-medium px-2.5 py-1 rounded-full ${PAY_COLORS[inv.payment_method]||'bg-gray-100 text-gray-600'}">${PAY_LABELS[inv.payment_method]||inv.payment_method}</span>`;
 
   let returnsHtml = "";
   if (returns.length) {
