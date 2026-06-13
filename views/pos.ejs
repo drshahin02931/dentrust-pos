@@ -321,6 +321,17 @@
       </div>
       <!-- Stock of selected size -->
       <div id="vp-stock-info" class="hidden text-xs text-gray-500 bg-gray-50 rounded-xl px-3 py-2"></div>
+      <!-- Qty counter (shown after size selection) -->
+      <div id="vp-qty-row" class="hidden flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3">
+        <span class="text-xs font-semibold text-gray-500">الكمية</span>
+        <div class="flex items-center gap-3">
+          <button type="button" id="vp-qty-min" onclick="decrVPQty()"
+            style="width:32px;height:32px;border-radius:8px;border:1px solid #d1d5db;background:#fff;font-weight:900;font-size:17px;cursor:pointer;line-height:1;">−</button>
+          <span id="vp-qty-val" style="min-width:28px;text-align:center;font-weight:900;font-size:1.05rem;color:#1e3a8a;">1</span>
+          <button type="button" id="vp-qty-plus" onclick="incrVPQty()"
+            style="width:32px;height:32px;border-radius:8px;border:1px solid #d1d5db;background:#fff;font-weight:900;font-size:17px;cursor:pointer;line-height:1;">+</button>
+        </div>
+      </div>
     </div>
     <!-- Footer -->
     <div class="px-5 pb-5 pt-3 border-t">
@@ -715,6 +726,7 @@ let _vpProduct   = null;
 let _vpVariants  = null;
 let _vpSelSize   = null;
 let _vpSelColor  = null;
+let _vpQty       = 1;
 
 function parseVariants(p) {
   if (!p.variants) return null;
@@ -726,11 +738,13 @@ function openVariantPicker(product, variants) {
   _vpVariants = variants;
   _vpSelSize  = null;
   _vpSelColor = null;
+  _vpQty      = 1;
 
   document.getElementById("vp-name").textContent  = product.product_name;
   document.getElementById("vp-price").textContent = product.sale_price.toFixed(2) + " جنيه";
   document.getElementById("vp-size-err").classList.add("hidden");
   document.getElementById("vp-stock-info").classList.add("hidden");
+  document.getElementById("vp-qty-row").classList.add("hidden");
 
   // Sizes
   renderVPSizes();
@@ -748,6 +762,7 @@ function openVariantPicker(product, variants) {
 function closeVariantPicker() {
   document.getElementById("variantModal").classList.add("hidden");
   _vpProduct = _vpVariants = _vpSelSize = _vpSelColor = null;
+  _vpQty = 1;
 }
 
 function renderVPSizes() {
@@ -778,14 +793,42 @@ function renderVPColors() {
 
 function selectVPSize(label) {
   _vpSelSize = label;
+  _vpQty = 1;
   document.getElementById("vp-size-err").classList.add("hidden");
   renderVPSizes();
-  // Show stock info
   const s = (_vpVariants.sizes || []).find(x => x.label === label);
   if (s) {
     const info = document.getElementById("vp-stock-info");
-    info.textContent = `متبقي: ${s.qty} قطعة من حجم ${label}`;
+    info.textContent = `متبقي: ${s.qty} قطعة من ${label}`;
     info.classList.remove("hidden");
+    // show qty counter
+    const qtyRow = document.getElementById("vp-qty-row");
+    qtyRow.classList.remove("hidden");
+    document.getElementById("vp-qty-val").textContent = 1;
+    document.getElementById("vp-qty-plus").disabled = s.qty <= 1;
+    document.getElementById("vp-qty-min").disabled  = true;
+  }
+}
+
+function incrVPQty() {
+  const s = (_vpVariants?.sizes || []).find(x => x.label === _vpSelSize);
+  const max = s ? s.qty : 1;
+  if (_vpQty < max) {
+    _vpQty++;
+    document.getElementById("vp-qty-val").textContent = _vpQty;
+    document.getElementById("vp-qty-plus").disabled = _vpQty >= max;
+    document.getElementById("vp-qty-min").disabled  = false;
+  }
+}
+
+function decrVPQty() {
+  if (_vpQty > 1) {
+    _vpQty--;
+    const s = (_vpVariants?.sizes || []).find(x => x.label === _vpSelSize);
+    const max = s ? s.qty : 1;
+    document.getElementById("vp-qty-val").textContent = _vpQty;
+    document.getElementById("vp-qty-plus").disabled = _vpQty >= max;
+    document.getElementById("vp-qty-min").disabled  = _vpQty <= 1;
   }
 }
 
@@ -802,13 +845,14 @@ function confirmVariantAdd() {
   }
   const sizeObj = (_vpVariants.sizes || []).find(s => s.label === _vpSelSize);
   const maxQty  = sizeObj ? sizeObj.qty : 1;
+  const qty     = Math.min(_vpQty || 1, maxQty);
 
-  // Build a unique cart key: product_id + size + color
   const cartKey = `${_vpProduct.id}__${_vpSelSize}__${_vpSelColor || ""}`;
   const existing = cart.find(i => i._cartKey === cartKey);
   if (existing) {
-    if (existing.quantity >= maxQty) { alert("لا يوجد مخزون كافٍ لهذا الحجم"); return; }
-    existing.quantity++;
+    const newTotal = existing.quantity + qty;
+    if (newTotal > maxQty) { alert(`لا يوجد مخزون كافٍ — متبقي ${Math.max(0, maxQty - existing.quantity)} قطعة فقط`); return; }
+    existing.quantity = newTotal;
   } else {
     const label = _vpSelSize + (_vpSelColor ? ` · ${_vpSelColor}` : "");
     cart.push({
@@ -817,10 +861,11 @@ function confirmVariantAdd() {
       product_name:  `${_vpProduct.product_name} — ${label}`,
       _baseName:     _vpProduct.product_name,
       _size:         _vpSelSize,
+      selected_size: _vpSelSize,
       _color:        _vpSelColor || null,
       unit_price:    _vpProduct.sale_price,
       purchase_price: _vpProduct.purchase_price || 0,
-      quantity:      1,
+      quantity:      qty,
       max_qty:       maxQty
     });
   }
@@ -961,7 +1006,7 @@ function updateTotal() {
   // Profit (screen only)
   if (cart.length > 0) {
     const cost   = cart.reduce((s,i) => s + (i.purchase_price||0) * i.quantity, 0);
-    const profit = Math.max(0, subtotal - discAmt) - cost + delivery;
+    const profit = Math.max(0, subtotal - discAmt) - cost; // delivery excluded — goes to courier
     document.getElementById("profitDisplay").textContent = profit.toFixed(2) + " جنيه";
     document.getElementById("profitRow").classList.remove("hidden");
   } else {
@@ -1105,7 +1150,9 @@ async function checkout() {
       customer_name: customerName,
       amount_received: amountReceived,
       change_due: changeDue,
-      payment_split: paymentSplitData
+      payment_split: paymentSplitData,
+      discount_amount:  discAmt    > 0 ? discAmt    : undefined,
+      delivery_amount:  delivery   > 0 ? delivery   : undefined
     })
   });
   const data = await res.json();
