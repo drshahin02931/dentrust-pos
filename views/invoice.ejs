@@ -64,7 +64,7 @@ function payMethodEn(m) {
     }
     tbody td {
       font-size: 11px; padding: 3px 2px; vertical-align: top;
-      border-bottom: 1px dotted #bbb;
+      border-bottom: 1px dotted #000; font-weight: 700;
     }
     tbody tr:last-child td { border-bottom: none; }
     .total-section { margin-top: 4px; }
@@ -90,7 +90,16 @@ function payMethodEn(m) {
     .logo-box { margin: 0 auto 4px; text-align: center; }
     .logo-box img { max-width: 60px; max-height: 60px; object-fit: contain; }
     .no-print { }
-    @media print { .no-print { display: none !important; } }
+    @media print {
+      .no-print { display: none !important; }
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color: #000 !important; }
+      body { font-weight: 800; background: #fff !important; }
+      tbody td { border-bottom: 1px dotted #000 !important; font-weight: 700; }
+      .divider { border-top: 1px dashed #000 !important; }
+      .store-name { font-weight: 900 !important; }
+      .total-main { border-top: 2px solid #000 !important; border-bottom: 2px solid #000 !important; font-weight: 900 !important; }
+      .sub-row { font-weight: 700 !important; }
+    }
   </style>
 </head>
 <body>
@@ -138,7 +147,7 @@ function payMethodEn(m) {
   <% } %>
 
   <% if (showEn) { %>
-  <div style="direction:ltr;<%= isBoth ? 'border-top:1px dashed #aaa;margin-top:4px;padding-top:4px;' : '' %>">
+  <div style="direction:ltr;<%= isBoth ? 'border-top:1px dashed #000;margin-top:4px;padding-top:4px;' : '' %>">
     <div class="row"><span>Invoice #</span><span class="bold"><%= sale.id %></span></div>
     <div class="row"><span>Date</span><span><%= saleDateStr %></span></div>
     <div class="row"><span>Payment</span><span class="bold"><%= payMethodEn(sale.payment_method) %></span></div>
@@ -199,6 +208,14 @@ function payMethodEn(m) {
   <% } %>
 
   <div class="total-section">
+    <% if (sale.discount_amount && parseFloat(sale.discount_amount) > 0) { %>
+    <% if (showAr) { %>
+    <div class="sub-row" style="font-weight:700;"><span>خصم</span><span>- <%= fmt(sale.discount_amount) %> <%= currencyLabel %></span></div>
+    <% } %>
+    <% if (showEn) { %>
+    <div class="sub-row bold" style="direction:ltr;"><span>Discount</span><span>- <%= fmt(sale.discount_amount) %> <%= currencyEnLabel %></span></div>
+    <% } %>
+    <% } %>
     <% if (showAr) { %>
     <div class="total-main">
       <span>الإجمالي</span>
