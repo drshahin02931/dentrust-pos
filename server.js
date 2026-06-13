@@ -673,12 +673,14 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
         }
       }
     }
-    const amtReceived = d.amount_received != null ? parseFloat(d.amount_received) : null;
-    const changeDue = d.change_due != null ? parseFloat(d.change_due) : null;
+    const amtReceived    = d.amount_received != null ? parseFloat(d.amount_received) : null;
+    const changeDue      = d.change_due != null ? parseFloat(d.change_due) : null;
+    const discountAmount = d.discount_amount != null ? parseFloat(d.discount_amount) : 0;
+    const deliveryAmount = d.delivery_amount != null ? parseFloat(d.delivery_amount) : 0;
     const { rows: [sale] } = await client.query(
-      `INSERT INTO sales (total_amount, payment_method, customer_id, cashier_id, customer_name, amount_received, change_due, payment_split)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-      [total, method, customerId, req.session.user_id, customerNameFree, amtReceived, changeDue, splitJson]
+      `INSERT INTO sales (total_amount, payment_method, customer_id, cashier_id, customer_name, amount_received, change_due, payment_split, discount_amount, delivery_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [total, method, customerId, req.session.user_id, customerNameFree, amtReceived, changeDue, splitJson, discountAmount, deliveryAmount]
     );
     const saleId = sale.id;
     const lowStockItemIds = [];
@@ -691,6 +693,21 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
         [saleId, item.product_id, item.product_name, item.quantity, item.unit_price, snapPp, parseFloat(item.unit_price)]
       );
       await client.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [item.quantity, item.product_id]);
+      // Deduct per-variant qty from variants JSON if a specific size was sold
+      const selSize = item._size || item.selected_size;
+      if (selSize) {
+        try {
+          const { rows: [pv] } = await client.query('SELECT variants FROM products WHERE id=$1', [item.product_id]);
+          if (pv?.variants) {
+            const vObj = typeof pv.variants === 'string' ? JSON.parse(pv.variants) : { ...pv.variants };
+            const sIdx = (vObj.sizes || []).findIndex(s => s.label === selSize);
+            if (sIdx >= 0) {
+              vObj.sizes[sIdx].qty = Math.max(0, (vObj.sizes[sIdx].qty || 0) - item.quantity);
+              await client.query('UPDATE products SET variants=$1 WHERE id=$2', [JSON.stringify(vObj), item.product_id]);
+            }
+          }
+        } catch(_) {}
+      }
       lowStockItemIds.push(item.product_id);
     }
     if (method === 'credit' && customerId) {
@@ -913,11 +930,16 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
     const df = periodFilter(period, 's.date');
     const ef = periodFilter(period, 'e.date');
     const rf = periodFilter(period, 'r.date');
-    const { rows: [sd] } = await posDb.query(
-      `SELECT COALESCE(SUM(si.quantity*si.unit_price),0) as r,
-              COALESCE(SUM(si.quantity*COALESCE(si.snapshot_purchase_price,0)),0) as c
-       FROM sales s JOIN sale_items si ON si.sale_id=s.id WHERE ${df}`
+    // Revenue = total_amount minus delivery (delivery goes to courier, not net profit)
+    const { rows: [sdR] } = await posDb.query(
+      `SELECT COALESCE(SUM(s.total_amount - COALESCE(s.delivery_amount,0)),0) as r
+       FROM sales s WHERE ${df}`
     );
+    const { rows: [sdC] } = await posDb.query(
+      `SELECT COALESCE(SUM(si.quantity*COALESCE(si.snapshot_purchase_price,0)),0) as c
+       FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE ${df}`
+    );
+    const sd = { r: sdR.r, c: sdC.c };
     const { rows: [et] } = await posDb.query(
       `SELECT COALESCE(SUM(e.amount),0) as t FROM expenses e WHERE ${ef} AND e.title NOT LIKE 'مردود فاتورة%'`
     );
@@ -1012,9 +1034,9 @@ app.get(`${BASE}/api/stats`, async (req, res) => {
                           COALESCE(SUM(CASE WHEN quantity <= min_stock AND min_stock > 0 THEN 1 ELSE 0 END), 0) as low_stock
                    FROM products`),
       posDb.query(`SELECT
-                          COALESCE(SUM(CASE WHEN COALESCE(s.source,'pos')='pos' THEN s.total_amount ELSE 0 END),0) as pos_revenue,
-                          COALESCE(SUM(CASE WHEN s.source='online' THEN s.total_amount ELSE 0 END),0) as online_revenue,
-                          COALESCE(SUM(s.total_amount),0) as revenue,
+                          COALESCE(SUM(CASE WHEN COALESCE(s.source,'pos')='pos' THEN s.total_amount - COALESCE(s.delivery_amount,0) ELSE 0 END),0) as pos_revenue,
+                          COALESCE(SUM(CASE WHEN s.source='online' THEN s.total_amount - COALESCE(s.delivery_amount,0) ELSE 0 END),0) as online_revenue,
+                          COALESCE(SUM(s.total_amount - COALESCE(s.delivery_amount,0)),0) as revenue,
                           COALESCE(SUM(si.unit_price * si.quantity * COALESCE(p.purchase_price / NULLIF(p.sale_price,0), 0)),0) as cost
                    FROM sales s
                    LEFT JOIN sale_items si ON si.sale_id = s.id
@@ -2132,20 +2154,23 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
-// POST /api/ai/fashion-chat-stream  (DenBot – streaming chat proxy)
+const DENTRUST_BOT_SYSTEM = `أنت DenBot — مساعد ذكي ومتخصص لمتجر Dentrust للمستلزمات الطبية والأسنان في مصر. شخصيتك ودودة وذكية وواثقة. تجاوب بالعامية المصرية أو بالفرانكو عربي حسب أسلوب السؤال. تساعد في: أسئلة المنتجات، الأسعار، الشحن والتوصيل، العروض، وطرق الدفع. لو مش عارف الإجابة قول بصراحة واقترح يتواصلوا على الواتساب أو بالإيميل. لا تتكلم في مواضيع سياسية أو دينية. كن مختصراً ومفيداً — لا تطول من غير داعي.`;
+
+// POST /api/ai/fashion-chat-stream  (DenBot – streaming chat proxy, Gemini-powered)
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { model = 'openai/gpt-4o-mini', messages = [], max_tokens = 600, stream = true } = req.body;
-    // Inject stored knowledge into the first system message (or prepend one)
+    const { model = 'google/gemini-2.5-flash', messages = [], max_tokens = 800, stream = true } = req.body;
+    // Inject DenTrust system prompt + stored knowledge
     const knowledge = await getBotKnowledgeText();
+    const sysContent = DENTRUST_BOT_SYSTEM + knowledge;
     let patchedMessages = [...messages];
-    if (knowledge) {
+    if (sysContent) {
       const sysIdx = patchedMessages.findIndex(m => m.role === 'system');
       if (sysIdx >= 0) {
-        patchedMessages[sysIdx] = { ...patchedMessages[sysIdx], content: patchedMessages[sysIdx].content + knowledge };
+        patchedMessages[sysIdx] = { ...patchedMessages[sysIdx], content: sysContent + '\n' + patchedMessages[sysIdx].content };
       } else {
-        patchedMessages = [{ role: 'system', content: knowledge }, ...patchedMessages];
+        patchedMessages = [{ role: 'system', content: sysContent }, ...patchedMessages];
       }
     }
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -2313,6 +2338,9 @@ const PT_INIT_SQL = `
   ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS customer_city TEXT;
   ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS customer_address TEXT;
   ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS dentrust_order_id TEXT;
+  ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0;
+  ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC DEFAULT 0;
+  ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS promo_code TEXT;
   CREATE TABLE IF NOT EXISTS pt_history (
     id SERIAL PRIMARY KEY,
     our_product_id INTEGER,
