@@ -649,7 +649,7 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
   try {
     await client.query('BEGIN');
     for (const item of items) {
-      const { rows: [prod] } = await client.query('SELECT quantity, product_name, sale_price FROM products WHERE id=$1', [item.product_id]);
+      const { rows: [prod] } = await client.query('SELECT quantity, product_name, sale_price, variants FROM products WHERE id=$1', [item.product_id]);
       if (item.product_id) {
         if (!prod) {
           await client.query('ROLLBACK');
@@ -662,6 +662,20 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
         if (prod.quantity < item.quantity) {
           await client.query('ROLLBACK');
           return res.status(400).json({ error: `الكمية المطلوبة (${item.quantity}) تتجاوز المخزون المتاح (${prod.quantity}) للمنتج: ${prod.product_name}` });
+        }
+        // ── Variant-level stock validation ──────────────────────────────────
+        const _selSzChk = item._size || item.selected_size;
+        if (_selSzChk && prod.variants) {
+          try {
+            const _vObj2 = typeof prod.variants === 'string' ? JSON.parse(prod.variants) : prod.variants;
+            const _vSz   = (_vObj2?.sizes || []).find(s => s.label === _selSzChk);
+            if (_vSz !== undefined && _vSz.qty < item.quantity) {
+              await client.query('ROLLBACK');
+              return res.status(400).json({
+                error: `الكمية المطلوبة (${item.quantity}) تتجاوز مخزون المقاس "${_selSzChk}" المتاح (${_vSz.qty}) للمنتج: ${prod.product_name}`
+              });
+            }
+          } catch (_e) {}
         }
       }
       if (prod && !hasPerm(req, 'edit_prices')) {
