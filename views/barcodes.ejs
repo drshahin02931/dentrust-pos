@@ -99,19 +99,19 @@
       position: fixed;
       top: 0; left: 0;
       width: 100%;
+      height: 100%;
     }
-    .print-label-small  { width: 50mm; height: 25mm; padding: 1mm; }
-    .print-label-medium { width: 57mm; height: 32mm; padding: 1.5mm; }
-    .print-label-large  { width: 80mm; height: 50mm; padding: 2mm; }
+    .print-label-small,
+    .print-label-medium,
+    .print-label-large  { width: 100%; height: 100%; padding: 1mm; box-sizing: border-box; }
     .barcode-label {
-      border: 0.5pt solid #ccc;
-      border-radius: 0;
-      page-break-inside: avoid;
+      border: none;
+      page-break-after: always;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
     }
-    .print-wrapper {
-      display: flex;
-      flex-wrap: wrap;
-    }
+    .print-wrapper { display: block; }
   }
 </style>
 
@@ -237,6 +237,20 @@ function printBarcodes() {
   const copies = Math.max(1, parseInt(document.getElementById("copies").value) || 1);
   const selectedProducts = allProducts.filter(p => selected.has(p.id));
   if (!selectedProducts.length) { alert("اختر منتجاً واحداً على الأقل"); return; }
+
+  const pageSizes = {
+    small:  { w: '50mm', h: '25mm' },
+    medium: { w: '57mm', h: '32mm' },
+    large:  { w: '80mm', h: '50mm' },
+  };
+  const ps = pageSizes[size] || pageSizes.small;
+  let dynStyle = document.getElementById('_dynPrintStyle');
+  if (!dynStyle) {
+    dynStyle = document.createElement('style');
+    dynStyle.id = '_dynPrintStyle';
+    document.head.appendChild(dynStyle);
+  }
+  dynStyle.textContent = `@page { size: ${ps.w} ${ps.h}; margin: 0; }`;
 
   let html = '<div class="print-wrapper">';
   for (const p of selectedProducts) {
