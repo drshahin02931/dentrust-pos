@@ -15,7 +15,7 @@
         <label class="text-xs font-semibold text-gray-600 block mb-1">مقاس الملصق</label>
         <select id="labelSize" onchange="renderPreview()"
           class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
-          <option value="small" selected>صغير (35×25 مم)</option>
+          <option value="small" selected>صغير (50×25 مم)</option>
           <option value="medium">متوسط (57×32 مم)</option>
           <option value="large">كبير (80×50 مم)</option>
         </select>
@@ -54,7 +54,7 @@
 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 
 <style>
-  .label-small  { width: 132px; height: 94px; padding: 3px; }
+  .label-small  { width: 189px; height: 94px; padding: 3px; }
   .label-medium { width: 215px; height: 121px; padding: 6px; }
   .label-large  { width: 302px; height: 189px; padding: 8px; }
 
@@ -100,7 +100,7 @@
       top: 0; left: 0;
       width: 100%;
     }
-    .print-label-small  { width: 35mm; height: 25mm; padding: 1mm; }
+    .print-label-small  { width: 50mm; height: 25mm; padding: 1mm; }
     .print-label-medium { width: 57mm; height: 32mm; padding: 1.5mm; }
     .print-label-large  { width: 80mm; height: 50mm; padding: 2mm; }
     .barcode-label {
