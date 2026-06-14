@@ -969,9 +969,26 @@ function editPrice(idx, val) {
 }
 
 function changeQty(idx, delta) {
-  cart[idx].quantity += delta;
-  if (cart[idx].quantity <= 0) cart.splice(idx,1);
-  else if (cart[idx].quantity > cart[idx].max_qty) { cart[idx].quantity = cart[idx].max_qty; alert("لا يوجد مخزون كافٍ"); }
+  const item = cart[idx];
+  // Compute effective max: for variant items use live variant qty, else product qty
+  let effectiveMax = item.max_qty;
+  if (item._size || item.selected_size) {
+    const sz    = item._size || item.selected_size;
+    const prod  = (_posCatProducts || []).find(p => p.id === item.product_id);
+    if (prod?.variants) {
+      try {
+        const vObj = typeof prod.variants === 'string' ? JSON.parse(prod.variants) : prod.variants;
+        const vSz  = (vObj.sizes || []).find(s => s.label === sz);
+        if (vSz) effectiveMax = vSz.qty;
+      } catch (_) {}
+    }
+  }
+  item.quantity += delta;
+  if (item.quantity <= 0) { cart.splice(idx, 1); }
+  else if (item.quantity > effectiveMax) {
+    item.quantity = effectiveMax;
+    alert("لا يوجد مخزون كافٍ للمقاس المحدد");
+  }
   renderCart();
 }
 function removeItem(idx) { cart.splice(idx,1); renderCart(); }
@@ -1158,6 +1175,25 @@ async function checkout() {
   const data = await res.json();
   if (!res.ok) { alert(data.error || "حدث خطأ"); return; }
   lastSaleId = data.sale_id;
+
+  // ── Update in-memory product list so variant picker shows fresh stock ───────
+  // Reduce variant qty and total qty in _posCatProducts after each sale
+  cart.forEach(item => {
+    const prod = (_posCatProducts || []).find(p => p.id === item.product_id);
+    if (!prod) return;
+    prod.quantity = Math.max(0, prod.quantity - item.quantity);
+    const sz = item._size || item.selected_size;
+    if (sz && prod.variants) {
+      try {
+        const vObj = typeof prod.variants === 'string' ? JSON.parse(prod.variants) : JSON.parse(JSON.stringify(prod.variants));
+        const vIdx = (vObj.sizes || []).findIndex(s => s.label === sz);
+        if (vIdx >= 0) {
+          vObj.sizes[vIdx].qty = Math.max(0, (vObj.sizes[vIdx].qty || 0) - item.quantity);
+          prod.variants = vObj;
+        }
+      } catch (_) {}
+    }
+  });
 
   const payLabel = method==="credit" ? "📋 آجل" : method==="instapay" ? "📱 انستا باي" : method==="split" ? "✂️ مقسّم" : "💵 نقدي";
   document.getElementById("successInvoiceNum").textContent = `فاتورة رقم #${lastSaleId}`;
