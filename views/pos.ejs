@@ -747,8 +747,35 @@ let _vpSelColor  = null;
 let _vpQty       = 1;
 
 function parseVariants(p) {
-  if (!p.variants) return null;
-  try { return typeof p.variants === 'string' ? JSON.parse(p.variants) : p.variants; } catch(e) { return null; }
+  if (p.variants) {
+    try {
+      const v = typeof p.variants === 'string' ? JSON.parse(p.variants) : p.variants;
+      if (v && v.items && v.items.length > 0) {
+        return { sizes: v.items.map(item => ({ label: item.label, qty: item.qty })) };
+      }
+      if (v && v.sizes && v.sizes.length > 0) return v;
+    } catch(e) {}
+  }
+  if (p.checkbox_values) {
+    try {
+      const cv = typeof p.checkbox_values === 'string' ? JSON.parse(p.checkbox_values) : p.checkbox_values;
+      const sizes = [];
+      Object.entries(cv).forEach(([key, val]) => {
+        const sep = key.indexOf('::');
+        if (sep === -1) return;
+        const label    = key.slice(sep + 2);
+        const checked  = typeof val === 'boolean' ? val : (val?.checked ?? false);
+        const disabled = typeof val === 'object'  ? (val?.disabled ?? false) : false;
+        if (!checked || disabled) return;
+        const stock = (typeof val === 'object' && val?.stock !== null && val?.stock !== undefined)
+          ? parseInt(val.stock)
+          : (p.quantity || 0);
+        sizes.push({ label, qty: stock });
+      });
+      if (sizes.length > 0) return { sizes };
+    } catch(e) {}
+  }
+  return null;
 }
 
 function openVariantPicker(product, variants) {
