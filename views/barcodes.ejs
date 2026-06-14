@@ -176,22 +176,36 @@ function filterProducts(q) {
 
 function makeLabelHtml(p, size, isPreview) {
   const s = SIZES[size];
-  const cls = isPreview ? s.cls : `barcode-label ${s.printCls}`;
   const barcode = p.barcode || String(p.id).padStart(5, "0");
   const svgId = `bc-${p.id}-${isPreview ? 'prev' : 'print'}-${Math.random().toString(36).slice(2)}`;
   return `
-    <div class="barcode-label ${isPreview ? s.cls : s.printCls}" style="display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;background:white;">
+    <div class="barcode-label ${isPreview ? s.cls : s.printCls}" style="display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;background:white;"
+      data-barcode="${barcode}" data-bar-width="${isPreview?1:1.2}" data-bar-height="${s.barH}" data-bar-fsize="${isPreview?8:9}">
       <div class="store-name" style="font-size:${s.storeFz};font-weight:900;color:#1d4ed8;letter-spacing:2px;">DENTRUST</div>
-      <svg id="${svgId}"></svg>
+      <svg id="${svgId}" class="barcode-svg"></svg>
       <div class="prod-name" style="font-size:${s.nameFz};color:#374151;text-align:center;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${p.product_name}</div>
     </div>
-    <script>
-      (function(){
-        var el = document.getElementById("${svgId}");
-        if(el) JsBarcode(el, "${barcode}", {format:"CODE128",width:${isPreview?1:1.2},height:${s.barH},displayValue:true,fontSize:${isPreview?8:9},margin:1,background:"#ffffff",lineColor:"#000000"});
-      })();
-    <\/script>
   `;
+}
+
+function renderBarcodes(container) {
+  container.querySelectorAll('[data-barcode]').forEach(div => {
+    const svg = div.querySelector('.barcode-svg');
+    if (!svg) return;
+    const bc    = div.dataset.barcode;
+    const w     = parseFloat(div.dataset.barWidth)  || 1;
+    const h     = parseInt(div.dataset.barHeight)    || 40;
+    const fsize = parseInt(div.dataset.barFsize)     || 8;
+    try {
+      JsBarcode(svg, bc, {
+        format: "CODE128", width: w, height: h,
+        displayValue: true, fontSize: fsize,
+        margin: 1, background: "#ffffff", lineColor: "#000000"
+      });
+    } catch(e) {
+      svg.style.display = "none";
+    }
+  });
 }
 
 function renderPreview() {
@@ -215,6 +229,7 @@ function renderPreview() {
     }
   }
   preview.innerHTML = html;
+  renderBarcodes(preview);
 }
 
 function printBarcodes() {
@@ -233,6 +248,7 @@ function printBarcodes() {
 
   const printArea = document.getElementById("printArea");
   printArea.innerHTML = html;
+  renderBarcodes(printArea);
   window.print();
 }
 
