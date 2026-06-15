@@ -1846,10 +1846,18 @@ app.post(`${BASE}/api/sync/push-images`, async (req, res) => {
             skipped++;
             continue;
           }
-          if (!p.image_url.startsWith('data:')) { skipped++; continue; }
+          if (!p.image_url.startsWith('data:')) {
+            // Old broken filesystem path — clear it in POS DB
+            await posDb.query('UPDATE products SET image_url=NULL WHERE id=$1', [p.id]);
+            skipped++;
+            continue;
+          }
           const imgUrl = await uploadBase64ToSupabase(p.image_url);
           if (imgUrl) {
+            // Update website photos
             await client.query('UPDATE products SET photos=$1 WHERE id=$2', [JSON.stringify([imgUrl]), p.dentrust_id]);
+            // Also update POS image_url with the new Supabase URL so it shows in POS inventory
+            await posDb.query('UPDATE products SET image_url=$1 WHERE id=$2', [imgUrl, p.id]);
             uploaded++;
           } else { failed++; }
         } catch (_) { failed++; }
