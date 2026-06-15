@@ -125,8 +125,27 @@
   </div>
 </div>
 
+<!-- ── Order Detail Modal ── -->
+<div id="detailModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeDetail()">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+    <!-- Header -->
+    <div class="flex items-center justify-between px-5 py-4 border-b">
+      <h2 class="font-black text-gray-800 text-lg">📋 تفاصيل الطلب</h2>
+      <button onclick="closeDetail()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">✕</button>
+    </div>
+    <div id="detailBody" class="overflow-y-auto flex-1 p-5 space-y-4">
+      <div class="flex items-center justify-center py-8 text-gray-400">جارٍ التحميل...</div>
+    </div>
+    <div class="px-5 py-3 border-t flex gap-2">
+      <button id="detailStatusBtn" onclick="openStatusFromDetail()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl text-sm">✏️ تحديث الحالة</button>
+      <button id="detailDeleteBtn" onclick="deleteFromDetail()" class="bg-red-50 hover:bg-red-100 text-red-600 font-bold py-2.5 px-4 rounded-xl text-sm border border-red-200">🗑 حذف</button>
+      <button onclick="closeDetail()" class="px-5 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-2.5 rounded-xl text-sm">إغلاق</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Status Modal ── -->
-<div id="statusModal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+<div id="statusModal" class="hidden fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
     <div class="flex items-center justify-between">
       <h2 class="font-black text-gray-800 text-lg">تحديث حالة الطلب</h2>
@@ -220,7 +239,7 @@ function renderOrders(orders) {
     cancelled: '❌ ملغي',
   };
   container.innerHTML = orders.map(o => `
-    <div class="bg-white border rounded-2xl shadow-sm p-4 mb-3 hover:shadow-md transition-shadow">
+    <div class="bg-white border rounded-2xl shadow-sm p-4 mb-3 hover:shadow-md transition-shadow cursor-pointer" onclick="openDetail(${o.id})">
       <div class="flex flex-wrap items-start gap-3 justify-between">
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-2 mb-1">
@@ -246,12 +265,7 @@ function renderOrders(orders) {
             ${new Date(o.created_at).toLocaleDateString('ar-EG',{day:'numeric',month:'short'})}
             ${new Date(o.created_at).toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'})}
           </div>
-          <button onclick="openModal(${o.id}, '${escAttr(o.customer_name)}', '${escAttr(o.items_summary)}', ${parseFloat(o.total_amount||0)}, '${o.status||'pending'}')"
-            class="text-xs bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl whitespace-nowrap">
-            تحديث الحالة
-          </button>
-          <button onclick="deleteOrder(${o.id}, this)"
-            class="text-xs text-red-400 hover:text-red-600 font-medium">حذف</button>
+          <span class="text-xs text-blue-400 font-medium">اضغط للتفاصيل ←</span>
         </div>
       </div>
     </div>`).join('');
@@ -284,7 +298,102 @@ function debounceSearch() {
   _searchTimer = setTimeout(() => { _currentPage = 1; loadOrders(); }, 400);
 }
 
-// ── Modal ──
+// ── Detail Modal ──
+let _detailOrder = null;
+
+async function openDetail(id) {
+  _detailOrder = null;
+  document.getElementById('detailBody').innerHTML = `<div class="flex items-center justify-center py-8 text-gray-400">جارٍ التحميل...</div>`;
+  document.getElementById('detailModal').classList.remove('hidden');
+  try {
+    const res = await fetch(`${BASE}/api/website-orders/${id}`);
+    const { order, items } = await res.json();
+    _detailOrder = order;
+    const statusLabels = { pending:'⏳ انتظار', confirmed:'✅ مؤكد', shipped:'🚚 جارٍ الشحن', delivered:'📦 تم التوصيل', cancelled:'❌ ملغي' };
+    const dt = new Date(order.created_at);
+    const dateStr = dt.toLocaleDateString('ar-EG',{day:'numeric',month:'long',year:'numeric'}) + ' — ' + dt.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
+    // Build items rows
+    const itemsHtml = items.length ? items.map(it => {
+      let photoUrl = null;
+      try { const arr = typeof it.photos === 'string' ? JSON.parse(it.photos) : (it.photos||[]); photoUrl = arr[0] || null; } catch(_) {}
+      return `<div class="flex items-center gap-3 py-2.5 border-b last:border-0">
+        ${photoUrl ? `<img src="${escHtml(photoUrl)}" class="w-12 h-12 rounded-xl object-cover border flex-shrink-0" onerror="this.style.display='none'"/>` : `<div class="w-12 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-xl flex-shrink-0">📦</div>`}
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-gray-800 text-sm">${escHtml(it.product_name || '—')}</div>
+          ${it.selected_option ? `<div class="text-xs text-gray-400">${escHtml(it.selected_option)}</div>` : ''}
+          <div class="text-xs text-gray-500 mt-0.5">${parseFloat(it.unit_price||0).toLocaleString('ar-EG')} ج.م × ${it.quantity}</div>
+        </div>
+        <div class="font-black text-blue-700 text-sm whitespace-nowrap">${parseFloat(it.total_price||0).toLocaleString('ar-EG')} ج.م</div>
+      </div>`;
+    }).join('') : `<div class="text-center text-gray-400 py-4 text-sm">🛍️ ${escHtml(order.items_summary||'—')}</div>`;
+    const subtotal = items.reduce((s,i) => s + parseFloat(i.total_price||0), 0) || parseFloat(order.total_amount||0);
+    const discount = parseFloat(order.discount_amount||0);
+    const total    = parseFloat(order.total_amount||0);
+    document.getElementById('detailBody').innerHTML = `
+      <!-- Status + Date -->
+      <div class="flex items-center justify-between">
+        <span class="status-badge status-${order.status||'pending'} text-sm px-3 py-1">${statusLabels[order.status]||'⏳ انتظار'}</span>
+        <span class="text-xs text-gray-400">${dateStr}</span>
+      </div>
+      <!-- Customer -->
+      <div class="bg-gray-50 rounded-2xl p-4 space-y-1.5">
+        <div class="font-black text-gray-800 text-base">${escHtml(order.customer_name||'عميل')}</div>
+        ${order.customer_phone ? `<div class="text-sm text-gray-600">📞 <a href="tel:${escHtml(order.customer_phone)}" class="text-blue-600 font-semibold">${escHtml(order.customer_phone)}</a></div>` : ''}
+        ${order.customer_city  ? `<div class="text-sm text-gray-500">📍 ${escHtml(order.customer_city)}${order.customer_address ? ' — ' + escHtml(order.customer_address) : ''}</div>` : ''}
+      </div>
+      <!-- Items -->
+      <div>
+        <div class="text-xs font-bold text-gray-500 mb-2">المنتجات (${items.length || order.items_count})</div>
+        <div class="bg-white border rounded-2xl divide-y overflow-hidden">${itemsHtml}</div>
+      </div>
+      <!-- Totals -->
+      <div class="bg-blue-50 rounded-2xl p-4 space-y-2">
+        ${discount > 0 ? `
+        <div class="flex justify-between text-sm text-gray-600">
+          <span>المجموع قبل الخصم</span>
+          <span>${(subtotal + discount).toLocaleString('ar-EG')} ج.م</span>
+        </div>
+        <div class="flex justify-between text-sm text-green-700 font-semibold">
+          <span>🎟️ خصم ${order.promo_code ? '(' + escHtml(order.promo_code) + ')' : ''}</span>
+          <span>- ${discount.toLocaleString('ar-EG')} ج.م</span>
+        </div>
+        <div class="border-t border-blue-200 pt-2"></div>` : ''}
+        <div class="flex justify-between font-black text-blue-800 text-lg">
+          <span>الإجمالي</span>
+          <span>${total.toLocaleString('ar-EG')} ج.م</span>
+        </div>
+      </div>
+      ${order.notes ? `<div class="bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3 text-sm text-yellow-800">📝 ${escHtml(order.notes)}</div>` : ''}
+    `;
+  } catch(e) {
+    document.getElementById('detailBody').innerHTML = `<div class="text-center text-red-400 py-8">❌ خطأ في التحميل</div>`;
+  }
+}
+
+function closeDetail() {
+  document.getElementById('detailModal').classList.add('hidden');
+  _detailOrder = null;
+}
+
+function openStatusFromDetail() {
+  if (!_detailOrder) return;
+  closeDetail();
+  openModal(_detailOrder.id, _detailOrder.customer_name, _detailOrder.items_summary, parseFloat(_detailOrder.total_amount||0), _detailOrder.status||'pending');
+}
+
+async function deleteFromDetail() {
+  if (!_detailOrder) return;
+  if (!confirm(`حذف طلب "${escHtml(_detailOrder.customer_name)}"؟\nسيُحذف من الموقع أيضاً.`)) return;
+  const btn = document.getElementById('detailDeleteBtn');
+  btn.disabled = true; btn.textContent = '⏳';
+  try {
+    await fetch(`${BASE}/api/website-orders/${_detailOrder.id}`, { method: 'DELETE' });
+    closeDetail();
+    loadOrders();
+  } catch(e) { alert('خطأ: ' + e.message); btn.disabled = false; btn.textContent = '🗑 حذف'; }
+}
+
+// ── Status Modal ──
 function openModal(id, name, items, total, currentStatus) {
   _currentOrderId = id;
   _selectedStatus = currentStatus;
