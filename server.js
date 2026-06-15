@@ -1448,13 +1448,27 @@ async function syncDentrustBatch(updates) {
   if (!updates.length || !HAS_WEBSITE_DB) return;
   const client = await dentrustDb.connect();
   try {
-    for (const { pid, delta } of updates) {
+    for (const { pid, delta, selectedOption } of updates) {
       const { rows: [row] } = await posDb.query('SELECT dentrust_id FROM products WHERE id=$1', [pid]);
       if (!row?.dentrust_id) continue;
+      // Deduct overall stock
       await client.query(
         'UPDATE products SET stock = GREATEST(0, COALESCE(stock,0) + $1), is_sold_out = (GREATEST(0, COALESCE(stock,0) + $1) <= 0) WHERE id=$2',
         [delta, row.dentrust_id]
       );
+      // Deduct checkbox variant stock if selectedOption provided
+      if (selectedOption && delta < 0) {
+        try {
+          const { rows: [prod] } = await client.query('SELECT checkbox_values FROM products WHERE id=$1', [row.dentrust_id]);
+          if (prod?.checkbox_values) {
+            const cbv = typeof prod.checkbox_values === 'string' ? JSON.parse(prod.checkbox_values) : { ...prod.checkbox_values };
+            if (cbv[selectedOption] && typeof cbv[selectedOption] === 'object' && cbv[selectedOption].stock != null) {
+              cbv[selectedOption].stock = Math.max(0, cbv[selectedOption].stock + delta);
+              await client.query('UPDATE products SET checkbox_values=$1 WHERE id=$2', [JSON.stringify(cbv), row.dentrust_id]);
+            }
+          }
+        } catch(_) {}
+      }
     }
   } finally { client.release(); }
 }
@@ -1874,7 +1888,7 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
       if (prod?.id) {
         await posDb.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [item.quantity || 1, prod.id]);
         deducted++;
-        deductedProdIds.push({ pid: prod.id, delta: -(item.quantity || 1) });
+        deductedProdIds.push({ pid: prod.id, delta: -(item.quantity || 1), selectedOption: item.selectedOption || item.selected_option || null });
       }
     }
     // Sync deducted quantities back to Supabase
