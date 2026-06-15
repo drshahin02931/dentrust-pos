@@ -781,7 +781,7 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
       );
       lowStock = lsRows.map(r => ({ id: r.id, name: r.product_name, qty: r.quantity, min: r.min_stock }));
     }
-    syncDentrustBatch(items.map(i => ({ pid: i.product_id, delta: -i.quantity, selectedOption: i.selected_option || i.selectedOption || i._checkbox || null }))).catch(() => {});
+    syncProductsNow(items.map(i => i.product_id).filter(Boolean)).catch(() => {});
     res.status(201).json({ ok: true, sale_id: saleId, low_stock: lowStock });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -1261,7 +1261,7 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
     await client.query('INSERT INTO expenses (title, amount, date) VALUES ($1,$2,CURRENT_DATE::text)',
       [`مردود فاتورة #${sid}${reason ? ` (${reason})` : ''}`, totalRefund]);
     await client.query('COMMIT');
-    syncDentrustBatch(validated.filter(v => v.item.product_id).map(v => ({ pid: v.item.product_id, delta: v.quantity }))).catch(() => {});
+    syncProductsNow(validated.filter(v => v.item.product_id).map(v => v.item.product_id)).catch(() => {});
     res.status(201).json({ ok: true, refund_amount: totalRefund });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -1560,6 +1560,51 @@ async function syncDentrustBatch(updates) {
       }
     }
   } finally { client.release(); }
+}
+
+// Push actual current POS stock values to website for specific products (real-time, state-based not delta-based)
+async function syncProductsNow(productIds) {
+  if (!productIds.length || !HAS_WEBSITE_DB) return;
+  try {
+    const ids = [...new Set(productIds.filter(Boolean))];
+    if (!ids.length) return;
+    const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+    const { rows: linked } = await posDb.query(
+      `SELECT id, dentrust_id, quantity, checkbox_values, variants FROM products WHERE dentrust_id IS NOT NULL AND id IN (${placeholders})`,
+      ids
+    );
+    if (!linked.length) return;
+    const client = await dentrustDb.connect();
+    try {
+      for (const p of linked) {
+        try {
+          const cbJson = p.checkbox_values
+            ? (typeof p.checkbox_values === 'string' ? p.checkbox_values : JSON.stringify(p.checkbox_values))
+            : null;
+          const varJson = p.variants
+            ? (typeof p.variants === 'string' ? p.variants : JSON.stringify(p.variants))
+            : null;
+          if (cbJson) {
+            await client.query(
+              'UPDATE products SET stock=$1, is_sold_out=$2, checkbox_values=$3 WHERE id=$4',
+              [p.quantity, p.quantity <= 0, cbJson, p.dentrust_id]
+            );
+          } else if (varJson) {
+            await client.query(
+              'UPDATE products SET stock=$1, is_sold_out=$2, variants=$3 WHERE id=$4',
+              [p.quantity, p.quantity <= 0, varJson, p.dentrust_id]
+            );
+          } else {
+            await client.query(
+              'UPDATE products SET stock=$1, is_sold_out=$2 WHERE id=$3',
+              [p.quantity, p.quantity <= 0, p.dentrust_id]
+            );
+          }
+        } catch (_) {}
+      }
+      cacheDel('site_products');
+    } finally { client.release(); }
+  } catch (_) {}
 }
 
 async function doPushStockToSite() {
@@ -2031,8 +2076,8 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
         deductedProdIds.push({ pid: prod.id, delta: -itemQty, selectedOption: selOpt });
       }
     }
-    // Sync deducted quantities back to Supabase
-    if (deductedProdIds.length > 0) syncDentrustBatch(deductedProdIds).catch(() => {});
+    // Sync actual current POS stock to website (NOT delta — website already deducted its own stock)
+    if (deductedProdIds.length > 0) syncProductsNow(deductedProdIds.map(d => d.pid)).catch(() => {});
     // Flask: online orders do NOT increment customer debt on order-placed;
     // debt tracking is handled separately via confirm-online-order / credit payments.
     res.json({ ok: true, sale_id: saleId, deducted, customer_id: customerId });
