@@ -2043,9 +2043,10 @@ app.post(`${BASE}/api/sync/upsert-product`, async (req, res) => {
         }
       }
       if (existing) {
+        const _cbJsonUp = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
         await posDb.query(
-          'UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, expiry_date=$4, purchase_price=COALESCE(NULLIF($5,0), purchase_price), category=COALESCE($6, category) WHERE dentrust_id=$7',
-          [name, price, stock, expiry, purchasePrice, category, d.dentrust_id]
+          'UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, expiry_date=$4, purchase_price=COALESCE(NULLIF($5,0), purchase_price), category=COALESCE($6, category), checkbox_values=COALESCE($8, checkbox_values) WHERE dentrust_id=$7',
+          [name, price, stock, expiry, purchasePrice, category, d.dentrust_id, _cbJsonUp]
         );
       } else {
         await posDb.query(
@@ -2078,8 +2079,10 @@ async function doProductSync(incremental = true) {
         try {
           const { rows: [ex] } = await posDb.query('SELECT id FROM products WHERE dentrust_id=$1', [p.id]);
           if (ex) {
-            await posDb.query('UPDATE products SET product_name=$1, sale_price=$2, quantity=$3 WHERE dentrust_id=$4',
-              [p.name, p.price || 0, p.stock || 0, p.id]);
+            const cbJsonSync = p.checkbox_values ? JSON.stringify(p.checkbox_values) : null;
+            await posDb.query(
+              'UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, checkbox_values=COALESCE($5, checkbox_values) WHERE dentrust_id=$4',
+              [p.name, p.price || 0, p.stock || 0, p.id, cbJsonSync]);
           } else {
             await posDb.query(
               `INSERT INTO products (product_name, sale_price, purchase_price, quantity, category, expiry_date, dentrust_id)
@@ -2168,7 +2171,7 @@ app.get('/api/storage/*', webCors, async (req, res) => {
 // ── Bot Knowledge – cache + loader ────────────────────────────────────────────
 let _knowledgeCache = null;
 let _knowledgeCacheAt = 0;
-const KNOWLEDGE_TTL = 60_000; // 60s cache
+const KNOWLEDGE_TTL = 300_000; // 5 min cache — reduces DB hits on every chat message
 
 async function getBotKnowledgeText() {
   const now = Date.now();
@@ -2245,7 +2248,7 @@ const DENTRUST_BOT_SYSTEM = `أنت DenBot — مساعد ذكي ومتخصص ل
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { model = 'google/gemini-2.5-flash', messages = [], max_tokens = 800, stream = true } = req.body;
+    const { model = 'google/gemini-2.0-flash-001', messages = [], max_tokens = 800, stream = true } = req.body;
     // Inject DenTrust system prompt + stored knowledge
     const knowledge = await getBotKnowledgeText();
     const sysContent = DENTRUST_BOT_SYSTEM + knowledge;
