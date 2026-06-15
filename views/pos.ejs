@@ -743,6 +743,7 @@ function pickProduct(id) {
 let _vpProduct   = null;
 let _vpVariants  = null;
 let _vpSelSize   = null;
+let _vpSelCbKey  = null;
 let _vpSelColor  = null;
 let _vpQty       = 1;
 
@@ -770,7 +771,7 @@ function parseVariants(p) {
         const stock = (typeof val === 'object' && val?.stock !== null && val?.stock !== undefined)
           ? parseInt(val.stock)
           : (p.quantity || 0);
-        sizes.push({ label, qty: stock });
+        sizes.push({ label, qty: stock, _cbKey: key });
       });
       if (sizes.length > 0) return { sizes };
     } catch(e) {}
@@ -782,6 +783,7 @@ function openVariantPicker(product, variants) {
   _vpProduct  = product;
   _vpVariants = variants;
   _vpSelSize  = null;
+  _vpSelCbKey = null;
   _vpSelColor = null;
   _vpQty      = 1;
 
@@ -806,7 +808,7 @@ function openVariantPicker(product, variants) {
 
 function closeVariantPicker() {
   document.getElementById("variantModal").classList.add("hidden");
-  _vpProduct = _vpVariants = _vpSelSize = _vpSelColor = null;
+  _vpProduct = _vpVariants = _vpSelSize = _vpSelColor = _vpSelCbKey = null;
   _vpQty = 1;
 }
 
@@ -847,6 +849,7 @@ function selectVPSize(label) {
   document.getElementById("vp-size-err").classList.add("hidden");
   renderVPSizes();
   const s = (_vpVariants.sizes || []).find(x => x.label === label);
+  _vpSelCbKey = s?._cbKey || null;  // track full checkbox key for checkbox-based options
   if (s) {
     const info = document.getElementById("vp-stock-info");
     const lowS  = s.qty <= 2;
@@ -921,6 +924,7 @@ function confirmVariantAdd() {
       _baseName:     _vpProduct.product_name,
       _size:         _vpSelSize,
       selected_size: _vpSelSize,
+      selected_option: _vpSelCbKey || null,
       _color:        _vpSelColor || null,
       unit_price:    _vpProduct.sale_price,
       purchase_price: _vpProduct.purchase_price || 0,
@@ -1252,6 +1256,18 @@ async function checkout() {
         if (vIdx >= 0) {
           vObj.sizes[vIdx].qty = Math.max(0, (vObj.sizes[vIdx].qty || 0) - item.quantity);
           prod.variants = vObj;
+        }
+      } catch (_) {}
+    }
+    // Also deduct from checkbox_values if a checkbox option was sold
+    const selCbOpt = item.selected_option;
+    if (selCbOpt && prod.checkbox_values) {
+      try {
+        const cbvL = typeof prod.checkbox_values === 'string' ? JSON.parse(prod.checkbox_values) : JSON.parse(JSON.stringify(prod.checkbox_values));
+        if (cbvL[selCbOpt] && typeof cbvL[selCbOpt] === 'object' && cbvL[selCbOpt].stock != null) {
+          cbvL[selCbOpt].stock = Math.max(0, cbvL[selCbOpt].stock - item.quantity);
+          if (cbvL[selCbOpt].stock <= 0) cbvL[selCbOpt].disabled = true;
+          prod.checkbox_values = cbvL;
         }
       } catch (_) {}
     }
