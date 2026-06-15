@@ -357,7 +357,10 @@ async function viewInvoice(id) {
           ${items.map(item => {
             const fullyReturned = item.remaining_qty === 0;
             return `<tr class="${fullyReturned?'bg-red-50/40 opacity-70':''}">
-              <td class="px-4 py-2.5 font-medium text-gray-800">${item.product_name}</td>
+              <td class="px-4 py-2.5 font-medium text-gray-800">
+                ${item.product_name}
+                ${item.selected_option ? `<span style="font-size:0.7rem;color:#6b7280;display:block;">${item.selected_option.includes('::')?item.selected_option.split('::').pop():item.selected_option}</span>` : ''}
+              </td>
               <td class="px-4 py-2.5 text-center font-bold">${item.quantity}</td>
               <td class="px-4 py-2.5 text-center text-xs">
                 ${item.returned_qty > 0 ? `<span class="text-red-600 font-bold">-${item.returned_qty}</span>` : '—'}
