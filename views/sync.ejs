@@ -105,6 +105,10 @@
           class="bg-pink-600 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-pink-700 shadow">
           🖼️ رفع صور المنتجات للموقع
         </button>
+        <button onclick="pullImages()" id="pullImagesBtn"
+          class="bg-teal-600 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-teal-700 shadow">
+          🖼️ جلب صور الموقع للـ POS
+        </button>
       </div>
     </div>
     <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
@@ -457,6 +461,24 @@ async function pushPurchasePrices() {
       data.updated > 0 ? "success" : "info");
   } else {
     showAlert(data.error || "خطأ في المزامنة", "error");
+  }
+}
+
+async function pullImages() {
+  const btn = document.getElementById("pullImagesBtn");
+  btn.disabled = true; btn.textContent = "⏳ جاري الجلب...";
+  const res = await fetch(`${BASE}/api/sync/pull-images`, {method:"POST"});
+  const data = await res.json();
+  btn.disabled = false; btn.textContent = "🖼️ جلب صور الموقع للـ POS";
+  if (data.ok) {
+    showAlert(
+      data.updated > 0
+        ? `✅ تم جلب ${data.updated} صورة من الموقع إلى POS — ${data.skipped} منتج بدون صورة على الموقع`
+        : `⚠️ لا توجد صور جديدة للجلب — كل المنتجات إما عندها صورة أو مش موجودة على الموقع`,
+      data.updated > 0 ? "success" : "info"
+    );
+  } else {
+    showAlert(data.error || "خطأ في جلب الصور", "error");
   }
 }
 
