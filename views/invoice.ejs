@@ -33,17 +33,17 @@ function payMethodEn(m) {
   <meta charset="UTF-8"/>
   <title><%= showAr ? 'فاتورة #'+sale.id : 'Invoice #'+sale.id %></title>
   <style>
-    @page { size: 57mm auto; margin: 3mm 7.5mm; }
+    @page { size: <%= (st && st.receipt_width) || '57mm' %> auto; margin: 3mm 7.5mm; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      width: 57mm;
+      width: <%= (st && st.receipt_width) || '57mm' %>;
       font-family: 'Arial', 'Tahoma', 'Segoe UI', sans-serif;
       font-size: 11px;
       color: #000;
       background: #fff;
     }
     @media screen {
-      body { max-width: 57mm; margin: 20px auto; border: 1px dashed #ccc; padding: 8px; }
+      body { max-width: <%= (st && st.receipt_width) || '57mm' %>; margin: 20px auto; border: 1px dashed #ccc; padding: 8px; }
     }
     @media print {
       body { border: none; padding: 0; margin: 0; }
