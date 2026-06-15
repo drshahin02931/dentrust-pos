@@ -782,7 +782,6 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
       lowStock = lsRows.map(r => ({ id: r.id, name: r.product_name, qty: r.quantity, min: r.min_stock }));
     }
     syncDentrustBatch(items.map(i => ({ pid: i.product_id, delta: -i.quantity, selectedOption: i.selected_option || i.selectedOption || i._checkbox || null }))).catch(() => {});
-    doPushStockToSite().catch(() => {});
     res.status(201).json({ ok: true, sale_id: saleId, low_stock: lowStock });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
