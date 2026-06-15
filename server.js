@@ -115,17 +115,18 @@ async function renderPage(req, res, view, extra = {}) {
 
 // ── Upload ───────────────────────────────────────────────────────────────────
 fs.mkdirSync(UPLOAD_FOLDER, { recursive: true });
+// Images are stored as base64 data-URLs directly in the DB (image_url field).
+// This avoids the Render ephemeral-filesystem problem: files in static/uploads/
+// are wiped on every restart/redeploy, so product images would show 404 errors.
+// Base64 in PostgreSQL survives restarts because the DB itself is persistent.
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => { fs.mkdirSync(UPLOAD_FOLDER, { recursive: true }); cb(null, UPLOAD_FOLDER); },
-    filename: (req, file, cb) => { const ext = file.originalname.split('.').pop(); cb(null, `${uuidv4().replace(/-/g, '')}.${ext.toLowerCase()}`); },
-  }),
+  storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
     const ext = file.originalname.split('.').pop().toLowerCase();
     const ALLOWED_MIME = new Set(['image/png','image/jpeg','image/gif','image/webp']);
     cb(null, ALLOWED_EXT.has(ext) && ALLOWED_MIME.has(file.mimetype));
   },
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 3 * 1024 * 1024 }, // 3 MB — keeps base64 strings manageable
 });
 
 // ── Page Routes ──────────────────────────────────────────────────────────────
@@ -340,8 +341,9 @@ app.get(`${BASE}/api/attendance`, async (req, res) => {
 
 app.post(`${BASE}/api/upload-image`, upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'نوع الملف غير مدعوم أو لم يتم إرسال ملف' });
-  const url = `${BASE}/static/uploads/${req.file.filename}`;
-  res.json({ ok: true, url });
+  // Convert to base64 data-URL so the image lives in the DB, not the filesystem.
+  const dataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+  res.json({ ok: true, url: dataUrl });
 });
 
 // ── API: Products ─────────────────────────────────────────────────────────────
@@ -1755,18 +1757,21 @@ app.post(`${BASE}/api/sync/import-products`, async (req, res) => {
       const { rows: dtProducts } = await client.query('SELECT p.*, c.name as cat_name FROM products p LEFT JOIN categories c ON c.id=p.category_id ORDER BY p.name');
       for (const p of dtProducts) {
         try {
+          const photoUrl = Array.isArray(p.photos) && p.photos.length > 0
+            ? p.photos[0]
+            : (typeof p.photos === 'string' ? p.photos : null);
           const { rows: [existing] } = await posDb.query('SELECT id FROM products WHERE dentrust_id=$1', [p.id]);
           if (!existing) {
             await posDb.query(
-              `INSERT INTO products (product_name, sale_price, purchase_price, quantity, category, expiry_date, description, dentrust_id)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
-              [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.details || '', p.id]
+              `INSERT INTO products (product_name, sale_price, purchase_price, quantity, category, expiry_date, description, dentrust_id, image_url)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
+              [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.details || '', p.id, photoUrl]
             );
             created++;
           } else {
             await posDb.query(
-              `UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, category=$4 WHERE id=$5`,
-              [p.name, p.price || 0, p.stock || 0, p.cat_name || '', existing.id]
+              `UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, category=$4, image_url=COALESCE($6, image_url) WHERE id=$5`,
+              [p.name, p.price || 0, p.stock || 0, p.cat_name || '', existing.id, photoUrl]
             );
             updated++;
           }
@@ -1967,14 +1972,46 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     const deductedProdIds = [];
     for (const item of items) {
       const prod = await findPosProduct(item);
+      const itemQty = item.quantity || 1;
+      const selOpt  = item.selectedOption || item.selected_option || null;
       await posDb.query(
-        'INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_unit_price, snapshot_purchase_price) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-        [saleId, prod?.id || null, item.product_name || item.name || prod?.product_name || '', item.quantity || 1, item.unit_price || 0, item.unit_price || 0, prod?.purchase_price || 0]
+        'INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_unit_price, snapshot_purchase_price, selected_option) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+        [saleId, prod?.id || null, item.product_name || item.name || prod?.product_name || '', itemQty, item.unit_price || 0, item.unit_price || 0, prod?.purchase_price || 0, selOpt]
       );
       if (prod?.id) {
-        await posDb.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [item.quantity || 1, prod.id]);
+        // Deduct overall quantity first (covers non-checkbox products)
+        await posDb.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [itemQty, prod.id]);
+
+        // ── Checkbox-option stock deduction ─────────────────────────────────
+        // When a specific option is selected (e.g. a size/colour sold on the website),
+        // deduct from that option's stock inside checkbox_values JSON and then
+        // recalculate the main quantity as the sum of all remaining option stocks.
+        // This mirrors the same logic used for in-store POS sales.
+        if (selOpt) {
+          try {
+            const { rows: [pv] } = await posDb.query('SELECT checkbox_values FROM products WHERE id=$1', [prod.id]);
+            if (pv?.checkbox_values) {
+              const cbv = typeof pv.checkbox_values === 'string' ? JSON.parse(pv.checkbox_values) : { ...pv.checkbox_values };
+              // selectedOption from website may be "category::key" — try both forms
+              const shortKey = selOpt.includes('::') ? selOpt.split('::').pop() : null;
+              const optKey   = cbv[selOpt] !== undefined ? selOpt
+                             : (shortKey && cbv[shortKey] !== undefined ? shortKey : null);
+              if (optKey && typeof cbv[optKey] === 'object' && cbv[optKey].stock != null) {
+                cbv[optKey].stock = Math.max(0, cbv[optKey].stock - itemQty);
+                // Recalculate main quantity as sum of all remaining checkbox stocks
+                const newQty = Object.values(cbv).reduce(
+                  (s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
+                await posDb.query(
+                  'UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
+                  [newQty, JSON.stringify(cbv), prod.id]
+                );
+              }
+            }
+          } catch (_) {}
+        }
+
         deducted++;
-        deductedProdIds.push({ pid: prod.id, delta: -(item.quantity || 1), selectedOption: item.selectedOption || item.selected_option || null });
+        deductedProdIds.push({ pid: prod.id, delta: -itemQty, selectedOption: selOpt });
       }
     }
     // Sync deducted quantities back to Supabase
@@ -2106,17 +2143,29 @@ async function doProductSync(incremental = true) {
       const { rows: dtProducts } = await client.query(sql);
       for (const p of dtProducts) {
         try {
+          // photos is a Supabase Storage URL array — use first photo as POS image_url.
+          // These URLs are persistent (survive Render restarts), unlike local disk files.
+          const photoUrl = Array.isArray(p.photos) && p.photos.length > 0
+            ? p.photos[0]
+            : (typeof p.photos === 'string' ? p.photos : null);
+
           const { rows: [ex] } = await posDb.query('SELECT id FROM products WHERE dentrust_id=$1', [p.id]);
           if (ex) {
             const cbJsonSync = p.checkbox_values ? JSON.stringify(p.checkbox_values) : null;
             await posDb.query(
-              'UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, checkbox_values=COALESCE($5, checkbox_values) WHERE dentrust_id=$4',
-              [p.name, p.price || 0, p.stock || 0, p.id, cbJsonSync]);
+              `UPDATE products
+                  SET product_name=$1, sale_price=$2, quantity=$3,
+                      checkbox_values=COALESCE($5, checkbox_values),
+                      image_url=COALESCE($6, image_url)
+                WHERE dentrust_id=$4`,
+              [p.name, p.price || 0, p.stock || 0, p.id, cbJsonSync, photoUrl]);
           } else {
             await posDb.query(
-              `INSERT INTO products (product_name, sale_price, purchase_price, quantity, category, expiry_date, dentrust_id)
-               VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
-              [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.id]
+              `INSERT INTO products
+                 (product_name, sale_price, purchase_price, quantity, category, expiry_date, dentrust_id, image_url)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
+              [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0,
+               p.cat_name || '', p.expiry_date || null, p.id, photoUrl]
             );
           }
         } catch (_) {}
