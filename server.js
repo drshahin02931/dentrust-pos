@@ -878,6 +878,15 @@ app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
     await posDb.query('DELETE FROM returns WHERE sale_id=$1', [sid]);
     await posDb.query('DELETE FROM sale_items WHERE sale_id=$1', [sid]);
     await posDb.query('DELETE FROM sales WHERE id=$1', [sid]);
+    // Also delete linked online order from website DB and POS alerts
+    if (sale.dentrust_order_id) {
+      try {
+        const dtClient = await dentrustDb.connect();
+        try { await dtClient.query('DELETE FROM orders WHERE id=$1', [sale.dentrust_order_id]); }
+        finally { dtClient.release(); }
+      } catch (_) {}
+      try { await posDb.query('DELETE FROM website_order_alerts WHERE dentrust_order_id=$1', [String(sale.dentrust_order_id)]); } catch (_) {}
+    }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
@@ -3264,10 +3273,45 @@ app.patch(`${BASE}/api/website-orders/:id/status`, async (req, res) => {
 });
 
 // DELETE order alert
+app.get(`${BASE}/api/website-orders/:id`, async (req, res) => {
+  if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const { rows: [order] } = await posDb.query('SELECT * FROM website_order_alerts WHERE id=$1', [req.params.id]);
+    if (!order) return res.status(404).json({ error: 'الطلب غير موجود' });
+    let items = [];
+    if (order.dentrust_order_id) {
+      try {
+        const dtClient = await dentrustDb.connect();
+        try {
+          const { rows } = await dtClient.query(
+            `SELECT oi.product_name, oi.quantity, oi.unit_price, oi.selected_option, oi.total_price,
+                    p.photos
+             FROM order_items oi
+             LEFT JOIN products p ON p.id = oi.product_id
+             WHERE oi.order_id=$1`, [order.dentrust_order_id]
+          );
+          items = rows;
+        } finally { dtClient.release(); }
+      } catch (_) {}
+    }
+    res.json({ order, items });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
 app.delete(`${BASE}/api/website-orders/:id`, async (req, res) => {
   if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
   try {
+    const { rows: [order] } = await posDb.query('SELECT dentrust_order_id FROM website_order_alerts WHERE id=$1', [req.params.id]);
     await posDb.query('DELETE FROM website_order_alerts WHERE id=$1', [req.params.id]);
+    // Also delete from website DB and linked POS sale
+    if (order?.dentrust_order_id) {
+      try {
+        const dtClient = await dentrustDb.connect();
+        try { await dtClient.query('DELETE FROM orders WHERE id=$1', [order.dentrust_order_id]); }
+        finally { dtClient.release(); }
+      } catch (_) {}
+      try { await posDb.query('UPDATE sales SET dentrust_order_id=NULL WHERE dentrust_order_id=$1', [String(order.dentrust_order_id)]); } catch (_) {}
+    }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
