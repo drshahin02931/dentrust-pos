@@ -1541,9 +1541,20 @@ async function syncDentrustBatch(updates) {
           const { rows: [prod] } = await client.query('SELECT checkbox_values FROM products WHERE id=$1', [row.dentrust_id]);
           if (prod?.checkbox_values) {
             const cbv = typeof prod.checkbox_values === 'string' ? JSON.parse(prod.checkbox_values) : { ...prod.checkbox_values };
-            if (cbv[selectedOption] && typeof cbv[selectedOption] === 'object' && cbv[selectedOption].stock != null) {
-              cbv[selectedOption].stock = Math.max(0, cbv[selectedOption].stock + delta);
-              await client.query('UPDATE products SET checkbox_values=$1 WHERE id=$2', [JSON.stringify(cbv), row.dentrust_id]);
+            // Try both full key "category::key" and short key "key"
+            const shortKey = selectedOption.includes('::') ? selectedOption.split('::').pop() : null;
+            const optKey = cbv[selectedOption] !== undefined ? selectedOption
+                         : (shortKey && cbv[shortKey] !== undefined ? shortKey : null);
+            if (optKey && typeof cbv[optKey] === 'object' && cbv[optKey].stock != null) {
+              cbv[optKey].stock = Math.max(0, cbv[optKey].stock + delta);
+              // Recalculate total stock as sum of all variant stocks (same logic as POS)
+              const newTotalStock = Object.values(cbv).reduce(
+                (s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0
+              );
+              await client.query(
+                'UPDATE products SET stock=$1, is_sold_out=$2, checkbox_values=$3 WHERE id=$4',
+                [newTotalStock, newTotalStock <= 0, JSON.stringify(cbv), row.dentrust_id]
+              );
             }
           }
         } catch(_) {}
