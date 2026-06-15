@@ -722,6 +722,20 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
           }
         } catch(_) {}
       }
+      // Deduct checkbox_values stock if a checkbox option was sold
+      const selCheckbox = item.selected_option || item.selectedOption || item._checkbox;
+      if (selCheckbox) {
+        try {
+          const { rows: [pc] } = await client.query('SELECT checkbox_values FROM products WHERE id=$1', [item.product_id]);
+          if (pc?.checkbox_values) {
+            const cbv = typeof pc.checkbox_values === 'string' ? JSON.parse(pc.checkbox_values) : { ...pc.checkbox_values };
+            if (cbv[selCheckbox] && typeof cbv[selCheckbox] === 'object' && cbv[selCheckbox].stock != null) {
+              cbv[selCheckbox].stock = Math.max(0, cbv[selCheckbox].stock - item.quantity);
+              await client.query('UPDATE products SET checkbox_values=$1 WHERE id=$2', [JSON.stringify(cbv), item.product_id]);
+            }
+          }
+        } catch(_) {}
+      }
       lowStockItemIds.push(item.product_id);
     }
     if (method === 'credit' && customerId) {
