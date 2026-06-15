@@ -746,7 +746,15 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
             const cbv = typeof pc.checkbox_values === 'string' ? JSON.parse(pc.checkbox_values) : { ...pc.checkbox_values };
             if (cbv[selCheckbox] && typeof cbv[selCheckbox] === 'object' && cbv[selCheckbox].stock != null) {
               cbv[selCheckbox].stock = Math.max(0, cbv[selCheckbox].stock - item.quantity);
-              await client.query('UPDATE products SET checkbox_values=$1 WHERE id=$2', [JSON.stringify(cbv), item.product_id]);
+              // Recalculate main quantity as the sum of all remaining checkbox stocks.
+              // Without this, the earlier GREATEST(0, quantity-N) can drive quantity to 0
+              // while individual option stocks still have items, causing a false "نفذ".
+              const totalCbQty = Object.values(cbv).reduce((sum, v) =>
+                sum + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
+              await client.query(
+                'UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
+                [totalCbQty, JSON.stringify(cbv), item.product_id]
+              );
             }
           }
         } catch(_) {}
@@ -847,7 +855,13 @@ app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
             if (cbv[item.selected_option] && typeof cbv[item.selected_option] === 'object' && cbv[item.selected_option].stock != null) {
               cbv[item.selected_option].stock = (cbv[item.selected_option].stock || 0) + netRestore;
               cbv[item.selected_option].disabled = false;
-              await posDb.query('UPDATE products SET checkbox_values=$1 WHERE id=$2', [JSON.stringify(cbv), item.product_id]);
+              // Recalculate main quantity from sum of all checkbox stocks to stay in sync
+              const totalCbQty = Object.values(cbv).reduce((sum, v) =>
+                sum + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
+              await posDb.query(
+                'UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
+                [totalCbQty, JSON.stringify(cbv), item.product_id]
+              );
             }
           }
         } catch (_cbErr) {}
@@ -1228,7 +1242,13 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
             if (cbv[item.selected_option] && typeof cbv[item.selected_option] === 'object' && cbv[item.selected_option].stock != null) {
               cbv[item.selected_option].stock = (cbv[item.selected_option].stock || 0) + quantity;
               cbv[item.selected_option].disabled = false;
-              await client.query('UPDATE products SET checkbox_values=$1 WHERE id=$2', [JSON.stringify(cbv), item.product_id]);
+              // Recalculate main quantity from sum of all checkbox stocks to stay in sync
+              const totalCbQty = Object.values(cbv).reduce((sum, v) =>
+                sum + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
+              await client.query(
+                'UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
+                [totalCbQty, JSON.stringify(cbv), item.product_id]
+              );
             }
           }
         } catch (_cbErr) {}
@@ -1781,6 +1801,15 @@ app.post(`${BASE}/api/sync/import-customers`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+app.get(`${BASE}/api/sync/status`, (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  res.json({
+    lastPull: syncStatus.lastPull,
+    lastPush: syncStatus.lastPush,
+    intervalMinutes: 1,
+  });
+});
+
 async function doFullSync() {
   let synced_products = 0, synced_customers = 0;
   // website DB available via dentrustDb
@@ -2096,11 +2125,30 @@ async function doProductSync(incremental = true) {
   } catch (_) {}
 }
 
-// Product sync cron — runs every 5 min when connected to website DB
-// Pull: Supabase → POS every 1 minute (incremental)
-cron.schedule('* * * * *', () => doProductSync(true).catch(() => {}));
-// Push: POS → Supabase every 3 minutes
-cron.schedule('*/3 * * * *', () => doPushStockToSite().catch(() => {}));
+// ── Sync status tracking ──────────────────────────────────────────────────────
+const syncStatus = {
+  lastPull: null,   // ISO string — when DenTrust → POS pull last ran
+  lastPush: null,   // ISO string — when POS → DenTrust push last ran
+  pullCount: 0,     // how many products were touched in last pull
+  pushCount: 0,     // how many products were pushed in last push
+};
+
+// Wrap doProductSync to record timing
+async function doProductSyncTracked(incremental = true) {
+  await doProductSync(incremental);
+  syncStatus.lastPull = new Date().toISOString();
+}
+
+// Wrap doPushStockToSite to record timing
+async function doPushStockTracked() {
+  await doPushStockToSite();
+  syncStatus.lastPush = new Date().toISOString();
+}
+
+// Pull: DenTrust → POS every 1 minute (incremental)
+cron.schedule('* * * * *', () => doProductSyncTracked(true).catch(() => {}));
+// Push: POS → DenTrust every 1 minute (was 3 min — tightened for real-time feel)
+cron.schedule('* * * * *', () => doPushStockTracked().catch(() => {}));
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
