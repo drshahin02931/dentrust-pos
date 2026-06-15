@@ -255,6 +255,7 @@ const MIGRATIONS = [
   "ALTER TABLE return_items ADD COLUMN IF NOT EXISTS sale_item_id INTEGER",
   "ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS promo_code TEXT",
   "ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS discount_amount NUMERIC",
+  "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS selected_option TEXT",
 ];
 
 const DEFAULT_SETTINGS = {
