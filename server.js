@@ -1868,6 +1868,37 @@ app.post(`${BASE}/api/sync/push-images`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+app.post(`${BASE}/api/sync/pull-images`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    // Get all POS products linked to website that have no valid image_url
+    const { rows: linked } = await posDb.query(
+      `SELECT p.id, p.dentrust_id, p.image_url FROM products p
+       WHERE p.dentrust_id IS NOT NULL
+       AND (p.image_url IS NULL OR p.image_url = '' OR (p.image_url NOT LIKE 'data:%' AND p.image_url NOT LIKE 'http%'))`
+    );
+    const client = await dentrustDb.connect();
+    let updated = 0, skipped = 0;
+    try {
+      for (const p of linked) {
+        try {
+          const { rows: [wp] } = await client.query(
+            'SELECT photos FROM products WHERE id=$1', [p.dentrust_id]
+          );
+          if (!wp) { skipped++; continue; }
+          let photos = [];
+          try { photos = typeof wp.photos === 'string' ? JSON.parse(wp.photos) : (wp.photos || []); } catch(_) {}
+          const firstPhoto = photos.find(u => u && u.startsWith('http'));
+          if (!firstPhoto) { skipped++; continue; }
+          await posDb.query('UPDATE products SET image_url=$1 WHERE id=$2', [firstPhoto, p.id]);
+          updated++;
+        } catch (_) { skipped++; }
+      }
+    } finally { client.release(); }
+    res.json({ ok: true, updated, skipped, total: linked.length });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
 app.post(`${BASE}/api/sync/push-purchase-prices`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   // connected to website DB (single-DB or Supabase mode)
