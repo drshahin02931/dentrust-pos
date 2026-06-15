@@ -13,6 +13,27 @@
     </button>
   </div>
 
+  <!-- Live sync status bar -->
+  <div class="bg-white border rounded-2xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-4 text-sm">
+    <div class="flex items-center gap-2">
+      <span id="syncDot" class="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse inline-block"></span>
+      <span class="font-semibold text-gray-700">مزامنة تلقائية كل دقيقة</span>
+    </div>
+    <div class="flex items-center gap-1.5 text-gray-500">
+      <span>📥 آخر جلب:</span>
+      <span id="lastPullTime" class="font-mono text-gray-700">—</span>
+    </div>
+    <div class="flex items-center gap-1.5 text-gray-500">
+      <span>📤 آخر رفع:</span>
+      <span id="lastPushTime" class="font-mono text-gray-700">—</span>
+    </div>
+    <div class="mr-auto flex items-center gap-2 text-gray-400 text-xs">
+      <span>تحديث الصفحة خلال</span>
+      <span id="refreshCountdown" class="font-mono font-bold text-blue-600">30</span>
+      <span>ثانية</span>
+    </div>
+  </div>
+
   <div id="syncAlert" class="hidden rounded-2xl px-4 py-3 text-sm font-semibold"></div>
 
   <!-- Summary Cards -->
@@ -447,6 +468,39 @@ function showAlert(msg, type) {
   el.classList.remove("hidden");
   setTimeout(() => el.classList.add("hidden"), 5000);
 }
+
+// ── Live sync-status bar ──────────────────────────────────────────────────────
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+async function refreshSyncStatus() {
+  try {
+    const r = await fetch(`${BASE}/api/sync/status`);
+    if (!r.ok) return;
+    const s = await r.json();
+    document.getElementById('lastPullTime').textContent = fmtTime(s.lastPull);
+    document.getElementById('lastPushTime').textContent = fmtTime(s.lastPush);
+  } catch(_) {}
+}
+
+// Auto-refresh page data every 30 seconds + live countdown
+let _refreshSecs = 30;
+refreshSyncStatus();
+setInterval(refreshSyncStatus, 10000); // update timestamps every 10 s
+
+setInterval(() => {
+  _refreshSecs--;
+  const el = document.getElementById('refreshCountdown');
+  if (el) el.textContent = _refreshSecs;
+  if (_refreshSecs <= 0) {
+    _refreshSecs = 30;
+    loadData();
+    refreshSyncStatus();
+  }
+}, 1000);
 
 loadData();
 </script>
