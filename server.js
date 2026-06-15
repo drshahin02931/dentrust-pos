@@ -649,7 +649,7 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
   try {
     await client.query('BEGIN');
     for (const item of items) {
-      const { rows: [prod] } = await client.query('SELECT quantity, product_name, sale_price, variants FROM products WHERE id=$1', [item.product_id]);
+      const { rows: [prod] } = await client.query('SELECT quantity, product_name, sale_price, variants, checkbox_values FROM products WHERE id=$1', [item.product_id]);
       if (item.product_id) {
         if (!prod) {
           await client.query('ROLLBACK');
@@ -677,6 +677,20 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
             }
           } catch (_e) {}
         }
+        // ── Checkbox-option stock validation ─────────────────────────────────
+        const _selCbChk = item.selected_option || item.selectedOption || item._checkbox;
+        if (_selCbChk && prod.checkbox_values) {
+          try {
+            const _cbv2 = typeof prod.checkbox_values === 'string' ? JSON.parse(prod.checkbox_values) : prod.checkbox_values;
+            const _cbOpt = _cbv2?.[_selCbChk];
+            if (_cbOpt && typeof _cbOpt === 'object' && _cbOpt.stock != null && _cbOpt.stock < item.quantity) {
+              await client.query('ROLLBACK');
+              return res.status(400).json({
+                error: `الكمية المطلوبة (${item.quantity}) تتجاوز المخزون المتاح (${_cbOpt.stock}) للخيار "${_selCbChk.split('::').pop()}" من المنتج: ${prod.product_name}`
+              });
+            }
+          } catch (_e2) {}
+        }
       }
       if (prod && !hasPerm(req, 'edit_prices')) {
         const dbPrice = parseFloat(prod.sale_price || 0);
@@ -702,9 +716,10 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
       const { rows: [snap] } = await client.query('SELECT purchase_price FROM products WHERE id=$1', [item.product_id]);
       const snapPp = snap ? parseFloat(snap.purchase_price || 0) : 0;
       await client.query(
-        `INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_purchase_price, snapshot_unit_price)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [saleId, item.product_id, item.product_name, item.quantity, item.unit_price, snapPp, parseFloat(item.unit_price)]
+        `INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_purchase_price, snapshot_unit_price, selected_option)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [saleId, item.product_id, item.product_name, item.quantity, item.unit_price, snapPp, parseFloat(item.unit_price),
+         item.selected_option || item.selectedOption || item._checkbox || null]
       );
       await client.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [item.quantity, item.product_id]);
       // Deduct per-variant qty from variants JSON if a specific size was sold
@@ -814,7 +829,7 @@ app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
     const { rows: [sale] } = await posDb.query('SELECT * FROM sales WHERE id=$1', [sid]);
     if (!sale) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
     const { rows: items } = await posDb.query(
-      `SELECT si.product_id, si.quantity, COALESCE(ri_sum.returned,0) AS returned
+      `SELECT si.product_id, si.quantity, si.selected_option, COALESCE(ri_sum.returned,0) AS returned
        FROM sale_items si
        LEFT JOIN (SELECT ri.sale_item_id, SUM(ri.quantity) AS returned FROM return_items ri
                   JOIN returns r ON r.id=ri.return_id WHERE r.sale_id=$1 GROUP BY ri.sale_item_id) ri_sum
@@ -823,6 +838,20 @@ app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
     for (const item of items) {
       const netRestore = item.quantity - item.returned;
       if (netRestore > 0) await posDb.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [netRestore, item.product_id]);
+      // Restore checkbox option stock if tracked
+      if (netRestore > 0 && item.selected_option) {
+        try {
+          const { rows: [pcb] } = await posDb.query('SELECT checkbox_values FROM products WHERE id=$1', [item.product_id]);
+          if (pcb?.checkbox_values) {
+            const cbv = typeof pcb.checkbox_values === 'string' ? JSON.parse(pcb.checkbox_values) : { ...pcb.checkbox_values };
+            if (cbv[item.selected_option] && typeof cbv[item.selected_option] === 'object' && cbv[item.selected_option].stock != null) {
+              cbv[item.selected_option].stock = (cbv[item.selected_option].stock || 0) + netRestore;
+              cbv[item.selected_option].disabled = false;
+              await posDb.query('UPDATE products SET checkbox_values=$1 WHERE id=$2', [JSON.stringify(cbv), item.product_id]);
+            }
+          }
+        } catch (_cbErr) {}
+      }
     }
     if (sale.payment_method === 'credit' && sale.customer_id) {
       const { rows: [rr] } = await posDb.query("SELECT COALESCE(SUM(total_refund),0) AS t FROM returns WHERE sale_id=$1", [sid]);
@@ -1190,6 +1219,20 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
         [returnId, item.id, item.product_id, item.product_name, quantity, item.unit_price]
       );
       if (item.product_id) await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [quantity, item.product_id]);
+      // Restore checkbox_values stock if the returned item had a checkbox option
+      if (item.product_id && item.selected_option) {
+        try {
+          const { rows: [pcb] } = await client.query('SELECT checkbox_values FROM products WHERE id=$1', [item.product_id]);
+          if (pcb?.checkbox_values) {
+            const cbv = typeof pcb.checkbox_values === 'string' ? JSON.parse(pcb.checkbox_values) : { ...pcb.checkbox_values };
+            if (cbv[item.selected_option] && typeof cbv[item.selected_option] === 'object' && cbv[item.selected_option].stock != null) {
+              cbv[item.selected_option].stock = (cbv[item.selected_option].stock || 0) + quantity;
+              cbv[item.selected_option].disabled = false;
+              await client.query('UPDATE products SET checkbox_values=$1 WHERE id=$2', [JSON.stringify(cbv), item.product_id]);
+            }
+          }
+        } catch (_cbErr) {}
+      }
     }
     if (sale.payment_method === 'credit' && sale.customer_id) {
       await client.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [totalRefund, sale.customer_id]);
