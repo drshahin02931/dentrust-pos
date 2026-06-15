@@ -101,6 +101,10 @@
           class="bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-emerald-700 shadow">
           💰 مزامنة أسعار الشراء
         </button>
+        <button onclick="pushImages()" id="pushImagesBtn"
+          class="bg-pink-600 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-pink-700 shadow">
+          🖼️ رفع صور المنتجات للموقع
+        </button>
       </div>
     </div>
     <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
@@ -453,6 +457,22 @@ async function pushPurchasePrices() {
       data.updated > 0 ? "success" : "info");
   } else {
     showAlert(data.error || "خطأ في المزامنة", "error");
+  }
+}
+
+async function pushImages() {
+  const btn = document.getElementById("pushImagesBtn");
+  btn.disabled = true; btn.textContent = "⏳ جاري رفع الصور...";
+  const res = await fetch(`${BASE}/api/sync/push-images`, {method:"POST"});
+  const data = await res.json();
+  btn.disabled = false; btn.textContent = "🖼️ رفع صور المنتجات للموقع";
+  if (data.ok) {
+    showAlert(
+      `✅ تم رفع ${data.uploaded} صورة على الموقع — تم تخطي ${data.skipped} (موجودة) — فشل ${data.failed} من أصل ${data.total} منتج`,
+      data.failed === 0 ? "success" : "info"
+    );
+  } else {
+    showAlert(data.error || "خطأ في رفع الصور", "error");
   }
 }
 
