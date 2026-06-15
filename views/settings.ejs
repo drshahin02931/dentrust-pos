@@ -90,6 +90,14 @@
           <option value="both">عربي + English (ثنائي)</option>
         </select>
       </div>
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="عرض ورق الفاتورة" data-en="Receipt Paper Width">عرض ورق الفاتورة</label>
+        <select id="receipt_width" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
+          <option value="57mm">57 مم (قياسي)</option>
+          <option value="80mm">80 مم</option>
+          <option value="58mm">58 مم</option>
+        </select>
+      </div>
       <div class="md:col-span-2">
         <label class="text-xs font-semibold text-gray-600 block mb-1" data-ar="نص ذيل الفاتورة (عربي)" data-en="Invoice Footer (Arabic)">نص ذيل الفاتورة (عربي)</label>
         <textarea id="invoice_footer" rows="3" class="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 resize-none"></textarea>
@@ -157,6 +165,7 @@ async function loadSettings() {
     "currency","currency_en","logo_url"];
   fields.forEach(k => { const el = document.getElementById(k); if(el) el.value = s[k]||""; });
   document.getElementById("invoice_lang").value = s.invoice_lang || "ar";
+  document.getElementById("receipt_width").value = s.receipt_width || "57mm";
   document.getElementById("auto_print").checked = s.auto_print === "1";
   updateLogoPreview(s.logo_url || "");
 }
@@ -209,6 +218,7 @@ async function saveSettings() {
   });
   data.logo_url = document.getElementById("logo_url").value;
   data.invoice_lang = document.getElementById("invoice_lang").value;
+  data.receipt_width = document.getElementById("receipt_width").value;
   data.auto_print = document.getElementById("auto_print").checked ? "1" : "0";
   const res = await fetch(`${BASE}/api/settings`, {
     method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(data)
