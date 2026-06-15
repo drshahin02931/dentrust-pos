@@ -431,9 +431,18 @@ function clearImage() {
 async function handleImageSelect(input) {
   const file = input.files[0];
   if (!file) return;
-  // Show local preview immediately
+  // Show local preview immediately — only update the <img> visually, NOT f-image-url.
+  // reader.onload fires async and can race with the fetch response; if we let it call
+  // setImagePreview() it would overwrite f-image-url with the base64 data URL AFTER the
+  // server URL has already been stored, causing the product to save the raw base64 blob.
   const reader = new FileReader();
-  reader.onload = e => setImagePreview(e.target.result);
+  reader.onload = e => {
+    const img = document.getElementById("imagePreviewImg");
+    const placeholder = document.getElementById("imagePlaceholder");
+    img.src = e.target.result;
+    img.classList.remove("hidden");
+    placeholder.classList.add("hidden");
+  };
   reader.readAsDataURL(file);
   // Upload to server
   document.getElementById("uploadProgress").classList.remove("hidden");
@@ -444,7 +453,9 @@ async function handleImageSelect(input) {
     const res = await fetch(`${BASE}/api/upload-image`, { method: "POST", body: formData });
     const data = await res.json();
     if (data.ok) {
-      document.getElementById("f-image-url").value = data.url;
+      // setImagePreview sets BOTH the <img> src AND f-image-url to the server URL.
+      // This is the authoritative final state regardless of when reader.onload fires.
+      setImagePreview(data.url);
     } else {
       alert("فشل رفع الصورة: " + (data.error || "خطأ غير معروف"));
       clearImage();
