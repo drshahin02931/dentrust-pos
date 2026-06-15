@@ -110,6 +110,18 @@
       width: 100%;
       height: 100%;
       box-sizing: border-box;
+      /* Keep flex-column so barcode SVG stretches between the two text rows */
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: center !important;
+      justify-content: center !important;
+    }
+    /* Let the SVG grow to fill available vertical space in the label */
+    .barcode-label .barcode-svg {
+      flex: 1 1 auto;
+      width: 100% !important;
+      height: auto !important;
+      min-height: 0;
     }
     .print-wrapper { display: block; }
   }
@@ -121,9 +133,10 @@ let allProducts = [];
 let selected = new Set();
 
 const SIZES = {
-  small:  { cls: "label-small",  printCls: "print-label-small",  storeFz: "7px",  nameFz: "6px",  priceFz: "7px",  barH: 28 },
-  medium: { cls: "label-medium", printCls: "print-label-medium", storeFz: "9px",  nameFz: "7px",  priceFz: "8px",  barH: 40 },
-  large:  { cls: "label-large",  printCls: "print-label-large",  storeFz: "12px", nameFz: "9px",  priceFz: "11px", barH: 65 },
+  //                                                             ── screen ──────────  ── print (larger so SVG fills label) ──
+  small:  { cls: "label-small",  printCls: "print-label-small",  storeFz: "7px",  nameFz: "6px",  priceFz: "7px",  barH: 28, printBarH: 42, printBarW: 1.5, printFsize: 11 },
+  medium: { cls: "label-medium", printCls: "print-label-medium", storeFz: "9px",  nameFz: "7px",  priceFz: "8px",  barH: 40, printBarH: 58, printBarW: 1.9, printFsize: 12 },
+  large:  { cls: "label-large",  printCls: "print-label-large",  storeFz: "12px", nameFz: "9px",  priceFz: "11px", barH: 65, printBarH: 90, printBarW: 2.8, printFsize: 14 },
 };
 
 async function load() {
@@ -178,9 +191,16 @@ function makeLabelHtml(p, size, isPreview) {
   const s = SIZES[size];
   const barcode = p.barcode || String(p.id).padStart(5, "0");
   const svgId = `bc-${p.id}-${isPreview ? 'prev' : 'print'}-${Math.random().toString(36).slice(2)}`;
+  // Print uses larger bar dimensions so the SVG fills the physical label.
+  // After JsBarcode renders, the SVG is made responsive (width:100%) so it
+  // scales to the container without distortion (JsBarcode sets a viewBox).
+  const barW  = isPreview ? 1    : (s.printBarW  || 1.5);
+  const barH  = isPreview ? s.barH : (s.printBarH || Math.round(s.barH * 1.5));
+  const fsize = isPreview ? 8    : (s.printFsize || 11);
   return `
-    <div class="barcode-label ${isPreview ? s.cls : s.printCls}" style="display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;background:white;"
-      data-barcode="${barcode}" data-bar-width="${isPreview?1:1.2}" data-bar-height="${s.barH}" data-bar-fsize="${isPreview?8:9}">
+    <div class="barcode-label ${isPreview ? s.cls : s.printCls}"
+      style="display:flex;flex-direction:column;align-items:center;justify-content:center;box-sizing:border-box;background:white;"
+      data-barcode="${barcode}" data-bar-width="${barW}" data-bar-height="${barH}" data-bar-fsize="${fsize}">
       <div class="store-name" style="font-size:${s.storeFz};font-weight:900;color:#1d4ed8;letter-spacing:2px;">DENTRUST</div>
       <svg id="${svgId}" class="barcode-svg"></svg>
       <div class="prod-name" style="font-size:${s.nameFz};color:#374151;text-align:center;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${p.product_name}</div>
@@ -200,8 +220,16 @@ function renderBarcodes(container) {
       JsBarcode(svg, bc, {
         format: "CODE128", width: w, height: h,
         displayValue: true, fontSize: fsize,
-        margin: 1, background: "#ffffff", lineColor: "#000000"
+        margin: 2, background: "#ffffff", lineColor: "#000000"
       });
+      // JsBarcode renders the SVG with fixed pixel width/height attributes.
+      // On print those fixed pixels don't scale up to fill the physical label.
+      // Solution: remove the explicit width attribute (keep viewBox which JsBarcode
+      // always sets) then let CSS width:100% scale the barcode to fill its container.
+      svg.removeAttribute('width');
+      svg.style.width   = '100%';
+      svg.style.height  = 'auto';
+      svg.style.display = 'block';
     } catch(e) {
       svg.style.display = "none";
     }
