@@ -336,8 +336,9 @@ function renderTable(products) {
     const isOut = p.quantity <= 0;
     const qtyStyle = isOut ? "text-red-600 font-black" : isLow ? "text-orange-500 font-bold" : "text-gray-700";
     const rowBg = isOut ? "bg-red-50" : isLow ? "bg-orange-50" : "";
-    const imgCell = p.image_url
-      ? `<img src="${p.image_url}" alt="" class="w-10 h-10 rounded-lg object-cover border"/>`
+    const _validImg = p.image_url && (p.image_url.startsWith('data:') || p.image_url.startsWith('http'));
+    const imgCell = _validImg
+      ? `<img src="${p.image_url}" alt="" class="w-10 h-10 rounded-lg object-cover border" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-lg',textContent:'📦'}))"/>`
       : `<div class="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-lg">📦</div>`;
     const minStockCell = minStock > 0
       ? `<span class="text-xs font-semibold ${isLow ? 'text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full' : 'text-gray-500'}">${minStock}</span>`
@@ -514,7 +515,8 @@ function editProduct(id) {
   document.getElementById("f-min-stock").value = p.min_stock || 0;
   document.getElementById("f-description").value = p.description || "";
   document.getElementById("modalError").classList.add("hidden");
-  setImagePreview(p.image_url || "");
+  const _imgVal = p.image_url && (p.image_url.startsWith('data:') || p.image_url.startsWith('http')) ? p.image_url : "";
+  setImagePreview(_imgVal);
   loadVariants(p);
   setSection(p.section || 'dental');
   cbLoad(p.checkbox_values);
