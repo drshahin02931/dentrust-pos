@@ -18,6 +18,7 @@ const BASE = (process.env.BASE_PATH || '/pos-system').replace(/\/$/, '');
 const PORT = parseInt(process.env.PORT || '5000', 10);
 const DATABASE_URL = process.env.DATABASE_URL;
 const SUPABASE_DATABASE_URL = process.env.SUPABASE_DATABASE_URL;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 // HAS_WEBSITE_DB: true when connected to website DB (Supabase or single-DB mode)
 const HAS_WEBSITE_DB = !!(SUPABASE_DATABASE_URL || isSingleDb);
 const UPLOAD_FOLDER = path.join(__dirname, 'static', 'uploads');
@@ -1520,6 +1521,33 @@ app.get(`${BASE}/api/export/csv`, async (req, res) => {
   } catch (err) { res.status(500).send('خطأ'); }
 });
 
+// ── Supabase Storage Image Upload ─────────────────────────────────────────────
+// Uploads a base64 data-URL to Supabase Storage and returns the public URL.
+// Requires SUPABASE_SERVICE_KEY env var (Supabase → Settings → API → service_role).
+async function uploadBase64ToSupabase(dataUrl) {
+  if (!SUPABASE_SERVICE_KEY || !dataUrl || !dataUrl.startsWith('data:')) return null;
+  try {
+    const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!matches) return null;
+    const [, mimeType, base64Data] = matches;
+    const buffer = Buffer.from(base64Data, 'base64');
+    const ext = mimeType.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+    const filename = `uploads/${uuidv4()}.${ext}`;
+    const uploadUrl = `${SUPABASE_BASE}/storage/v1/object/products/${filename}`;
+    const resp = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+        'Content-Type': mimeType,
+        'x-upsert': 'true',
+      },
+      body: buffer,
+    });
+    if (!resp.ok) return null;
+    return `${SUPABASE_BASE}/storage/v1/object/public/products/${filename}`;
+  } catch (_) { return null; }
+}
+
 // ── DenTrust Sync Helpers ─────────────────────────────────────────────────────
 
 async function syncDentrustBatch(updates) {
@@ -1641,10 +1669,20 @@ async function syncNewProductToDentrust(posId, d) {
     const details = (d.description || '').trim() || d.product_name;
     const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
     const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
+    // Upload image to Supabase Storage so it appears on the website
+    let photosArr = [];
+    if (d.image_url) {
+      if (d.image_url.startsWith('data:')) {
+        const imgUrl = await uploadBase64ToSupabase(d.image_url);
+        if (imgUrl) photosArr = [imgUrl];
+      } else if (d.image_url.startsWith('http')) {
+        photosArr = [d.image_url];
+      }
+    }
     const { rows: [ins] } = await client.query(
       'INSERT INTO products (name, price, purchase_price, stock, is_offer, photos, category_id, expiry_date, details, section, variants, checkbox_values) VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11) RETURNING id',
       [d.product_name, d.sale_price || 0, d.purchase_price ? String(d.purchase_price) : null,
-       d.quantity || 0, [], catRow.id, d.expiry_date || null, details,
+       d.quantity || 0, photosArr, catRow.id, d.expiry_date || null, details,
        d.section || 'dental', variantsJson, cbJson]
     );
     await posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2', [ins.id, posId]);
@@ -1658,11 +1696,26 @@ async function syncUpdateProductToDentrust(pid, d) {
   try {
     const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
     const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
-    await client.query(
-      'UPDATE products SET name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, variants=$6, section=$7, checkbox_values=$8 WHERE id=$9',
-      [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
-       d.purchase_price ? String(d.purchase_price) : null, variantsJson,
-       d.section || 'dental', cbJson, row.dentrust_id]);
+    // Upload new image to Supabase Storage if one was provided
+    let newPhotoUrl = null;
+    if (d.image_url && d.image_url.startsWith('data:')) {
+      newPhotoUrl = await uploadBase64ToSupabase(d.image_url);
+    } else if (d.image_url && d.image_url.startsWith('http')) {
+      newPhotoUrl = d.image_url;
+    }
+    if (newPhotoUrl) {
+      await client.query(
+        'UPDATE products SET name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, variants=$6, section=$7, checkbox_values=$8, photos=$9 WHERE id=$10',
+        [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
+         d.purchase_price ? String(d.purchase_price) : null, variantsJson,
+         d.section || 'dental', cbJson, JSON.stringify([newPhotoUrl]), row.dentrust_id]);
+    } else {
+      await client.query(
+        'UPDATE products SET name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, variants=$6, section=$7, checkbox_values=$8 WHERE id=$9',
+        [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
+         d.purchase_price ? String(d.purchase_price) : null, variantsJson,
+         d.section || 'dental', cbJson, row.dentrust_id]);
+    }
   } finally { client.release(); }
 }
 
@@ -1771,6 +1824,39 @@ app.post(`${BASE}/api/sync/push-stock`, async (req, res) => {
       }
     } finally { client.release(); }
     res.json({ ok: true, updated });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/sync/push-images`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!SUPABASE_SERVICE_KEY) return res.status(400).json({ error: 'SUPABASE_SERVICE_KEY غير مضبوط في الـ Environment Variables' });
+  try {
+    const { rows: linked } = await posDb.query(
+      `SELECT id, dentrust_id, image_url FROM products WHERE dentrust_id IS NOT NULL AND image_url IS NOT NULL AND image_url != ''`
+    );
+    const client = await dentrustDb.connect();
+    let uploaded = 0, skipped = 0, failed = 0;
+    try {
+      for (const p of linked) {
+        try {
+          // Skip if already a Supabase Storage URL
+          if (p.image_url && p.image_url.startsWith('http')) {
+            await client.query('UPDATE products SET photos=$1 WHERE id=$2 AND (photos IS NULL OR photos=\'[]\' OR photos=\'\')',
+              [JSON.stringify([p.image_url]), p.dentrust_id]);
+            skipped++;
+            continue;
+          }
+          if (!p.image_url.startsWith('data:')) { skipped++; continue; }
+          const imgUrl = await uploadBase64ToSupabase(p.image_url);
+          if (imgUrl) {
+            await client.query('UPDATE products SET photos=$1 WHERE id=$2', [JSON.stringify([imgUrl]), p.dentrust_id]);
+            uploaded++;
+          } else { failed++; }
+        } catch (_) { failed++; }
+      }
+    } finally { client.release(); }
+    cacheDel('site_products');
+    res.json({ ok: true, uploaded, skipped, failed, total: linked.length });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
