@@ -164,7 +164,7 @@ app.get(`${BASE}/expiry`, (req, res) => {
   if (!hasPerm(req, 'expiry')) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'expiry');
 });
-app.get(`${BASE}/notifications`, (req, res) => renderPage(req, res, 'notifications'));
+app.get(`${BASE}/notifications`, (req, res) => { if (!req.session?.user_id) return res.redirect(`${BASE}/login`); return renderPage(req, res, 'notifications'); });
 app.get(`${BASE}/admin/users`, (req, res) => {
   if (!isMgr(req)) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'admin_users');
@@ -181,7 +181,7 @@ app.get(`${BASE}/suppliers`, (req, res) => {
   if (!req.session?.user_id) return res.redirect(`${BASE}/login`);
   return renderPage(req, res, 'suppliers');
 });
-app.get(`${BASE}/cash-register`, (req, res) => renderPage(req, res, 'cash_register'));
+app.get(`${BASE}/cash-register`, (req, res) => { if (!req.session?.user_id) return res.redirect(`${BASE}/login`); return renderPage(req, res, 'cash_register'); });
 
 app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
   try {
@@ -1349,6 +1349,27 @@ app.delete(`${BASE}/api/returns/:rid`, async (req, res) => {
     const { rows: returnItems } = await posDb.query('SELECT * FROM return_items WHERE return_id=$1', [rid]);
     for (const ri of returnItems) {
       if (ri.product_id) await posDb.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [ri.quantity, ri.product_id]);
+      // Also revert checkbox option stock if the original sale item had a selected_option
+      if (ri.product_id && ri.sale_item_id) {
+        try {
+          const { rows: [si] } = await posDb.query('SELECT selected_option FROM sale_items WHERE id=$1', [ri.sale_item_id]);
+          if (si?.selected_option) {
+            const { rows: [pcb] } = await posDb.query('SELECT checkbox_values FROM products WHERE id=$1', [ri.product_id]);
+            if (pcb?.checkbox_values) {
+              const cbv = typeof pcb.checkbox_values === 'string' ? JSON.parse(pcb.checkbox_values) : { ...pcb.checkbox_values };
+              if (cbv[si.selected_option] && typeof cbv[si.selected_option] === 'object' && cbv[si.selected_option].stock != null) {
+                cbv[si.selected_option].stock = Math.max(0, (cbv[si.selected_option].stock || 0) - ri.quantity);
+                if (cbv[si.selected_option].stock === 0) cbv[si.selected_option].disabled = true;
+                // Keep overall quantity in sync with sum of checkbox stocks
+                const totalCbQty = Object.values(cbv).reduce((sum, v) =>
+                  sum + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
+                await posDb.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
+                  [totalCbQty, JSON.stringify(cbv), ri.product_id]);
+              }
+            }
+          }
+        } catch (_cbUndoErr) {}
+      }
     }
     if (sale?.payment_method === 'credit' && sale.customer_id) {
       await posDb.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [ret.total_refund, sale.customer_id]);
@@ -2080,16 +2101,23 @@ async function doFullSync() {
     const { rows: dtProducts } = await client.query('SELECT p.*, c.name as cat_name FROM products p LEFT JOIN categories c ON c.id=p.category_id ORDER BY p.name');
     for (const p of dtProducts) {
       try {
+        const photoUrl = Array.isArray(p.photos) && p.photos.length > 0 ? p.photos[0] : null;
+        const cbJson = p.checkbox_values
+          ? (typeof p.checkbox_values === 'string' ? p.checkbox_values : JSON.stringify(p.checkbox_values))
+          : null;
         const { rows: [ex] } = await posDb.query('SELECT id FROM products WHERE dentrust_id=$1', [p.id]);
         if (!ex) {
           await posDb.query(
-            `INSERT INTO products (product_name, sale_price, purchase_price, quantity, category, expiry_date, description, dentrust_id)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
-            [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.details || '', p.id]
+            `INSERT INTO products (product_name, sale_price, purchase_price, quantity, category, expiry_date, description, dentrust_id, image_url, checkbox_values)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`,
+            [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.details || '', p.id, photoUrl, cbJson]
           );
         } else {
-          await posDb.query('UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, category=$4 WHERE id=$5',
-            [p.name, p.price || 0, p.stock || 0, p.cat_name || '', ex.id]);
+          await posDb.query(
+            `UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, category=$4,
+             image_url=COALESCE($5, image_url), checkbox_values=COALESCE($6, checkbox_values),
+             purchase_price=$7, expiry_date=COALESCE($8, expiry_date) WHERE id=$9`,
+            [p.name, p.price || 0, p.stock || 0, p.cat_name || '', photoUrl, cbJson, p.purchase_price || 0, p.expiry_date || null, ex.id]);
         }
         synced_products++;
       } catch (_) {}
