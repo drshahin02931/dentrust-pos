@@ -174,7 +174,12 @@ function payMethodEn(m) {
     <tbody>
       <% for (const item of items) { %>
       <tr>
-        <td class="right" style="word-break:break-word;line-height:1.4;"><%- item.product_name %></td>
+        <td class="right" style="word-break:break-word;line-height:1.4;">
+          <%- item.product_name %>
+          <% if (item.selected_option) { %>
+          <div style="font-size:9px;font-weight:600;color:#444;margin-top:1px;">◈ <%- item.selected_option %></div>
+          <% } %>
+        </td>
         <td class="center"><%= item.quantity %></td>
         <td class="left"><%= fmt(item.unit_price) %></td>
         <td class="left bold"><%= fmt(parseFloat(item.unit_price) * parseInt(item.quantity)) %></td>
@@ -197,7 +202,12 @@ function payMethodEn(m) {
     <tbody>
       <% for (const item of items) { %>
       <tr>
-        <td class="left" style="word-break:break-word;line-height:1.4;"><%- item.product_name %></td>
+        <td class="left" style="word-break:break-word;line-height:1.4;">
+          <%- item.product_name %>
+          <% if (item.selected_option) { %>
+          <div style="font-size:9px;font-weight:600;color:#444;margin-top:1px;">◈ <%- item.selected_option %></div>
+          <% } %>
+        </td>
         <td class="center"><%= item.quantity %></td>
         <td class="left"><%= fmt(item.unit_price) %></td>
         <td class="left bold"><%= fmt(parseFloat(item.unit_price) * parseInt(item.quantity)) %></td>
@@ -214,6 +224,14 @@ function payMethodEn(m) {
     <% } %>
     <% if (showEn) { %>
     <div class="sub-row bold" style="direction:ltr;"><span>Discount</span><span>- <%= fmt(sale.discount_amount) %> <%= currencyEnLabel %></span></div>
+    <% } %>
+    <% } %>
+    <% if (sale.delivery_amount && parseFloat(sale.delivery_amount) > 0) { %>
+    <% if (showAr) { %>
+    <div class="sub-row" style="font-weight:700;"><span>مصاريف التوصيل</span><span>+ <%= fmt(sale.delivery_amount) %> <%= currencyLabel %></span></div>
+    <% } %>
+    <% if (showEn) { %>
+    <div class="sub-row bold" style="direction:ltr;"><span>Delivery</span><span>+ <%= fmt(sale.delivery_amount) %> <%= currencyEnLabel %></span></div>
     <% } %>
     <% } %>
     <% if (showAr) { %>
