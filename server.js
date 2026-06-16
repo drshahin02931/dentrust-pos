@@ -2407,7 +2407,9 @@ async function doProductSync(incremental = true) {
 
           const { rows: [ex] } = await posDb.query('SELECT id FROM products WHERE dentrust_id=$1', [p.id]);
           if (ex) {
-            const cbJsonSync = p.checkbox_values ? JSON.stringify(p.checkbox_values) : null;
+            const cbJsonSync = p.checkbox_values
+              ? (typeof p.checkbox_values === 'string' ? p.checkbox_values : JSON.stringify(p.checkbox_values))
+              : null;
             await posDb.query(
               `UPDATE products
                   SET product_name=$1, sale_price=$2, quantity=$3,
