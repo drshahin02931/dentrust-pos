@@ -74,7 +74,6 @@
     <table class="w-full text-sm">
       <thead class="bg-gray-50 border-b">
         <tr class="text-right text-gray-600 font-semibold">
-          <th class="px-4 py-3">الصورة</th>
           <th class="px-4 py-3">المنتج</th>
           <th class="px-4 py-3">الفئة</th>
           <th class="px-4 py-3">الباركود</th>
@@ -336,14 +335,10 @@ function renderTable(products) {
     const isOut = p.quantity <= 0;
     const qtyStyle = isOut ? "text-red-600 font-black" : isLow ? "text-orange-500 font-bold" : "text-gray-700";
     const rowBg = isOut ? "bg-red-50" : isLow ? "bg-orange-50" : "";
-    const imgCell = p.has_image
-      ? `<img src="${BASE}/api/products/${p.id}/image" alt="" class="w-10 h-10 rounded-lg object-cover border" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-lg',textContent:'📦'}))"/>`
-      : `<div class="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center text-lg">📦</div>`;
     const minStockCell = minStock > 0
       ? `<span class="text-xs font-semibold ${isLow ? 'text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full' : 'text-gray-500'}">${minStock}</span>`
       : `<span class="text-gray-300">—</span>`;
     return `<tr class="hover:bg-gray-50 ${rowBg}">
-      <td class="px-4 py-3">${imgCell}</td>
       <td class="px-4 py-3 font-medium text-gray-800">${p.product_name}${p.dentrust_id ? ' <span class="text-xs text-blue-400" title="مرتبط بـ DenTrust">🔗</span>' : ''}${isLow && !isOut ? ' <span class="text-xs text-orange-500">⚠️</span>' : ''}${isOut ? ' <span class="text-xs text-red-500">🚫</span>' : ''}</td>
       <td class="px-4 py-3"><span class="text-xs ${p.category ? 'bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium' : 'text-gray-300'}">${p.category || '—'}</span></td>
       <td class="px-4 py-3 font-mono text-gray-500 text-xs">${p.barcode || '—'}</td>
