@@ -2213,10 +2213,12 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     const items = d.items || [];
     let total = parseFloat(d.total_amount || d.total || 0);
     if (!total && items.length) total = items.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
+    const onlineDiscount = d.discount_amount ? parseFloat(d.discount_amount) : 0;
+    const onlineDelivery = d.delivery_amount ? parseFloat(d.delivery_amount) : (d.shipping_fee ? parseFloat(d.shipping_fee) : 0);
     const { rows: [sale] } = await posDb.query(
-      `INSERT INTO sales (total_amount, payment_method, customer_id, source, dentrust_order_id, customer_name)
-       VALUES ($1,'online',$2,'online',$3,$4) RETURNING id`,
-      [total, customerId, d.dentrust_order_id || null, d.customer_name || '']
+      `INSERT INTO sales (total_amount, payment_method, customer_id, source, dentrust_order_id, customer_name, discount_amount, delivery_amount)
+       VALUES ($1,'online',$2,'online',$3,$4,$5,$6) RETURNING id`,
+      [total, customerId, d.dentrust_order_id || null, d.customer_name || '', onlineDiscount, onlineDelivery]
     );
     const saleId = sale.id;
     let deducted = 0;
@@ -2816,6 +2818,7 @@ const PT_INIT_SQL = `
   ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC DEFAULT 0;
   ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS promo_code TEXT;
   ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC DEFAULT 0;
+  ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0;
   CREATE TABLE IF NOT EXISTS pt_history (
     id SERIAL PRIMARY KEY,
     our_product_id INTEGER,
