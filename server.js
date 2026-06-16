@@ -340,9 +340,30 @@ app.get(`${BASE}/api/attendance`, async (req, res) => {
 
 // ── API: Upload Image ─────────────────────────────────────────────────────────
 
-app.post(`${BASE}/api/upload-image`, upload.single('file'), (req, res) => {
+app.post(`${BASE}/api/upload-image`, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'نوع الملف غير مدعوم أو لم يتم إرسال ملف' });
-  // Convert to base64 data-URL so the image lives in the DB, not the filesystem.
+  // Upload directly to Supabase Storage if key is available — only the URL is stored in DB
+  if (SUPABASE_SERVICE_KEY) {
+    try {
+      const ext = req.file.mimetype.split('/')[1]?.replace('jpeg','jpg') || 'jpg';
+      const filename = `uploads/${uuidv4()}.${ext}`;
+      const uploadUrl = `${SUPABASE_BASE}/storage/v1/object/products/${filename}`;
+      const resp = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+          'Content-Type': req.file.mimetype,
+          'x-upsert': 'true',
+        },
+        body: req.file.buffer,
+      });
+      if (resp.ok) {
+        const publicUrl = `${SUPABASE_BASE}/storage/v1/object/public/products/${filename}`;
+        return res.json({ ok: true, url: publicUrl });
+      }
+    } catch (_) {}
+  }
+  // Fallback: base64 data-URL (no Supabase key configured)
   const dataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
   res.json({ ok: true, url: dataUrl });
 });
@@ -399,10 +420,11 @@ app.get(`${BASE}/api/products/financial-summary`, async (req, res) => {
 });
 
 app.get(`${BASE}/api/products/search`, async (req, res) => {
+  // Note: uses PRODUCT_LIST_COLS defined above (no base64)
   try {
     const q = (req.query.q || '').trim();
     const cat = req.query.category;
-    let sql = 'SELECT * FROM products WHERE 1=1';
+    let sql = `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE 1=1`;
     const params = [];
     if (q) { params.push(q, `%${q}%`); sql += ` AND (barcode=$${params.length-1} OR product_name ILIKE $${params.length})`; }
     if (cat) { params.push(cat); sql += ` AND category=$${params.length}`; }
@@ -412,20 +434,42 @@ app.get(`${BASE}/api/products/search`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+// Columns for list endpoints — excludes heavy base64 image_url, adds has_image flag
+const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, sale_price,
+  expiry_date, category, min_stock, description, variants, section, checkbox_values,
+  dentrust_id, (image_url IS NOT NULL AND image_url != '') AS has_image,
+  CASE WHEN image_url LIKE 'http%' THEN image_url ELSE NULL END AS image_url`;
+
 app.get(`${BASE}/api/products`, async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
     let rows;
     if (q) {
       ({ rows } = await posDb.query(
-        'SELECT * FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name',
+        `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`,
         [q, `%${q}%`]
       ));
     } else {
-      ({ rows } = await posDb.query('SELECT * FROM products ORDER BY product_name'));
+      ({ rows } = await posDb.query(`SELECT ${PRODUCT_LIST_COLS} FROM products ORDER BY product_name`));
     }
     res.json(rows);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// Serves just the image for a product (base64 → raw image response, cached)
+app.get(`${BASE}/api/products/:pid/image`, async (req, res) => {
+  try {
+    const { rows: [p] } = await posDb.query('SELECT image_url FROM products WHERE id=$1', [req.params.pid]);
+    if (!p?.image_url) return res.status(404).end();
+    if (p.image_url.startsWith('http')) return res.redirect(p.image_url);
+    // Parse base64 data URL: data:<mime>;base64,<data>
+    const m = p.image_url.match(/^data:([^;]+);base64,(.+)$/);
+    if (!m) return res.status(404).end();
+    const buf = Buffer.from(m[2], 'base64');
+    res.set('Content-Type', m[1]);
+    res.set('Cache-Control', 'public, max-age=86400'); // cache 24h
+    res.send(buf);
+  } catch (err) { res.status(500).end(); }
 });
 
 app.post(`${BASE}/api/products`, async (req, res) => {
@@ -468,15 +512,23 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
   try {
     const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
     const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
+    // Only update image_url if a new one was explicitly sent (empty string = no change)
+    const imageUpdate = d.image_url
+      ? `, image_url=$14`
+      : '';
+    const params = [
+      d.barcode || null, d.product_name, d.quantity || 0,
+      d.purchase_price || 0, d.sale_price || 0,
+      d.expiry_date || null, d.category || null,
+      parseInt(d.min_stock || 0, 10), d.description || null,
+      variantsJson, d.section || 'dental', cbJson, pid,
+    ];
+    if (d.image_url) params.splice(12, 0, d.image_url); // insert before pid
     await posDb.query(
       `UPDATE products SET barcode=$1, product_name=$2, quantity=$3, purchase_price=$4, sale_price=$5,
-       expiry_date=$6, image_url=$7, category=$8, min_stock=$9, description=$10, variants=$11,
-       section=$12, checkbox_values=$13 WHERE id=$14`,
-      [d.barcode || null, d.product_name, d.quantity || 0,
-       d.purchase_price || 0, d.sale_price || 0,
-       d.expiry_date || null, d.image_url || null,
-       d.category || null, parseInt(d.min_stock || 0, 10),
-       d.description || null, variantsJson, d.section || 'dental', cbJson, pid]
+       expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
+       section=$11, checkbox_values=$12${imageUpdate} WHERE id=$13`,
+      params
     );
     try {
       await syncUpdateProductToDentrust(pid, d);
