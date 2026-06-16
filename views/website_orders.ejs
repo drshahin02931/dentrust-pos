@@ -128,18 +128,50 @@
 <!-- ── Order Detail Modal ── -->
 <div id="detailModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeDetail()">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
-    <!-- Header -->
-    <div class="flex items-center justify-between px-5 py-4 border-b">
-      <h2 class="font-black text-gray-800 text-lg">📋 تفاصيل الطلب</h2>
-      <button onclick="closeDetail()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">✕</button>
+    <!-- Header: Order #N + date -->
+    <div class="flex items-start justify-between px-5 pt-5 pb-4 border-b">
+      <div>
+        <h2 id="detailOrderNum" class="font-black text-gray-900 text-xl leading-tight">Order</h2>
+        <p  id="detailOrderDate" class="text-sm text-gray-400 mt-0.5"></p>
+      </div>
+      <button onclick="closeDetail()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none mt-0.5">✕</button>
     </div>
+    <!-- Scrollable body -->
     <div id="detailBody" class="overflow-y-auto flex-1 p-5 space-y-4">
       <div class="flex items-center justify-center py-8 text-gray-400">جارٍ التحميل...</div>
     </div>
-    <div class="px-5 py-3 border-t flex gap-2">
-      <button id="detailStatusBtn" onclick="openStatusFromDetail()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl text-sm">✏️ تحديث الحالة</button>
-      <button id="detailDeleteBtn" onclick="deleteFromDetail()" class="bg-red-50 hover:bg-red-100 text-red-600 font-bold py-2.5 px-4 rounded-xl text-sm border border-red-200">🗑 حذف</button>
-      <button onclick="closeDetail()" class="px-5 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-2.5 rounded-xl text-sm">إغلاق</button>
+    <!-- Footer row 1: status + delete -->
+    <div class="px-5 pt-3 pb-2 border-t flex items-center gap-2">
+      <div class="flex items-center gap-2 flex-1">
+        <span class="text-sm font-semibold text-gray-500 whitespace-nowrap">Status</span>
+        <select id="detailStatusSelect" onchange="saveDetailStatus()"
+          class="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-300 bg-yellow-50 text-yellow-800">
+          <option value="pending">⏳ Pending</option>
+          <option value="confirmed">✅ Confirmed</option>
+          <option value="shipped">🚚 Shipped</option>
+          <option value="delivered">📦 Delivered</option>
+          <option value="cancelled">❌ Cancelled</option>
+        </select>
+      </div>
+      <button id="detailDeleteBtn" onclick="deleteFromDetail()"
+        class="flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-600 font-bold py-2 px-4 rounded-xl text-sm border border-red-200 whitespace-nowrap">
+        🗑 Delete
+      </button>
+    </div>
+    <!-- Footer row 2: print + whatsapp -->
+    <div class="px-5 pb-4 pt-1 flex gap-2">
+      <button onclick="printOrderDetail()"
+        class="flex-1 flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 rounded-xl text-sm border border-gray-200">
+        🖨️ طباعة الفاتورة
+      </button>
+      <button id="detailWaBtn" onclick="openDetailWhatsApp()"
+        class="flex-1 flex items-center justify-center gap-2 bg-[#25d366] hover:bg-[#1ebe5a] text-white font-bold py-2.5 rounded-xl text-sm shadow-sm">
+        <svg viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 flex-shrink-0">
+          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+          <path d="M12 0C5.373 0 0 5.373 0 12c0 2.126.553 4.122 1.516 5.853L0 24l6.335-1.493C8.053 23.456 9.988 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818c-1.881 0-3.638-.507-5.148-1.389l-.369-.219-3.762.887.945-3.653-.242-.375A9.796 9.796 0 012.182 12C2.182 6.578 6.578 2.182 12 2.182S21.818 6.578 21.818 12 17.422 21.818 12 21.818z"/>
+        </svg>
+        واتساب للعميل
+      </button>
     </div>
   </div>
 </div>
@@ -300,81 +332,216 @@ function debounceSearch() {
 
 // ── Detail Modal ──
 let _detailOrder = null;
+let _detailWaLink = null;
+
+// Status select background colors
+const STATUS_SELECT_CLASSES = {
+  pending:   'bg-yellow-50 text-yellow-800',
+  confirmed: 'bg-blue-50 text-blue-800',
+  shipped:   'bg-indigo-50 text-indigo-800',
+  delivered: 'bg-green-50 text-green-800',
+  cancelled: 'bg-red-50 text-red-800',
+};
+
+function _updateStatusSelectStyle(val) {
+  const sel = document.getElementById('detailStatusSelect');
+  if (!sel) return;
+  sel.className = sel.className.replace(/bg-\S+ text-\S+/g, '');
+  const cls = STATUS_SELECT_CLASSES[val] || STATUS_SELECT_CLASSES.pending;
+  cls.split(' ').forEach(c => sel.classList.add(c));
+}
 
 async function openDetail(id) {
   _detailOrder = null;
-  document.getElementById('detailBody').innerHTML = `<div class="flex items-center justify-center py-8 text-gray-400">جارٍ التحميل...</div>`;
+  _detailWaLink = null;
+  document.getElementById('detailOrderNum').textContent  = 'Order';
+  document.getElementById('detailOrderDate').textContent = '';
+  document.getElementById('detailBody').innerHTML =
+    `<div class="flex items-center justify-center py-8 text-gray-400">جارٍ التحميل...</div>`;
   document.getElementById('detailModal').classList.remove('hidden');
   try {
-    const res = await fetch(`${BASE}/api/website-orders/${id}`);
+    const res  = await fetch(`${BASE}/api/website-orders/${id}`);
     const { order, items } = await res.json();
     _detailOrder = order;
-    const statusLabels = { pending:'⏳ انتظار', confirmed:'✅ مؤكد', shipped:'🚚 جارٍ الشحن', delivered:'📦 تم التوصيل', cancelled:'❌ ملغي' };
+
+    // ── Header ──
+    const orderNum = order.dentrust_order_id || order.id;
+    document.getElementById('detailOrderNum').textContent  = `Order #${orderNum}`;
     const dt = new Date(order.created_at);
-    const dateStr = dt.toLocaleDateString('ar-EG',{day:'numeric',month:'long',year:'numeric'}) + ' — ' + dt.toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'});
-    // Build items rows
-    const itemsHtml = items.length ? items.map(it => {
-      let photoUrl = null;
-      try { const arr = typeof it.photos === 'string' ? JSON.parse(it.photos) : (it.photos||[]); photoUrl = arr[0] || null; } catch(_) {}
-      return `<div class="flex items-center gap-3 py-2.5 border-b last:border-0">
-        ${photoUrl ? `<img src="${escHtml(photoUrl)}" class="w-12 h-12 rounded-xl object-cover border flex-shrink-0" onerror="this.style.display='none'"/>` : `<div class="w-12 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-xl flex-shrink-0">📦</div>`}
-        <div class="flex-1 min-w-0">
-          <div class="font-semibold text-gray-800 text-sm">${escHtml(it.product_name || '—')}</div>
-          ${it.selected_option ? `<div class="text-xs text-gray-400">${escHtml(it.selected_option)}</div>` : ''}
-          <div class="text-xs text-gray-500 mt-0.5">${parseFloat(it.unit_price||0).toLocaleString('ar-EG')} ج.م × ${it.quantity}</div>
-        </div>
-        <div class="font-black text-blue-700 text-sm whitespace-nowrap">${parseFloat(it.total_price||0).toLocaleString('ar-EG')} ج.م</div>
-      </div>`;
-    }).join('') : `<div class="text-center text-gray-400 py-4 text-sm">🛍️ ${escHtml(order.items_summary||'—')}</div>`;
-    const subtotal = items.reduce((s,i) => s + parseFloat(i.total_price||0), 0) || parseFloat(order.total_amount||0);
-    const discount = parseFloat(order.discount_amount||0);
-    const total    = parseFloat(order.total_amount||0);
+    document.getElementById('detailOrderDate').textContent =
+      dt.toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'});
+
+    // ── Status dropdown ──
+    const sel = document.getElementById('detailStatusSelect');
+    sel.value = order.status || 'pending';
+    _updateStatusSelectStyle(order.status || 'pending');
+
+    // ── Build items rows ──
+    const itemsHtml = items.length
+      ? items.map(it => {
+          const optRaw = (it.selected_option || '').trim();
+          const optBadge = optRaw
+            ? `<span class="inline-block bg-purple-100 text-purple-700 text-[11px] font-bold px-2 py-0.5 rounded-full mr-1">${escHtml(optRaw)}</span>`
+            : `<span class="text-gray-400 text-[11px] italic">no option</span>`;
+          return `
+          <div class="flex items-center gap-3 py-3 border-b last:border-0">
+            <div class="w-12 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-2xl flex-shrink-0">📦</div>
+            <div class="flex-1 min-w-0">
+              <div class="font-semibold text-gray-800 text-sm leading-snug">${escHtml(it.product_name || '—')}</div>
+              <div class="mt-0.5">${optBadge}</div>
+              <div class="text-xs text-gray-400 mt-1">${parseFloat(it.unit_price||0).toLocaleString('en-EG')} EGP × ${it.quantity}</div>
+            </div>
+            <div class="font-black text-gray-800 text-sm whitespace-nowrap">${parseFloat(it.total_price||0).toLocaleString('en-EG')} EGP</div>
+          </div>`;
+        }).join('')
+      : `<div class="text-center text-gray-400 py-4 text-sm">🛍️ ${escHtml(order.items_summary||'—')}</div>`;
+
+    const discount = parseFloat(order.discount_amount || 0);
+    const total    = parseFloat(order.total_amount    || 0);
+
     document.getElementById('detailBody').innerHTML = `
-      <!-- Status + Date -->
-      <div class="flex items-center justify-between">
-        <span class="status-badge status-${order.status||'pending'} text-sm px-3 py-1">${statusLabels[order.status]||'⏳ انتظار'}</span>
-        <span class="text-xs text-gray-400">${dateStr}</span>
-      </div>
       <!-- Customer -->
-      <div class="bg-gray-50 rounded-2xl p-4 space-y-1.5">
-        <div class="font-black text-gray-800 text-base">${escHtml(order.customer_name||'عميل')}</div>
-        ${order.customer_phone ? `<div class="text-sm text-gray-600">📞 <a href="tel:${escHtml(order.customer_phone)}" class="text-blue-600 font-semibold">${escHtml(order.customer_phone)}</a></div>` : ''}
-        ${order.customer_city  ? `<div class="text-sm text-gray-500">📍 ${escHtml(order.customer_city)}${order.customer_address ? ' — ' + escHtml(order.customer_address) : ''}</div>` : ''}
+      <div class="space-y-1">
+        <div class="font-black text-gray-900 text-base">${escHtml(order.customer_name || 'عميل')}</div>
+        ${order.customer_phone
+          ? `<div class="flex items-center gap-2 text-sm text-gray-600">
+               <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+               <a href="tel:${escHtml(order.customer_phone)}" class="font-medium">${escHtml(order.customer_phone)}</a>
+             </div>` : ''}
+        ${order.customer_city
+          ? `<div class="flex items-start gap-2 text-sm text-gray-500">
+               <svg class="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+               <span>${escHtml(order.customer_city)}${order.customer_address ? '، ' + escHtml(order.customer_address) : ''}</span>
+             </div>` : ''}
       </div>
+      <hr class="border-gray-100"/>
       <!-- Items -->
       <div>
-        <div class="text-xs font-bold text-gray-500 mb-2">المنتجات (${items.length || order.items_count})</div>
-        <div class="bg-white border rounded-2xl divide-y overflow-hidden">${itemsHtml}</div>
+        <div class="text-[11px] font-black text-gray-400 tracking-widest uppercase mb-2">Items Ordered</div>
+        <div class="divide-y divide-gray-100">${itemsHtml}</div>
       </div>
-      <!-- Totals -->
-      <div class="bg-blue-50 rounded-2xl p-4 space-y-2">
+      <!-- Total -->
+      <div class="bg-gray-50 rounded-2xl px-4 py-3 flex justify-between items-center">
         ${discount > 0 ? `
-        <div class="flex justify-between text-sm text-gray-600">
-          <span>المجموع قبل الخصم</span>
-          <span>${(subtotal + discount).toLocaleString('ar-EG')} ج.م</span>
-        </div>
-        <div class="flex justify-between text-sm text-green-700 font-semibold">
-          <span>🎟️ خصم ${order.promo_code ? '(' + escHtml(order.promo_code) + ')' : ''}</span>
-          <span>- ${discount.toLocaleString('ar-EG')} ج.م</span>
-        </div>
-        <div class="border-t border-blue-200 pt-2"></div>` : ''}
-        <div class="flex justify-between font-black text-blue-800 text-lg">
-          <span>الإجمالي</span>
-          <span>${total.toLocaleString('ar-EG')} ج.م</span>
-        </div>
+        <div class="space-y-1 w-full">
+          <div class="flex justify-between text-sm text-gray-500">
+            <span>Subtotal</span><span>${(total + discount).toLocaleString('en-EG')} EGP</span>
+          </div>
+          <div class="flex justify-between text-sm text-green-700 font-semibold">
+            <span>Discount${order.promo_code ? ' (' + escHtml(order.promo_code) + ')' : ''}</span>
+            <span>- ${discount.toLocaleString('en-EG')} EGP</span>
+          </div>
+          <div class="border-t border-gray-200 pt-2 flex justify-between font-black text-gray-900 text-base">
+            <span>Total</span><span>${total.toLocaleString('en-EG')} EGP</span>
+          </div>
+        </div>` : `
+        <span class="font-black text-gray-900 text-base">Total</span>
+        <span class="font-black text-gray-900 text-lg">${total.toLocaleString('en-EG')} EGP</span>`}
       </div>
       ${order.notes ? `<div class="bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3 text-sm text-yellow-800">📝 ${escHtml(order.notes)}</div>` : ''}
     `;
   } catch(e) {
-    document.getElementById('detailBody').innerHTML = `<div class="text-center text-red-400 py-8">❌ خطأ في التحميل</div>`;
+    document.getElementById('detailBody').innerHTML =
+      `<div class="text-center text-red-400 py-8">❌ خطأ في التحميل</div>`;
   }
 }
 
 function closeDetail() {
   document.getElementById('detailModal').classList.add('hidden');
   _detailOrder = null;
+  _detailWaLink = null;
 }
 
+async function saveDetailStatus() {
+  if (!_detailOrder) return;
+  const sel    = document.getElementById('detailStatusSelect');
+  const status = sel.value;
+  _updateStatusSelectStyle(status);
+  try {
+    const res  = await fetch(`${BASE}/api/website-orders/${_detailOrder.id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      _detailOrder.status = status;
+      _detailWaLink = data.wa_link || null;
+      loadOrders();
+    }
+  } catch(_) {}
+}
+
+function openDetailWhatsApp() {
+  if (!_detailOrder) return;
+  const phone = (_detailOrder.customer_phone || '').replace(/[^0-9+]/g,'');
+  const intl  = phone.startsWith('+')
+    ? phone.slice(1)
+    : (phone.startsWith('0') && phone.length === 11 ? '20' + phone.slice(1) : phone);
+  if (_detailWaLink) { window.open(_detailWaLink, '_blank'); return; }
+  if (intl) window.open(`https://wa.me/${intl}`, '_blank');
+  else alert('لا يوجد رقم هاتف للعميل');
+}
+
+function printOrderDetail() {
+  if (!_detailOrder) return;
+  const body  = document.getElementById('detailBody').innerHTML;
+  const num   = document.getElementById('detailOrderNum').textContent;
+  const date  = document.getElementById('detailOrderDate').textContent;
+  const w = window.open('', '_blank', 'width=500,height=700');
+  w.document.write(`<!DOCTYPE html><html dir="ltr"><head>
+    <meta charset="UTF-8"><title>${num}</title>
+    <style>
+      body { font-family: sans-serif; padding: 24px; color: #111; }
+      h1   { font-size: 22px; font-weight: 900; margin: 0; }
+      p    { margin: 2px 0 16px; color: #888; font-size: 13px; }
+      hr   { border: none; border-top: 1px solid #eee; margin: 12px 0; }
+      .flex { display: flex; align-items: center; gap: 8px; }
+      .justify-between { justify-content: space-between; }
+      .font-black { font-weight: 900; }
+      .text-sm { font-size: 13px; }
+      .text-xs { font-size: 11px; }
+      .text-gray-400 { color: #9ca3af; }
+      .text-gray-500 { color: #6b7280; }
+      .text-gray-800 { color: #1f2937; }
+      .text-gray-900 { color: #111827; }
+      .text-purple-700 { color: #7e22ce; }
+      .bg-purple-100 { background: #f3e8ff; }
+      .bg-gray-50 { background: #f9fafb; }
+      .bg-gray-100 { background: #f3f4f6; }
+      .rounded-full { border-radius: 9999px; }
+      .rounded-2xl { border-radius: 16px; }
+      .rounded-xl { border-radius: 12px; }
+      .px-2 { padding-left: 8px; padding-right: 8px; }
+      .py-0 { padding-top: 2px; padding-bottom: 2px; }
+      .px-4 { padding: 0 16px; }
+      .py-3 { padding: 12px 0; }
+      .italic { font-style: italic; }
+      .border-b { border-bottom: 1px solid #f3f4f6; }
+      .divide-y > * + * { border-top: 1px solid #f3f4f6; }
+      .uppercase { text-transform: uppercase; }
+      .tracking-widest { letter-spacing: 0.1em; }
+      .w-12 { width: 48px; height: 48px; }
+      .items-center { align-items: center; }
+      .flex-shrink-0 { flex-shrink: 0; }
+      .min-w-0 { min-width: 0; }
+      .flex-1 { flex: 1; }
+      .whitespace-nowrap { white-space: nowrap; }
+      .leading-snug { line-height: 1.3; }
+      .space-y-1 > * + * { margin-top: 4px; }
+      .w-full { width: 100%; }
+      .inline-block { display: inline-block; }
+      @media print { body { margin: 0; } }
+    </style>
+  </head><body>
+    <h1>${num}</h1><p>${date}</p>
+    ${body}
+    <script>window.onload=()=>window.print();<\/script>
+  </body></html>`);
+  w.document.close();
+}
+
+// Keep for backward compat (called from list card status modal flow)
 function openStatusFromDetail() {
   if (!_detailOrder) return;
   closeDetail();
@@ -383,14 +550,14 @@ function openStatusFromDetail() {
 
 async function deleteFromDetail() {
   if (!_detailOrder) return;
-  if (!confirm(`حذف طلب "${escHtml(_detailOrder.customer_name)}"؟\nسيُحذف من الموقع أيضاً.`)) return;
+  if (!confirm(`حذف طلب "${_detailOrder.customer_name}"؟\nسيُحذف من الموقع أيضاً.`)) return;
   const btn = document.getElementById('detailDeleteBtn');
   btn.disabled = true; btn.textContent = '⏳';
   try {
     await fetch(`${BASE}/api/website-orders/${_detailOrder.id}`, { method: 'DELETE' });
     closeDetail();
     loadOrders();
-  } catch(e) { alert('خطأ: ' + e.message); btn.disabled = false; btn.textContent = '🗑 حذف'; }
+  } catch(e) { alert('خطأ: ' + e.message); btn.disabled = false; btn.innerHTML = '🗑 Delete'; }
 }
 
 // ── Status Modal ──
