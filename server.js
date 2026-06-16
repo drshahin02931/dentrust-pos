@@ -437,7 +437,7 @@ app.get(`${BASE}/api/products/search`, async (req, res) => {
 // Columns for list endpoints — excludes heavy base64 image_url, adds has_image flag
 const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, sale_price,
   expiry_date, category, min_stock, description, variants, section, checkbox_values,
-  dentrust_id, (image_url IS NOT NULL AND image_url != '') AS has_image,
+  dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%')) AS has_image,
   CASE WHEN image_url LIKE 'http%' THEN image_url ELSE NULL END AS image_url`;
 
 app.get(`${BASE}/api/products`, async (req, res) => {
@@ -513,23 +513,31 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
     const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
     const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
     // Only update image_url if a new one was explicitly sent (empty string = no change)
-    const imageUpdate = d.image_url
-      ? `, image_url=$14`
-      : '';
-    const params = [
-      d.barcode || null, d.product_name, d.quantity || 0,
-      d.purchase_price || 0, d.sale_price || 0,
-      d.expiry_date || null, d.category || null,
-      parseInt(d.min_stock || 0, 10), d.description || null,
-      variantsJson, d.section || 'dental', cbJson, pid,
-    ];
-    if (d.image_url) params.splice(12, 0, d.image_url); // insert before pid
-    await posDb.query(
-      `UPDATE products SET barcode=$1, product_name=$2, quantity=$3, purchase_price=$4, sale_price=$5,
-       expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
-       section=$11, checkbox_values=$12${imageUpdate} WHERE id=$13`,
-      params
-    );
+    let updateQuery, params;
+    if (d.image_url) {
+      params = [
+        d.barcode || null, d.product_name, d.quantity || 0,
+        d.purchase_price || 0, d.sale_price || 0,
+        d.expiry_date || null, d.category || null,
+        parseInt(d.min_stock || 0, 10), d.description || null,
+        variantsJson, d.section || 'dental', cbJson, d.image_url, pid,
+      ];
+      updateQuery = `UPDATE products SET barcode=$1, product_name=$2, quantity=$3, purchase_price=$4,
+        sale_price=$5, expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
+        section=$11, checkbox_values=$12, image_url=$13 WHERE id=$14`;
+    } else {
+      params = [
+        d.barcode || null, d.product_name, d.quantity || 0,
+        d.purchase_price || 0, d.sale_price || 0,
+        d.expiry_date || null, d.category || null,
+        parseInt(d.min_stock || 0, 10), d.description || null,
+        variantsJson, d.section || 'dental', cbJson, pid,
+      ];
+      updateQuery = `UPDATE products SET barcode=$1, product_name=$2, quantity=$3, purchase_price=$4,
+        sale_price=$5, expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
+        section=$11, checkbox_values=$12 WHERE id=$13`;
+    }
+    await posDb.query(updateQuery, params);
     try {
       await syncUpdateProductToDentrust(pid, d);
     } catch (syncErr) {
