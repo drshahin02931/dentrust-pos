@@ -1072,7 +1072,6 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
     const df = periodFilter(period, 's.date');
     const ef = periodFilter(period, 'e.date');
     const rf = periodFilter(period, 'r.date');
-    // Revenue = total_amount minus delivery (delivery goes to courier, not net profit)
     const { rows: [sdR] } = await posDb.query(
       `SELECT COALESCE(SUM(s.total_amount - COALESCE(s.delivery_amount,0)),0) as r
        FROM sales s WHERE ${df}`
@@ -2175,14 +2174,17 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
   try {
     // 🔔 Insert alert for POS staff
     const alertItems = (d.items || []);
-    const alertSummary = alertItems.slice(0, 3).map(i => `${i.product_name || i.name || '?'} x${i.quantity || 1}`).join('، ');
+    const alertSummary = alertItems.slice(0, 3).map(i => {
+      const opt = i.selectedOption || i.selected_option || '';
+      return `${i.product_name || i.name || '?'} x${i.quantity || 1}${opt ? ' [' + opt + ']' : ''}`;
+    }).join('، ');
     const alertTotal = parseFloat(d.total_amount || d.total || 0) ||
       alertItems.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
     await posDb.query(
       `INSERT INTO website_order_alerts
          (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id,
-          total_amount, items_count, items_summary, promo_code, discount_amount)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          total_amount, items_count, items_summary, promo_code, discount_amount, delivery_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
         d.customer_name || 'عميل',
         d.customer_phone || '',
@@ -2193,7 +2195,8 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
         d.dentrust_order_id || null,
         alertTotal, alertItems.length, alertSummary || '—',
         d.promo_code || null,
-        d.discount_amount ? parseFloat(d.discount_amount) : null
+        d.discount_amount ? parseFloat(d.discount_amount) : null,
+        d.delivery_amount ? parseFloat(d.delivery_amount) : (d.shipping_fee ? parseFloat(d.shipping_fee) : null)
       ]
     ).catch(() => {});
 
@@ -2812,6 +2815,7 @@ const PT_INIT_SQL = `
   ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0;
   ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC DEFAULT 0;
   ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS promo_code TEXT;
+  ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC DEFAULT 0;
   CREATE TABLE IF NOT EXISTS pt_history (
     id SERIAL PRIMARY KEY,
     our_product_id INTEGER,
@@ -3382,6 +3386,29 @@ app.get(`${BASE}/api/website-orders/:id`, async (req, res) => {
           );
           items = rows;
         } finally { dtClient.release(); }
+      } catch (_) {}
+    }
+    // If items have no selected_option data, supplement from POS sale_items (which stores it from the webhook)
+    const allMissingOption = items.length > 0 && items.every(i => !i.selected_option);
+    if ((items.length === 0 || allMissingOption) && order.dentrust_order_id) {
+      try {
+        const { rows: posItems } = await posDb.query(
+          `SELECT si.product_name, si.quantity, si.unit_price,
+                  si.selected_option, (si.unit_price * si.quantity) AS total_price
+           FROM sale_items si
+           JOIN sales s ON s.id = si.sale_id
+           WHERE s.dentrust_order_id = $1`, [String(order.dentrust_order_id)]
+        );
+        if (posItems.length > 0) {
+          if (allMissingOption) {
+            items = items.map((it, idx) => ({
+              ...it,
+              selected_option: posItems[idx]?.selected_option || it.selected_option || null
+            }));
+          } else {
+            items = posItems;
+          }
+        }
       } catch (_) {}
     }
     res.json({ order, items });
