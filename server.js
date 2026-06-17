@@ -2682,7 +2682,8 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
     const { messages = [], max_tokens = 800, stream = true, model: _modelParam, _model: _modelAlt } = req.body;
-    const model = _modelParam || _modelAlt || 'google/gemini-3.5-flash';
+    const hasImage = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'));
+    const model = hasImage ? 'google/gemini-2.5-flash-image' : (_modelParam || _modelAlt || 'google/gemini-3.5-flash');
     // Inject product knowledge from POS DB — same as DenBot
     const knowledge = await getBotKnowledgeText();
     let patchedMessages = [...messages];
