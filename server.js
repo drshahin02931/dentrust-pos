@@ -2665,7 +2665,7 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        res.write(decoder.decode(value));
+        res.write(decoder.decode(value).replace(/\r\n|\r|\n/g, '\r\n'));
       }
       res.end();
     } else {
@@ -2717,7 +2717,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        res.write(decoder.decode(value));
+        res.write(decoder.decode(value).replace(/\r\n|\r|\n/g, '\r\n'));
       }
       res.end();
     } else {
