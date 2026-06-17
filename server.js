@@ -1072,6 +1072,7 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
     const df = periodFilter(period, 's.date');
     const ef = periodFilter(period, 'e.date');
     const rf = periodFilter(period, 'r.date');
+    // Revenue = total_amount minus delivery (delivery goes to courier, not net profit)
     const { rows: [sdR] } = await posDb.query(
       `SELECT COALESCE(SUM(s.total_amount - COALESCE(s.delivery_amount,0)),0) as r
        FROM sales s WHERE ${df}`
@@ -2174,17 +2175,14 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
   try {
     // 🔔 Insert alert for POS staff
     const alertItems = (d.items || []);
-    const alertSummary = alertItems.slice(0, 3).map(i => {
-      const opt = i.selectedOption || i.selected_option || '';
-      return `${i.product_name || i.name || '?'} x${i.quantity || 1}${opt ? ' [' + opt + ']' : ''}`;
-    }).join('، ');
+    const alertSummary = alertItems.slice(0, 3).map(i => `${i.product_name || i.name || '?'} x${i.quantity || 1}`).join('، ');
     const alertTotal = parseFloat(d.total_amount || d.total || 0) ||
       alertItems.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
     await posDb.query(
       `INSERT INTO website_order_alerts
          (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id,
-          total_amount, items_count, items_summary, promo_code, discount_amount, delivery_amount)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          total_amount, items_count, items_summary, promo_code, discount_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [
         d.customer_name || 'عميل',
         d.customer_phone || '',
@@ -2195,8 +2193,7 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
         d.dentrust_order_id || null,
         alertTotal, alertItems.length, alertSummary || '—',
         d.promo_code || null,
-        d.discount_amount ? parseFloat(d.discount_amount) : null,
-        d.delivery_amount ? parseFloat(d.delivery_amount) : (d.shipping_fee ? parseFloat(d.shipping_fee) : null)
+        d.discount_amount ? parseFloat(d.discount_amount) : null
       ]
     ).catch(() => {});
 
@@ -2213,12 +2210,10 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     const items = d.items || [];
     let total = parseFloat(d.total_amount || d.total || 0);
     if (!total && items.length) total = items.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
-    const onlineDiscount = d.discount_amount ? parseFloat(d.discount_amount) : 0;
-    const onlineDelivery = d.delivery_amount ? parseFloat(d.delivery_amount) : (d.shipping_fee ? parseFloat(d.shipping_fee) : 0);
     const { rows: [sale] } = await posDb.query(
-      `INSERT INTO sales (total_amount, payment_method, customer_id, source, dentrust_order_id, customer_name, discount_amount, delivery_amount)
-       VALUES ($1,'online',$2,'online',$3,$4,$5,$6) RETURNING id`,
-      [total, customerId, d.dentrust_order_id || null, d.customer_name || '', onlineDiscount, onlineDelivery]
+      `INSERT INTO sales (total_amount, payment_method, customer_id, source, dentrust_order_id, customer_name)
+       VALUES ($1,'online',$2,'online',$3,$4) RETURNING id`,
+      [total, customerId, d.dentrust_order_id || null, d.customer_name || '']
     );
     const saleId = sale.id;
     let deducted = 0;
@@ -2600,7 +2595,7 @@ app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
   try {
     const { messages = [], system = '', model = 'openai/gpt-4o-mini', max_tokens = 600 } = req.body;
     const knowledge = await getBotKnowledgeText();
-    const fullSystem = (system || '') + knowledge;
+    const fullSystem = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
     const data = await callOpenRouter({
       model, max_tokens,
       messages: [{ role: 'system', content: fullSystem }, ...messages],
@@ -2615,11 +2610,13 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
   try {
     const { image = '', prompt = '', system = '' } = req.body;
     const imgUrl = image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}`;
+    const knowledge = await getBotKnowledgeText();
+    const sysContent = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
     const data = await callOpenRouter({
       model: 'google/gemini-2.5-flash',
       max_tokens: 900,
       messages: [
-        ...(system ? [{ role: 'system', content: system }] : []),
+        { role: 'system', content: sysContent },
         { role: 'user', content: [
           { type: 'image_url', image_url: { url: imgUrl } },
           { type: 'text', text: prompt },
@@ -2674,14 +2671,17 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
     } else {
       res.json(await resp.json());
     }
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: 'خطأ داخلي' });
+    else res.end();
+  }
 });
 
 // POST /api/ai/stylebot  (StyleBot – vision + chat proxy)
 app.post('/api/ai/stylebot', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { messages = [], max_tokens = 800, stream = true, _model = 'google/gemini-2.5-flash' } = req.body;
+    const { messages = [], max_tokens = 800, stream = true, model = 'google/gemini-2.5-flash' } = req.body;
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -2690,7 +2690,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
         'HTTP-Referer': 'https://dentrust.site',
         'X-Title': 'DenTrust StyleBot',
       },
-      body: JSON.stringify({ model: _model, messages, max_tokens, stream }),
+      body: JSON.stringify({ model, messages, max_tokens, stream }),
       signal: AbortSignal.timeout(30000),
     });
     if (stream) {
@@ -2707,7 +2707,10 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
     } else {
       res.json(await resp.json());
     }
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: 'خطأ داخلي' });
+    else res.end();
+  }
 });
 
 // ── Bot Knowledge CRUD (POS admin) ────────────────────────────────────────────
@@ -2817,8 +2820,6 @@ const PT_INIT_SQL = `
   ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0;
   ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC DEFAULT 0;
   ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS promo_code TEXT;
-  ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC DEFAULT 0;
-  ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0;
   CREATE TABLE IF NOT EXISTS pt_history (
     id SERIAL PRIMARY KEY,
     our_product_id INTEGER,
@@ -3389,29 +3390,6 @@ app.get(`${BASE}/api/website-orders/:id`, async (req, res) => {
           );
           items = rows;
         } finally { dtClient.release(); }
-      } catch (_) {}
-    }
-    // If items have no selected_option data, supplement from POS sale_items (which stores it from the webhook)
-    const allMissingOption = items.length > 0 && items.every(i => !i.selected_option);
-    if ((items.length === 0 || allMissingOption) && order.dentrust_order_id) {
-      try {
-        const { rows: posItems } = await posDb.query(
-          `SELECT si.product_name, si.quantity, si.unit_price,
-                  si.selected_option, (si.unit_price * si.quantity) AS total_price
-           FROM sale_items si
-           JOIN sales s ON s.id = si.sale_id
-           WHERE s.dentrust_order_id = $1`, [String(order.dentrust_order_id)]
-        );
-        if (posItems.length > 0) {
-          if (allMissingOption) {
-            items = items.map((it, idx) => ({
-              ...it,
-              selected_option: posItems[idx]?.selected_option || it.selected_option || null
-            }));
-          } else {
-            items = posItems;
-          }
-        }
       } catch (_) {}
     }
     res.json({ order, items });
