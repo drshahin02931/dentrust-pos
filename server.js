@@ -2593,7 +2593,7 @@ async function callOpenRouter(payload) {
 app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { messages = [], system = '', model = 'openai/gpt-4o-mini', max_tokens = 600 } = req.body;
+    const { messages = [], system = '', model = 'google/gemini-2.5-flash', max_tokens = 600 } = req.body;
     const knowledge = await getBotKnowledgeText();
     const fullSystem = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
     const data = await callOpenRouter({
@@ -2633,7 +2633,7 @@ const DENTRUST_BOT_SYSTEM = `أنت DenBot — مساعد ذكي ومتخصص ل
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { model = 'google/gemini-2.0-flash-001', messages = [], max_tokens = 800, stream = true } = req.body;
+    const { model = 'google/gemini-2.5-flash', messages = [], max_tokens = 800, stream = true } = req.body;
     // Inject DenTrust system prompt + stored knowledge
     const knowledge = await getBotKnowledgeText();
     const sysContent = DENTRUST_BOT_SYSTEM + knowledge;
@@ -2681,7 +2681,23 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
 app.post('/api/ai/stylebot', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { messages = [], max_tokens = 800, stream = true, model = 'google/gemini-2.5-flash' } = req.body;
+    const { messages = [], max_tokens = 800, stream = true, model: _modelParam, _model: _modelAlt } = req.body;
+    const model = _modelParam || _modelAlt || 'google/gemini-2.5-flash';
+    // Inject product knowledge from POS DB — same as DenBot
+    const knowledge = await getBotKnowledgeText();
+    let patchedMessages = [...messages];
+    if (knowledge) {
+      const sysIdx = patchedMessages.findIndex(m => m.role === 'system');
+      if (sysIdx >= 0) {
+        // Append knowledge to existing system prompt so StyleBot knows products
+        patchedMessages[sysIdx] = {
+          ...patchedMessages[sysIdx],
+          content: patchedMessages[sysIdx].content + '\n' + knowledge,
+        };
+      } else {
+        patchedMessages = [{ role: 'system', content: knowledge }, ...patchedMessages];
+      }
+    }
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -2690,7 +2706,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
         'HTTP-Referer': 'https://dentrust.site',
         'X-Title': 'DenTrust StyleBot',
       },
-      body: JSON.stringify({ model, messages, max_tokens, stream }),
+      body: JSON.stringify({ model, messages: patchedMessages, max_tokens, stream }),
       signal: AbortSignal.timeout(30000),
     });
     if (stream) {
