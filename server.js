@@ -2593,7 +2593,7 @@ async function callOpenRouter(payload) {
 app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { messages = [], system = '', model = 'google/gemini-2.5-flash', max_tokens = 600 } = req.body;
+    const { messages = [], system = '', model = 'google/gemini-3.5-flash', max_tokens = 600 } = req.body;
     const knowledge = await getBotKnowledgeText();
     const fullSystem = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
     const data = await callOpenRouter({
@@ -2633,7 +2633,7 @@ const DENTRUST_BOT_SYSTEM = `أنت DenBot — مساعد ذكي ومتخصص ل
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { model = 'google/gemini-2.5-flash', messages = [], max_tokens = 800, stream = true } = req.body;
+    const { model = 'google/gemini-3.5-flash', messages = [], max_tokens = 800, stream = true } = req.body;
     // Inject DenTrust system prompt + stored knowledge
     const knowledge = await getBotKnowledgeText();
     const sysContent = DENTRUST_BOT_SYSTEM + knowledge;
@@ -2682,7 +2682,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
     const { messages = [], max_tokens = 800, stream = true, model: _modelParam, _model: _modelAlt } = req.body;
-    const model = _modelParam || _modelAlt || 'google/gemini-2.5-flash';
+    const model = _modelParam || _modelAlt || 'google/gemini-3.5-flash';
     // Inject product knowledge from POS DB — same as DenBot
     const knowledge = await getBotKnowledgeText();
     let patchedMessages = [...messages];
