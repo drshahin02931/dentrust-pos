@@ -398,6 +398,18 @@ app.get(`${BASE}/api/products/categories`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+app.delete(`${BASE}/api/products/categories/:name`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const name = decodeURIComponent(req.params.name).trim();
+    await posDb.query(
+      "UPDATE products SET category=NULL WHERE LOWER(TRIM(category))=LOWER($1)",
+      [name]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
 app.get(`${BASE}/api/products/low-stock`, async (req, res) => {
   try {
     const { rows } = await posDb.query(
@@ -1751,10 +1763,15 @@ async function syncNewProductToDentrust(posId, d) {
   const client = await dentrustDb.connect();
   try {
     const catName = (d.category || '').trim() || 'General';
-    let { rows: [catRow] } = await client.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) LIMIT 1', [catName]);
+    let { rows: [catRow] } = await client.query("SELECT id FROM categories WHERE LOWER(TRIM(name))=LOWER($1) LIMIT 1", [catName.toLowerCase()]);
     if (!catRow) {
-      const { rows: [newCat] } = await client.query("INSERT INTO categories (name, section) VALUES ($1, 'dental') RETURNING id", [catName]);
-      catRow = newCat;
+      try {
+        const { rows: [newCat] } = await client.query("INSERT INTO categories (name, section) VALUES ($1, 'dental') RETURNING id", [catName]);
+        catRow = newCat;
+      } catch (_dupErr) {
+        const { rows: [existing] } = await client.query("SELECT id FROM categories WHERE LOWER(TRIM(name))=LOWER($1) LIMIT 1", [catName.toLowerCase()]);
+        catRow = existing;
+      }
     }
     const details = (d.description || '').trim() || d.product_name;
     const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
@@ -2090,6 +2107,36 @@ app.get(`${BASE}/api/sync/status`, (req, res) => {
     lastPush: syncStatus.lastPush,
     intervalMinutes: 1,
   });
+});
+
+app.post(`${BASE}/api/sync/cleanup-website-categories`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!HAS_WEBSITE_DB) return res.status(400).json({ error: 'لا توجد قاعدة بيانات موقع' });
+  const client = await dentrustDb.connect();
+  try {
+    // Find canonical id (MIN) for each name group
+    const { rows: dupes } = await client.query(`
+      SELECT LOWER(TRIM(name)) AS norm, MIN(id) AS keep_id, array_agg(id ORDER BY id) AS all_ids
+      FROM categories
+      GROUP BY LOWER(TRIM(name))
+      HAVING COUNT(*) > 1
+    `);
+    let fixed = 0;
+    for (const row of dupes) {
+      const dupIds = row.all_ids.filter(id => id !== row.keep_id);
+      // Re-point products that reference duplicate category ids to the canonical one
+      await client.query(
+        `UPDATE products SET category_id=$1 WHERE category_id = ANY($2::int[])`,
+        [row.keep_id, dupIds]
+      );
+      // Delete the duplicate categories
+      await client.query('DELETE FROM categories WHERE id = ANY($1::int[])', [dupIds]);
+      fixed += dupIds.length;
+    }
+    res.json({ ok: true, removed: fixed, groups: dupes.length });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ داخلي', detail: err.message });
+  } finally { client.release(); }
 });
 
 async function doFullSync() {
