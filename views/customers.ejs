@@ -641,6 +641,7 @@ async function submitManualDebt(e) {
     const data = await res.json();
     if (!res.ok) { errEl.textContent = data.error || "حدث خطأ"; errEl.classList.remove("hidden"); btn.disabled=false; btn.textContent="تسجيل"; return; }
     document.getElementById("manualDebtModal").classList.add("hidden");
+    btn.disabled = false; btn.textContent = "تسجيل";
     currentCustomer.total_debt = (currentCustomer.total_debt || 0) + amount;
     const badge = document.getElementById("detailDebtBadge");
     badge.textContent = `متبقي: ${currentCustomer.total_debt.toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه`;
