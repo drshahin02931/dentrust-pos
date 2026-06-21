@@ -173,9 +173,56 @@ app.get(`${BASE}/admin/attendance`, (req, res) => {
   if (!isMgr(req)) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'attendance');
 });
-app.get(`${BASE}/sync`, (req, res) => {
+app.get(`${BASE}/sync`, async (req, res) => {
   if (!isMgr(req)) return res.redirect(`${BASE}/`);
-  return renderPage(req, res, 'sync');
+  const settings = await getSettings().catch(() => ({}));
+  const viewData = {
+    base: BASE,
+    reqPath: req.path,
+    currentUser: req.session?.user_id ? { id: req.session.user_id, username: req.session.username } : null,
+    isMgr: true,
+    canEditPrices: hasPerm(req, 'edit_prices'),
+    canReturn: hasPerm(req, 'process_returns'),
+    userPerms: req.session?.permissions || {},
+    settings,
+  };
+  res.render('sync', viewData, (err, html) => {
+    if (err) return res.status(500).send(String(err));
+    const cleanupBtn = `<div id=\"pos-cleanup-bar\" style=\"position:fixed;bottom:24px;left:24px;z-index:9999;direction:rtl;\">
+  <button onclick=\"posCleanupCats()\" id=\"pos-cleanup-btn\" style=\"background:#1a56db;color:#fff;border:none;border-radius:12px;padding:12px 22px;font-size:14px;font-family:inherit;cursor:pointer;box-shadow:0 4px 16px rgba(26,86,219,.35);\">
+    🧹 تنظيف Categories المكررة
+  </button>
+  <div id=\"pos-cleanup-res\" style=\"margin-top:8px;padding:10px 14px;border-radius:10px;font-size:13px;font-weight:600;display:none;\"></div>
+</div>
+<script>
+async function posCleanupCats(){
+  const btn=document.getElementById('pos-cleanup-btn'),r=document.getElementById('pos-cleanup-res');
+  btn.disabled=true; btn.textContent='⏳ جاري التنظيف...'; r.style.display='none';
+  try{
+    const resp=await fetch('${BASE}/api/sync/cleanup-website-categories',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'}});
+    const d=await resp.json();
+    r.style.display='block';
+    if(resp.ok&&d.ok){
+      r.style.background='#ecfdf5'; r.style.color='#065f46'; r.style.border='1px solid #6ee7b7';
+      r.textContent=d.removed===0?'✅ مفيش categories مكررة!':'✅ تم حذف '+d.removed+' category مكررة!';
+    }else{
+      r.style.background='#fef2f2'; r.style.color='#991b1b'; r.style.border='1px solid #fca5a5';
+      r.textContent='❌ '+(d.error||'خطأ غير متوقع');
+    }
+  }catch(e){ r.style.display='block'; r.textContent='❌ تعذّر الاتصال'; }
+  finally{ btn.disabled=false; btn.textContent='🧹 تنظيف Categories المكررة'; }
+}
+</script>`;
+    // inject before </body> or </html> or at the end
+    if (html.includes('</body>')) {
+      html = html.replace('</body>', cleanupBtn + '\n</body>');
+    } else if (html.includes('</html>')) {
+      html = html.replace('</html>', cleanupBtn + '\n</html>');
+    } else {
+      html = html + cleanupBtn;
+    }
+    res.send(html);
+  });
 });
 app.get(`${BASE}/suppliers`, (req, res) => {
   if (!req.session?.user_id) return res.redirect(`${BASE}/login`);
@@ -2108,6 +2155,68 @@ app.get(`${BASE}/api/sync/status`, (req, res) => {
     intervalMinutes: 1,
   });
 });
+
+app.get(`${BASE}/tools/cleanup-categories`, (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/login`);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>تنظيف Categories المكررة — DenTrust</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Cairo','Segoe UI',sans-serif;background:#f0f4ff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#fff;border-radius:16px;padding:40px;max-width:480px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,.1);text-align:center}
+.icon{font-size:52px;margin-bottom:16px}
+h1{font-size:20px;color:#1a1a2e;margin-bottom:10px}
+p{font-size:14px;color:#666;line-height:1.8;margin-bottom:28px}
+button{background:#1a56db;color:#fff;border:none;border-radius:10px;padding:14px 36px;font-size:16px;cursor:pointer;width:100%;transition:background .2s}
+button:hover:not(:disabled){background:#1342b0}
+button:disabled{background:#93b4f5;cursor:not-allowed}
+.result{display:none;margin-top:20px;padding:14px;border-radius:10px;font-size:15px;font-weight:600}
+.ok{background:#ecfdf5;color:#065f46;border:1px solid #6ee7b7}
+.err{background:#fef2f2;color:#991b1b;border:1px solid #fca5a5}
+.spinner{display:none;margin:14px auto 0;width:26px;height:26px;border:3px solid #e0e7ff;border-top-color:#1a56db;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">🧹</div>
+  <h1>تنظيف الـ Categories المكررة</h1>
+  <p>تحذف الـ categories المكررة من قاعدة بيانات الموقع<br>وتربط كل المنتجات بالـ category الصحيحة تلقائياً.</p>
+  <button id="btn" onclick="run()">🧹 تنظيف الـ Categories المكررة</button>
+  <div class="spinner" id="sp"></div>
+  <div class="result" id="res"></div>
+</div>
+<script>
+async function run(){
+  const btn=document.getElementById('btn'),sp=document.getElementById('sp'),res=document.getElementById('res');
+  btn.disabled=true; sp.style.display='block'; res.style.display='none';
+  try{
+    const r=await fetch('${BASE}/api/sync/cleanup-website-categories',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'}});
+    const d=await r.json();
+    res.style.display='block';
+    if(r.ok&&d.ok){
+      res.className='result ok';
+      res.textContent=d.removed===0?'✅ ممتاز! مفيش categories مكررة.':'✅ تم حذف '+d.removed+' category مكررة من '+d.groups+' مجموعة!';
+    }else{
+      res.className='result err';
+      res.textContent='❌ '+(d.error||'خطأ غير متوقع');
+    }
+  }catch(e){
+    res.style.display='block';
+    res.className='result err';
+    res.textContent='❌ تعذّر الاتصال: '+e.message;
+  }finally{sp.style.display='none';btn.disabled=false;}
+}
+</script>
+</body>
+</html>`);
+});
+
 
 app.post(`${BASE}/api/sync/cleanup-website-categories`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
