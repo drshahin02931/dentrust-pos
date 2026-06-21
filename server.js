@@ -767,6 +767,10 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
   const customerNameFree = (d.customer_name || '').trim() || null;
   const splitJson = d.payment_split ? JSON.stringify(d.payment_split) : null;
 
+  if (!customerId && !customerNameFree) {
+    return res.status(400).json({ error: 'لازم تدخل اسم العميل قبل إتمام الفاتورة' });
+  }
+
   const client = await posDb.connect();
   try {
     await client.query('BEGIN');
@@ -1014,7 +1018,14 @@ app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
 
 app.get(`${BASE}/api/customers`, async (req, res) => {
   try {
-    const { rows } = await posDb.query('SELECT * FROM customers ORDER BY total_debt DESC, name ASC');
+    const { rows } = await posDb.query(`
+      SELECT c.*,
+        COALESCE(SUM(s.total_amount), 0) AS total_purchases
+      FROM customers c
+      LEFT JOIN sales s ON s.customer_id = c.id
+      GROUP BY c.id
+      ORDER BY total_purchases DESC, c.name ASC
+    `);
     res.json(rows);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
@@ -1092,6 +1103,50 @@ app.get(`${BASE}/api/customers/:cid/statement`, async (req, res) => {
 app.delete(`${BASE}/api/customers/:cid`, async (req, res) => {
   try {
     await posDb.query('DELETE FROM customers WHERE id=$1', [parseInt(req.params.cid, 10)]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── Manual Debts ────────────────────────────────────────────────────────────
+
+app.post(`${BASE}/api/customers/:cid/manual-debt`, async (req, res) => {
+  const cid = parseInt(req.params.cid, 10);
+  const { amount, reason } = req.body;
+  if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+    return res.status(400).json({ error: 'أدخل مبلغاً صحيحاً' });
+  }
+  try {
+    await posDb.query(
+      'INSERT INTO customer_manual_debts (customer_id, amount, reason) VALUES ($1,$2,$3)',
+      [cid, parseFloat(amount), reason || '']
+    );
+    await posDb.query(
+      'UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2',
+      [parseFloat(amount), cid]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/customers/:cid/manual-debts`, async (req, res) => {
+  const cid = parseInt(req.params.cid, 10);
+  try {
+    const { rows } = await posDb.query(
+      'SELECT * FROM customer_manual_debts WHERE customer_id=$1 ORDER BY date DESC',
+      [cid]
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.delete(`${BASE}/api/customers/:cid/manual-debt/:did`, async (req, res) => {
+  const cid = parseInt(req.params.cid, 10);
+  const did = parseInt(req.params.did, 10);
+  try {
+    const { rows: [debt] } = await posDb.query('SELECT * FROM customer_manual_debts WHERE id=$1 AND customer_id=$2', [did, cid]);
+    if (!debt) return res.status(404).json({ error: 'غير موجود' });
+    await posDb.query('DELETE FROM customer_manual_debts WHERE id=$1', [did]);
+    await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [parseFloat(debt.amount), cid]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
@@ -3600,6 +3655,13 @@ async function main() {
   }
   try {
     await initDb();
+    await posDb.query(`CREATE TABLE IF NOT EXISTS customer_manual_debts (
+      id SERIAL PRIMARY KEY,
+      customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+      amount DECIMAL(10,2) NOT NULL,
+      reason TEXT DEFAULT '',
+      date TIMESTAMPTZ DEFAULT NOW()
+    )`);
     await initPriceTracker();
     await seedManager();
     app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
