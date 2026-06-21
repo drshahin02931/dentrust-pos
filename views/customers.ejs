@@ -101,6 +101,9 @@
       <button onclick="openPayModal()" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-sm">
         💸 تسجيل دفعة
       </button>
+      <button onclick="openManualDebtModal()" class="flex items-center gap-2 bg-orange-50 hover:bg-orange-100 text-orange-700 text-sm font-semibold px-4 py-2 rounded-xl">
+        💰 إضافة سلفة/دين
+      </button>
       <button id="btnDelete" onclick="confirmDelete()" class="flex items-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-semibold px-4 py-2 rounded-xl">
         🗑 حذف العميل
       </button>
@@ -111,6 +114,7 @@
       <button id="tabOrders"       onclick="switchTab('orders')"       class="flex-1 py-3 text-sm font-semibold text-blue-700 border-b-2 border-blue-700">🧾 الطلبات</button>
       <button id="tabPayments"     onclick="switchTab('payments')"     class="flex-1 py-3 text-sm font-semibold text-gray-400">💳 الدفعات</button>
       <button id="tabInstallments" onclick="switchTab('installments')" class="flex-1 py-3 text-sm font-semibold text-gray-400">📅 الأقساط</button>
+      <button id="tabDebts"        onclick="switchTab('debts')"        class="flex-1 py-3 text-sm font-semibold text-gray-400">💰 السلف</button>
     </div>
 
     <!-- Scrollable content -->
@@ -204,19 +208,27 @@ function renderCustomers(data) {
   if (!data.length) { list.innerHTML=""; noMsg.classList.remove("hidden"); return; }
   noMsg.classList.add("hidden");
 
-  list.innerHTML = data.map(c => {
+  list.innerHTML = data.map((c, idx) => {
     const hasDebt = c.total_debt > 0;
+    const purchases = parseFloat(c.total_purchases || 0);
+    const rankBadge = idx < 3
+      ? ['🥇','🥈','🥉'][idx]
+      : `#${idx+1}`;
     return `
     <div onclick="openDetail(${c.id})" class="cursor-pointer rounded-2xl border shadow-sm p-4 flex items-center justify-between gap-3 hover:shadow-md transition-all
       ${hasDebt ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}">
       <div class="flex items-center gap-3 min-w-0">
-        <div class="w-10 h-10 rounded-full flex items-center justify-center text-white font-black text-lg shrink-0
-          ${hasDebt ? 'bg-red-500' : 'bg-blue-500'}">
-          ${c.name.charAt(0)}
+        <div class="relative">
+          <div class="w-10 h-10 rounded-full flex items-center justify-center text-white font-black text-lg shrink-0
+            ${hasDebt ? 'bg-red-500' : 'bg-blue-500'}">
+            ${c.name.charAt(0)}
+          </div>
+          <span class="absolute -bottom-1 -right-1 text-xs leading-none">${rankBadge}</span>
         </div>
         <div class="min-w-0">
           <div class="font-bold text-gray-800 truncate">${c.name}</div>
           <div class="text-xs text-gray-500">${c.phone || 'بدون هاتف'}</div>
+          <div class="text-xs text-blue-600 font-semibold mt-0.5">🛒 ${purchases.toLocaleString('ar-EG', {minimumFractionDigits:2})} ج مشتريات</div>
         </div>
       </div>
       <div class="text-right shrink-0">
@@ -302,7 +314,7 @@ function closeDetail() {
 
 async function switchTab(tab) {
   currentTab = tab;
-  const tabs = ['orders','payments','installments'];
+  const tabs = ['orders','payments','installments','debts'];
   tabs.forEach(t => {
     document.getElementById(`tab${t.charAt(0).toUpperCase()+t.slice(1)}`).className =
       t === tab
@@ -406,6 +418,31 @@ async function switchTab(tab) {
         <div class="text-2xl">✅</div>
       </div>
     `).join("");
+  }
+
+  if (tab === 'debts') {
+    const res = await fetch(`${BASE}/api/customers/${currentCustomer.id}/manual-debts`);
+    const debts = await res.json();
+    const total = debts.reduce((s,d) => s + parseFloat(d.amount), 0);
+    content.innerHTML = `
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-sm font-bold text-orange-700 bg-orange-50 px-3 py-1.5 rounded-xl">
+          إجمالي السلف: ${total.toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه
+        </span>
+        <button onclick="openManualDebtModal()" class="bg-orange-600 text-white text-xs font-semibold px-3 py-1.5 rounded-xl hover:bg-orange-700">+ إضافة سلفة</button>
+      </div>
+      ${!debts.length ? '<div class="text-center text-gray-400 py-6 text-sm">لا توجد سلف مسجّلة</div>' :
+        debts.map(d => `
+          <div class="rounded-xl border border-orange-200 bg-orange-50 p-3.5 flex items-center justify-between">
+            <div>
+              <div class="text-sm font-bold text-orange-700">${parseFloat(d.amount).toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه</div>
+              ${d.reason ? `<div class="text-xs text-gray-600 mt-0.5">📝 ${d.reason}</div>` : ''}
+              <div class="text-xs text-gray-400 mt-0.5">${d.date?.slice(0,16)||''}</div>
+            </div>
+            <button onclick="deleteManualDebt(${d.id})" class="text-red-400 hover:text-red-600 text-xs px-2 py-1 rounded-lg">🗑</button>
+          </div>`).join("")}
+    `;
+    return;
   }
 }
 
@@ -577,6 +614,56 @@ async function confirmDelete() {
   loadCustomers();
 }
 
+// ── Manual Debt ──────────────────────────────────────────────────────────────
+function openManualDebtModal() {
+  document.getElementById("mdAmount").value = "";
+  document.getElementById("mdReason").value = "";
+  document.getElementById("mdErr").classList.add("hidden");
+  document.getElementById("manualDebtModal").classList.remove("hidden");
+  setTimeout(() => document.getElementById("mdAmount").focus(), 100);
+}
+
+async function submitManualDebt(e) {
+  e.preventDefault();
+  const amount = parseFloat(document.getElementById("mdAmount").value);
+  const reason = document.getElementById("mdReason").value.trim();
+  const errEl = document.getElementById("mdErr");
+  if (!amount || amount <= 0) {
+    errEl.textContent = "أدخل مبلغاً صحيحاً"; errEl.classList.remove("hidden"); return;
+  }
+  const btn = document.getElementById("mdSubmit");
+  btn.disabled = true; btn.textContent = "...";
+  try {
+    const res = await fetch(`${BASE}/api/customers/${currentCustomer.id}/manual-debt`, {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ amount, reason })
+    });
+    const data = await res.json();
+    if (!res.ok) { errEl.textContent = data.error || "حدث خطأ"; errEl.classList.remove("hidden"); btn.disabled=false; btn.textContent="تسجيل"; return; }
+    document.getElementById("manualDebtModal").classList.add("hidden");
+    currentCustomer.total_debt = (currentCustomer.total_debt || 0) + amount;
+    const badge = document.getElementById("detailDebtBadge");
+    badge.textContent = `متبقي: ${currentCustomer.total_debt.toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه`;
+    badge.className = "text-sm font-bold px-3 py-1 rounded-full bg-red-100 text-red-700";
+    await loadCustomers();
+    switchTab('debts');
+  } catch(_) {
+    errEl.textContent = "حدث خطأ، حاول مرة أخرى"; errEl.classList.remove("hidden");
+    btn.disabled = false; btn.textContent = "تسجيل";
+  }
+}
+
+async function deleteManualDebt(did) {
+  if (!confirm("حذف هذه السلفة؟ سيتم تخفيض الدين المقابل لها.")) return;
+  const res = await fetch(`${BASE}/api/customers/${currentCustomer.id}/manual-debt/${did}`, { method:"DELETE" });
+  if (res.ok) {
+    await loadCustomers();
+    const updated = allCustomers.find(x => x.id === currentCustomer.id);
+    if (updated) currentCustomer = updated;
+    switchTab('debts');
+  }
+}
+
 loadCustomers();
 </script>
 
@@ -609,6 +696,34 @@ loadCustomers();
         <button type="submit" id="inst-submit"
           class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800 text-sm">حفظ القسط</button>
         <button type="button" onclick="document.getElementById('instModal').classList.add('hidden')"
+          class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">إلغاء</button>
+      </div>
+    </form>
+  </div>
+</div>
+<!-- ══ Manual Debt Modal ══ -->
+<div id="manualDebtModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4">
+  <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl">
+    <div class="p-5 border-b flex items-center justify-between">
+      <h3 class="font-bold text-gray-800">💰 إضافة سلفة / دين</h3>
+      <button onclick="document.getElementById('manualDebtModal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+    </div>
+    <form onsubmit="submitManualDebt(event)" class="p-5 space-y-3">
+      <div>
+        <label class="text-xs font-medium text-gray-600">المبلغ (جنيه) *</label>
+        <input id="mdAmount" type="number" step="0.01" min="0.01" required placeholder="0.00"
+          class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-orange-200"/>
+      </div>
+      <div>
+        <label class="text-xs font-medium text-gray-600">السبب / الملاحظة</label>
+        <input id="mdReason" type="text" placeholder="مثال: سلفة نقدية، دين قديم..."
+          class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-orange-200"/>
+      </div>
+      <div id="mdErr" class="hidden text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2"></div>
+      <div class="flex gap-3 pt-1">
+        <button type="submit" id="mdSubmit"
+          class="flex-1 bg-orange-600 text-white font-semibold py-2.5 rounded-xl hover:bg-orange-700 text-sm">تسجيل</button>
+        <button type="button" onclick="document.getElementById('manualDebtModal').classList.add('hidden')"
           class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">إلغاء</button>
       </div>
     </form>
