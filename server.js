@@ -3077,6 +3077,46 @@ async function initPriceTracker() {
   catch (e) { console.error('Price tracker init error:', e.message); }
 }
 
+// ── Title similarity (Jaccard token overlap) ─────────────────────────────────
+// Returns 0.0–1.0.  >= 0.35 considered a real match.
+function titleSimilarity(a, b) {
+  const tokenize = s => s
+    .toLowerCase()
+    .replace(/[^\u0600-\u06FFa-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+  const ta = new Set(tokenize(String(a || '')));
+  const tb = new Set(tokenize(String(b || '')));
+  if (ta.size === 0 || tb.size === 0) return 0;
+  const intersection = [...ta].filter(w => tb.has(w)).length;
+  const union = new Set([...ta, ...tb]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
+// Find the best matching product in our DB for a competitor title.
+// Returns { id } or null. Requires similarity >= minScore (default 0.35).
+async function findBestOurProduct(competitorTitle, minScore = 0.35) {
+  if (!competitorTitle || !competitorTitle.trim()) return null;
+  const words = competitorTitle
+    .replace(/[^\u0600-\u06FFa-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2)
+    .slice(0, 6);
+  if (words.length === 0) return null;
+  const likes = words.map((_, i) => `LOWER(product_name) LIKE $${i + 1}`).join(' OR ');
+  const params = words.map(w => `%${w.toLowerCase()}%`);
+  const { rows: candidates } = await posDb.query(
+    `SELECT id, product_name FROM products WHERE ${likes} LIMIT 20`, params
+  );
+  if (candidates.length === 0) return null;
+  let best = null, bestScore = 0;
+  for (const c of candidates) {
+    const score = titleSimilarity(competitorTitle, c.product_name);
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  return bestScore >= minScore ? best : null;
+}
+
 // AI-powered scraper — JSON-LD → meta tags → OpenRouter AI → regex fallback
 async function scrapePageProducts(siteUrl) {
   const products = [];
@@ -3254,18 +3294,13 @@ app.post('/api/admin/price-tracker/sites/:id/crawl', webCors, async (req, res) =
         [site.id, p.title, p.price, p.url]
       );
       if (pp && p.title && p.title.trim() && parseFloat(p.price) > 0) {
-        const words = p.title.split(/\s+/).filter(w => w.length > 3).slice(0, 3);
-        if (words.length > 0) {
-          const likes = words.map((_, i) => `LOWER(product_name) LIKE $${i + 1}`).join(' OR ');
-          const params = words.map(w => `%${w.toLowerCase()}%`);
-          const { rows: ms } = await posDb.query(`SELECT id FROM products WHERE ${likes} LIMIT 1`, params);
-          if (ms.length > 0) {
-            await posDb.query(
-              'INSERT INTO pt_matches (our_product_id, pt_product_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
-              [ms[0].id, pp.id]
-            );
-            newMatches++;
-          }
+        const ourProd = await findBestOurProduct(p.title);
+        if (ourProd) {
+          await posDb.query(
+            'INSERT INTO pt_matches (our_product_id, pt_product_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+            [ourProd.id, pp.id]
+          );
+          newMatches++;
         }
       }
     }
@@ -3354,9 +3389,14 @@ app.post('/api/admin/price-tracker/sites/:id/search-all-products', webCors, asyn
         const { products } = await searchCompetitorSite(site.url, myProd.product_name);
         if (products.length === 0) { skipped++; continue; }
 
-        // Take the best match (first result with valid title and price)
-        const best = products.find(p => p.title && p.title.trim() && parseFloat(p.price) > 0);
-        if (!best) { skipped++; continue; }
+        // Pick the scraped result most similar to our product name (must score >= 0.3)
+        let best = null, bestScore = 0;
+        for (const p of products) {
+          if (!p.title || parseFloat(p.price) <= 0) continue;
+          const score = titleSimilarity(myProd.product_name, p.title);
+          if (score > bestScore) { bestScore = score; best = p; }
+        }
+        if (!best || bestScore < 0.3) { skipped++; continue; }
         const { rows: [pp] } = await posDb.query(
           `INSERT INTO pt_products (site_id, title, price, url)
            VALUES ($1,$2,$3,$4)
@@ -3383,16 +3423,12 @@ app.post('/api/admin/price-tracker/sites/:id/rematch', webCors, async (req, res)
     const { rows: prods } = await posDb.query('SELECT * FROM pt_products WHERE site_id=$1', [req.params.id]);
     let matched = 0;
     for (const p of prods) {
-      if (!p.title) continue;
-      const words = p.title.split(/\s+/).filter(w => w.length > 3).slice(0, 3);
-      if (!words.length) continue;
-      const likes = words.map((_, i) => `LOWER(product_name) LIKE $${i + 1}`).join(' OR ');
-      const params = words.map(w => `%${w.toLowerCase()}%`);
-      const { rows: ms } = await posDb.query(`SELECT id FROM products WHERE ${likes} LIMIT 1`, params);
-      if (ms.length > 0) {
+      if (!p.title || parseFloat(p.price) <= 0) continue;
+      const ourProd = await findBestOurProduct(p.title);
+      if (ourProd) {
         await posDb.query(
           'INSERT INTO pt_matches (our_product_id, pt_product_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
-          [ms[0].id, p.id]
+          [ourProd.id, p.id]
         );
         matched++;
       }
