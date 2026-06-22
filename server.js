@@ -3253,7 +3253,7 @@ app.post('/api/admin/price-tracker/sites/:id/crawl', webCors, async (req, res) =
         'INSERT INTO pt_products (site_id, title, price, url) VALUES ($1,$2,$3,$4) RETURNING id',
         [site.id, p.title, p.price, p.url]
       );
-      if (pp && p.title) {
+      if (pp && p.title && p.title.trim() && parseFloat(p.price) > 0) {
         const words = p.title.split(/\s+/).filter(w => w.length > 3).slice(0, 3);
         if (words.length > 0) {
           const likes = words.map((_, i) => `LOWER(product_name) LIKE $${i + 1}`).join(' OR ');
@@ -3354,8 +3354,9 @@ app.post('/api/admin/price-tracker/sites/:id/search-all-products', webCors, asyn
         const { products } = await searchCompetitorSite(site.url, myProd.product_name);
         if (products.length === 0) { skipped++; continue; }
 
-        // Take the best match (first result)
-        const best = products[0];
+        // Take the best match (first result with valid title and price)
+        const best = products.find(p => p.title && p.title.trim() && parseFloat(p.price) > 0);
+        if (!best) { skipped++; continue; }
         const { rows: [pp] } = await posDb.query(
           `INSERT INTO pt_products (site_id, title, price, url)
            VALUES ($1,$2,$3,$4)
