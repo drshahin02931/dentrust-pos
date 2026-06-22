@@ -3269,15 +3269,106 @@ app.post('/api/admin/price-tracker/sites/:id/crawl', webCors, async (req, res) =
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+// Search the competitor's own website for a product name
+async function searchCompetitorSite(siteUrl, productName) {
+  const base = siteUrl.replace(/\/$/, '');
+  const q = encodeURIComponent(productName);
+  // Try common search URL patterns used by Shopify, WooCommerce, OpenCart, custom sites
+  const searchUrls = [
+    `${base}/search?q=${q}`,
+    `${base}/?s=${q}`,
+    `${base}/search?query=${q}`,
+    `${base}/search?term=${q}`,
+    `${base}/catalogsearch/result/?q=${q}`,
+    `${base}/index.php?route=product/search&search=${q}`,
+    `${base}/products?q=${q}`,
+  ];
+  for (const url of searchUrls) {
+    try {
+      const r = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'ar,en;q=0.9',
+        },
+        signal: AbortSignal.timeout(15000),
+        redirect: 'follow',
+      });
+      if (!r.ok) continue;
+      const html = await r.text();
+      // If we got redirected to a product page or a results page with products
+      if (html.length < 500) continue;
+      const products = await scrapePageProducts(url);
+      if (products.length > 0) return { products, searchUrl: url };
+    } catch (_) { continue; }
+  }
+  return { products: [], searchUrl: null };
+}
+
 // POST /api/admin/price-tracker/sites/:id/search-by-name
+// Searches the competitor's OWN website for a given product name
 app.post('/api/admin/price-tracker/sites/:id/search-by-name', webCors, async (req, res) => {
   const { name = '' } = req.body;
+  if (!name.trim()) return res.json({ searched: 0, matched: 0, skipped: 0, results: [] });
   try {
-    const { rows } = await posDb.query(
-      `SELECT * FROM pt_products WHERE site_id=$1 AND LOWER(title) LIKE $2 LIMIT 20`,
-      [req.params.id, `%${name.toLowerCase()}%`]
+    const { rows: [site] } = await posDb.query('SELECT * FROM pt_sites WHERE id=$1', [req.params.id]);
+    if (!site) return res.status(404).json({ error: 'Site not found' });
+
+    const { products, searchUrl } = await searchCompetitorSite(site.url, name.trim());
+
+    // Save found products and try to match to our product
+    const results = [];
+    for (const p of products.slice(0, 10)) {
+      const { rows: [pp] } = await posDb.query(
+        `INSERT INTO pt_products (site_id, title, price, url)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT DO NOTHING RETURNING *`,
+        [site.id, p.title, p.price, p.url || searchUrl]
+      );
+      if (pp) results.push(pp);
+    }
+
+    res.json({ searched: 1, matched: results.length, skipped: 0, results, searchUrl });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// POST /api/admin/price-tracker/sites/:id/search-all-products
+// Auto-searches competitor site for ALL our products one by one
+app.post('/api/admin/price-tracker/sites/:id/search-all-products', webCors, async (req, res) => {
+  try {
+    const { rows: [site] } = await posDb.query('SELECT * FROM pt_sites WHERE id=$1', [req.params.id]);
+    if (!site) return res.status(404).json({ error: 'Site not found' });
+
+    const { rows: ourProducts } = await posDb.query(
+      'SELECT id, product_name, sale_price FROM products ORDER BY product_name LIMIT 200'
     );
-    res.json({ searched: 1, matched: rows.length, skipped: 0, results: rows });
+
+    let matched = 0, skipped = 0;
+
+    for (const myProd of ourProducts) {
+      try {
+        const { products } = await searchCompetitorSite(site.url, myProd.product_name);
+        if (products.length === 0) { skipped++; continue; }
+
+        // Take the best match (first result)
+        const best = products[0];
+        const { rows: [pp] } = await posDb.query(
+          `INSERT INTO pt_products (site_id, title, price, url)
+           VALUES ($1,$2,$3,$4)
+           ON CONFLICT DO NOTHING RETURNING id`,
+          [site.id, best.title, best.price, best.url || site.url]
+        );
+        if (pp) {
+          await posDb.query(
+            'INSERT INTO pt_matches (our_product_id, pt_product_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+            [myProd.id, pp.id]
+          );
+          matched++;
+        } else { skipped++; }
+      } catch (_) { skipped++; }
+    }
+
+    res.json({ total: ourProducts.length, matched, skipped });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
@@ -3310,9 +3401,13 @@ app.get('/api/admin/price-tracker/matches/pending', webCors, async (req, res) =>
   try {
     const { rows } = await posDb.query(`
       SELECT m.id, m.our_product_id, m.status, m.matched_at,
-             pp.title  AS competitor_title,  pp.price AS competitor_price, pp.url AS competitor_url,
-             s.name   AS site_name,
-             p.product_name AS our_product_name, p.sale_price AS our_price
+             COALESCE(pp.title, '')            AS competitor_title,
+             COALESCE(pp.price::numeric, 0)    AS competitor_price,
+             COALESCE(pp.url, '')              AS competitor_url,
+             COALESCE(s.name, '')              AS site_name,
+             COALESCE(p.product_name, '')      AS our_product_name,
+             COALESCE(p.sale_price::numeric, 0) AS our_price,
+             COALESCE(p.image_url, '')         AS our_image_url
       FROM pt_matches m
       LEFT JOIN pt_products pp ON pp.id = m.pt_product_id
       LEFT JOIN pt_sites    s  ON s.id  = pp.site_id
