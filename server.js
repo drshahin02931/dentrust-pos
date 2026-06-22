@@ -166,6 +166,10 @@ app.get(`${BASE}/expiry`, (req, res) => {
   return renderPage(req, res, 'expiry');
 });
 app.get(`${BASE}/notifications`, (req, res) => { if (!req.session?.user_id) return res.redirect(`${BASE}/login`); return renderPage(req, res, 'notifications'); });
+app.get(`${BASE}/admin/price-tracker`, (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'price_tracker');
+});
 app.get(`${BASE}/admin/users`, (req, res) => {
   if (!isMgr(req)) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'admin_users');
