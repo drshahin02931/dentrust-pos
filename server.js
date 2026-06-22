@@ -3232,7 +3232,7 @@ async function scrapePageProducts(siteUrl) {
     while ((m = priceRe.exec(html)) !== null && pi < 80) {
       const price = parseFloat((m[1] || m[2] || '').replace(/[\s,]/g, ''));
       if (price >= 1 && price < 2000000) {
-        products.push({ title: extractedTitles[pi] || `منتج ${pi + 1}`, price, url: siteUrl });
+        if (extractedTitles[pi]) products.push({ title: extractedTitles[pi], price, url: siteUrl });
         pi++;
       }
     }
