@@ -173,6 +173,10 @@
     <a href="<%- base %>/whatsapp-settings" class="nav-link <%= reqPath.includes('/whatsapp-settings') ? 'active' : '' %>">
       <span class="lang-text" data-ar="📱 رسائل واتساب" data-en="📱 WhatsApp">📱 واتساب</span>
     </a>
+    <a href="<%- base %>/admin/price-tracker" class="nav-link relative <%= reqPath.includes('/admin/price-tracker') ? 'active' : '' %>">
+      <span class="lang-text" data-ar="📊 أسعار المنافسين" data-en="📊 Price Tracker">📊 أسعار المنافسين</span>
+      <span id="ptBadge" class="hidden absolute -top-1 -right-1 bg-orange-500 text-white font-black rounded-full text-[9px] min-w-[1rem] px-1 leading-none py-0.5 text-center"></span>
+    </a>
     <% } %>
 
     <div class="mr-auto flex items-center gap-2 flex-shrink-0">
