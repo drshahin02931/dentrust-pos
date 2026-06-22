@@ -3383,8 +3383,10 @@ app.post('/api/admin/price-tracker/sites/:id/search-all-products', webCors, asyn
     );
 
     let matched = 0, skipped = 0;
+    const deadline = Date.now() + 25000; // hard 25s wall-clock limit
 
     for (const myProd of ourProducts) {
+      if (Date.now() > deadline) break; // stop before proxy timeout
       try {
         const { products } = await searchCompetitorSite(site.url, myProd.product_name);
         if (products.length === 0) { skipped++; continue; }
@@ -3413,7 +3415,7 @@ app.post('/api/admin/price-tracker/sites/:id/search-all-products', webCors, asyn
       } catch (_) { skipped++; }
     }
 
-    res.json({ total: ourProducts.length, matched, skipped });
+    res.json({ total: ourProducts.length, matched, skipped, partial: Date.now() > deadline });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
