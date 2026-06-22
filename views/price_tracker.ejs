@@ -1,0 +1,534 @@
+<%- include('partials/header', Object.assign({pageTitle: 'تتبع أسعار المنافسين'}, locals)) %>
+<div class="space-y-6">
+
+  <div class="flex items-center justify-between flex-wrap gap-3">
+    <h1 class="text-2xl font-bold text-gray-800">📊 تتبع أسعار المنافسين</h1>
+    <button onclick="openAddSiteModal()"
+      class="bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-blue-800 shadow">
+      + إضافة موقع منافس
+    </button>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex gap-2 border-b border-gray-200">
+    <button onclick="switchTab('sites')" id="tab-sites"
+      class="tab-btn px-5 py-2.5 font-semibold text-sm rounded-t-xl border-b-2 border-blue-600 text-blue-700 bg-white">
+      🌐 المواقع
+    </button>
+    <button onclick="switchTab('matches')" id="tab-matches"
+      class="tab-btn px-5 py-2.5 font-semibold text-sm rounded-t-xl border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+      🔗 المطابقات المعلقة
+      <span id="matchesBadge" class="hidden mr-1 bg-orange-500 text-white text-xs rounded-full px-2">0</span>
+    </button>
+    <button onclick="switchTab('analytics')" id="tab-analytics"
+      class="tab-btn px-5 py-2.5 font-semibold text-sm rounded-t-xl border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+      📈 التحليلات
+    </button>
+  </div>
+
+  <!-- ═══════════════════════════════ SITES TAB ══════════════════════════════ -->
+  <div id="panel-sites">
+
+    <!-- Sites List -->
+    <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
+      <div class="px-4 py-3 bg-gray-50 border-b flex items-center justify-between">
+        <span class="font-semibold text-gray-700 text-sm">مواقع المنافسين المضافة</span>
+      </div>
+      <div id="sitesLoading" class="text-center text-gray-400 py-8 text-sm">⏳ جاري التحميل...</div>
+      <div id="sitesEmpty" class="hidden text-center text-gray-400 py-8 text-sm">لا يوجد مواقع — أضف موقع منافس لتبدأ</div>
+      <div id="sitesList" class="hidden divide-y"></div>
+    </div>
+
+    <!-- Search Panel -->
+    <div id="searchPanel" class="hidden bg-white rounded-2xl border shadow-sm p-5 space-y-4">
+      <h2 class="font-bold text-gray-800 text-lg">🔍 بحث عن أسعار المنافس</h2>
+
+      <div>
+        <label class="block text-sm font-semibold text-gray-600 mb-1">اختر موقع المنافس</label>
+        <select id="searchSiteSelect" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm bg-gray-50 focus:outline-none focus:border-blue-500">
+          <option value="">— اختر موقعاً —</option>
+        </select>
+      </div>
+
+      <div id="searchIdle">
+        <button onclick="startSearchAll()"
+          class="w-full py-3 bg-gradient-to-l from-blue-700 to-blue-900 text-white font-bold rounded-xl hover:opacity-90 transition text-sm shadow">
+          🚀 ابدأ البحث على كل منتجاتي تلقائياً
+        </button>
+        <p class="text-xs text-gray-400 mt-2 text-center">يبحث عن كل منتجاتك على موقع المنافس المختار تلقائياً — قد يستغرق بضع دقائق</p>
+      </div>
+
+      <!-- Progress -->
+      <div id="searchProgress" class="hidden space-y-3">
+        <div class="bg-gray-100 rounded-full h-3 overflow-hidden">
+          <div id="progressBar" class="h-3 bg-blue-600 rounded-full transition-all duration-500" style="width:5%"></div>
+        </div>
+        <p id="progressStatus" class="text-center text-sm text-gray-600">⏳ جاري البحث...</p>
+        <div id="searchLog" class="bg-gray-900 rounded-xl p-3 max-h-32 overflow-y-auto font-mono text-xs text-green-400 space-y-0.5"></div>
+      </div>
+
+      <!-- Result -->
+      <div id="searchResult" class="hidden bg-green-50 border border-green-300 rounded-xl p-4 space-y-2">
+        <h3 class="font-bold text-green-800">✅ اكتمل البحث!</h3>
+        <div class="grid grid-cols-3 gap-3 text-center text-sm">
+          <div class="bg-white rounded-xl p-3 border">
+            <div id="rTotal" class="text-xl font-black text-gray-800">—</div>
+            <div class="text-gray-500 text-xs mt-1">إجمالي منتجاتك</div>
+          </div>
+          <div class="bg-white rounded-xl p-3 border">
+            <div id="rMatched" class="text-xl font-black text-green-700">—</div>
+            <div class="text-gray-500 text-xs mt-1">مطابقات وُجدت</div>
+          </div>
+          <div class="bg-white rounded-xl p-3 border">
+            <div id="rSkipped" class="text-xl font-black text-orange-500">—</div>
+            <div class="text-gray-500 text-xs mt-1">لم يُعثر عليها</div>
+          </div>
+        </div>
+        <button onclick="resetSearch()" class="w-full py-2.5 bg-green-700 text-white font-bold rounded-xl hover:bg-green-800 text-sm mt-2">
+          🔄 بحث مرة أخرى
+        </button>
+      </div>
+
+      <!-- Error -->
+      <div id="searchError" class="hidden bg-red-50 border border-red-300 rounded-xl p-4 text-red-700 text-sm"></div>
+    </div>
+
+  </div>
+
+  <!-- ════════════════════════════ MATCHES TAB ════════════════════════════════ -->
+  <div id="panel-matches" class="hidden space-y-4">
+    <div class="flex items-center justify-between">
+      <p class="text-sm text-gray-500">راجع المطابقات التلقائية وأكدها أو ارفضها</p>
+      <button onclick="loadMatches()" class="text-xs text-blue-600 hover:underline">↻ تحديث</button>
+    </div>
+    <div id="matchesLoading" class="text-center text-gray-400 py-8 text-sm">⏳ جاري التحميل...</div>
+    <div id="matchesEmpty" class="hidden text-center text-gray-400 py-8 text-sm">✅ لا يوجد مطابقات معلقة</div>
+    <div id="matchesList" class="hidden space-y-3"></div>
+  </div>
+
+  <!-- ═══════════════════════════ ANALYTICS TAB ════════════════════════════ -->
+  <div id="panel-analytics" class="hidden space-y-4">
+    <div class="flex items-center justify-between">
+      <p class="text-sm text-gray-500">مقارنة أسعارك بأسعار المنافسين</p>
+      <button onclick="loadAnalytics()" class="text-xs text-blue-600 hover:underline">↻ تحديث</button>
+    </div>
+    <div id="analyticsLoading" class="text-center text-gray-400 py-8 text-sm">⏳ جاري التحميل...</div>
+    <div id="analyticsEmpty" class="hidden text-center text-gray-400 py-8 text-sm">لا يوجد بيانات بعد — شغّل بحثاً وأكد بعض المطابقات أولاً</div>
+    <div id="analyticsContent" class="hidden space-y-4">
+      <!-- Summary Cards -->
+      <div class="grid grid-cols-3 gap-4" id="analyticsSummary"></div>
+      <!-- Table -->
+      <div class="bg-white rounded-2xl border shadow-sm overflow-hidden">
+        <div class="px-4 py-3 bg-gray-50 border-b">
+          <span class="font-semibold text-gray-700 text-sm">مقارنة الأسعار بالتفصيل</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm text-right">
+            <thead class="bg-gray-50 border-b">
+              <tr class="text-gray-600 font-semibold">
+                <th class="px-4 py-3">المنتج</th>
+                <th class="px-4 py-3">سعرك</th>
+                <th class="px-4 py-3">أفضل سعر منافس</th>
+                <th class="px-4 py-3">الفرق</th>
+                <th class="px-4 py-3">الوضع</th>
+              </tr>
+            </thead>
+            <tbody id="analyticsTable" class="divide-y"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ════════════════════════ ADD SITE MODAL ══════════════════════════════════ -->
+<div id="addSiteModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+    <h2 class="text-lg font-bold text-gray-800">🌐 إضافة موقع منافس</h2>
+    <div>
+      <label class="block text-sm font-semibold text-gray-600 mb-1">اسم المنافس</label>
+      <input id="newSiteName" type="text" placeholder="مثال: منافس أ" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500">
+    </div>
+    <div>
+      <label class="block text-sm font-semibold text-gray-600 mb-1">رابط الموقع</label>
+      <input id="newSiteUrl" type="url" placeholder="https://competitor.com" class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-blue-500" dir="ltr">
+    </div>
+    <div id="addSiteError" class="hidden text-red-600 text-sm bg-red-50 rounded-xl p-3"></div>
+    <div class="flex gap-3">
+      <button onclick="addSite()" class="flex-1 py-2.5 bg-blue-700 text-white font-bold rounded-xl hover:bg-blue-800 text-sm">
+        حفظ
+      </button>
+      <button onclick="closeAddSiteModal()" class="flex-1 py-2.5 bg-gray-100 text-gray-700 font-semibold rounded-xl hover:bg-gray-200 text-sm">
+        إلغاء
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = '<%= base %>';
+
+// ─── Tab switching ────────────────────────────────────────────────────────────
+function switchTab(name) {
+  ['sites','matches','analytics'].forEach(t => {
+    document.getElementById('panel-' + t).classList.add('hidden');
+    const btn = document.getElementById('tab-' + t);
+    btn.classList.remove('border-blue-600','text-blue-700','bg-white');
+    btn.classList.add('border-transparent','text-gray-500');
+  });
+  document.getElementById('panel-' + name).classList.remove('hidden');
+  const active = document.getElementById('tab-' + name);
+  active.classList.add('border-blue-600','text-blue-700','bg-white');
+  active.classList.remove('border-transparent','text-gray-500');
+
+  if (name === 'matches') loadMatches();
+  if (name === 'analytics') loadAnalytics();
+}
+
+// ─── Sites ────────────────────────────────────────────────────────────────────
+let sitesData = [];
+
+async function loadSites() {
+  try {
+    const res = await fetch(`${BASE}/api/admin/price-tracker/sites`, { credentials: 'include' });
+    sitesData = await res.json();
+    renderSites();
+  } catch(e) {
+    document.getElementById('sitesLoading').textContent = '❌ خطأ في تحميل المواقع';
+  }
+}
+
+function renderSites() {
+  const loading = document.getElementById('sitesLoading');
+  const empty = document.getElementById('sitesEmpty');
+  const list = document.getElementById('sitesList');
+  const panel = document.getElementById('searchPanel');
+  const sel = document.getElementById('searchSiteSelect');
+
+  loading.classList.add('hidden');
+
+  if (!sitesData.length) {
+    empty.classList.remove('hidden');
+    panel.classList.add('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+  list.classList.remove('hidden');
+  panel.classList.remove('hidden');
+
+  list.innerHTML = sitesData.map(s => `
+    <div class="flex items-center justify-between px-4 py-3 hover:bg-gray-50">
+      <div>
+        <div class="font-semibold text-gray-800 text-sm">${escHtml(s.name)}</div>
+        <a href="${escHtml(s.url)}" target="_blank" class="text-xs text-blue-600 hover:underline" dir="ltr">${escHtml(s.url)}</a>
+      </div>
+      <button onclick="deleteSite(${s.id}, '${escHtml(s.name)}')"
+        class="text-xs text-red-500 hover:text-red-700 hover:bg-red-50 px-3 py-1.5 rounded-lg transition">
+        🗑️ حذف
+      </button>
+    </div>
+  `).join('');
+
+  sel.innerHTML = '<option value="">— اختر موقعاً —</option>' +
+    sitesData.map(s => `<option value="${s.id}">${escHtml(s.name)}</option>`).join('');
+}
+
+async function deleteSite(id, name) {
+  if (!confirm(`حذف موقع "${name}"؟`)) return;
+  await fetch(`${BASE}/api/admin/price-tracker/sites/${id}`, { method: 'DELETE', credentials: 'include' });
+  loadSites();
+}
+
+// ─── Add Site Modal ───────────────────────────────────────────────────────────
+function openAddSiteModal() {
+  document.getElementById('newSiteName').value = '';
+  document.getElementById('newSiteUrl').value = '';
+  document.getElementById('addSiteError').classList.add('hidden');
+  document.getElementById('addSiteModal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('newSiteName').focus(), 50);
+}
+function closeAddSiteModal() {
+  document.getElementById('addSiteModal').classList.add('hidden');
+}
+
+async function addSite() {
+  const name = document.getElementById('newSiteName').value.trim();
+  const url  = document.getElementById('newSiteUrl').value.trim();
+  const errEl = document.getElementById('addSiteError');
+  errEl.classList.add('hidden');
+
+  if (!name || !url) { errEl.textContent = 'أدخل الاسم والرابط'; errEl.classList.remove('hidden'); return; }
+  if (!url.startsWith('http')) { errEl.textContent = 'الرابط يجب أن يبدأ بـ https://'; errEl.classList.remove('hidden'); return; }
+
+  try {
+    const res = await fetch(`${BASE}/api/admin/price-tracker/sites`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, url }),
+    });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'خطأ'); }
+    closeAddSiteModal();
+    loadSites();
+  } catch(e) {
+    errEl.textContent = '❌ ' + e.message;
+    errEl.classList.remove('hidden');
+  }
+}
+
+// ─── Search All ───────────────────────────────────────────────────────────────
+let searching = false;
+
+async function startSearchAll() {
+  const siteId = document.getElementById('searchSiteSelect').value;
+  if (!siteId) { alert('اختر موقع منافس أولاً'); return; }
+  if (searching) return;
+  searching = true;
+
+  document.getElementById('searchIdle').classList.add('hidden');
+  document.getElementById('searchProgress').classList.remove('hidden');
+  document.getElementById('searchResult').classList.add('hidden');
+  document.getElementById('searchError').classList.add('hidden');
+
+  const bar = document.getElementById('progressBar');
+  const status = document.getElementById('progressStatus');
+  const log = document.getElementById('searchLog');
+
+  bar.style.width = '5%';
+  status.textContent = '⏳ جاري البحث... قد يستغرق بضع دقائق';
+  log.innerHTML = '<p>> بدأ البحث عن كل المنتجات...</p>';
+
+  let fake = 5;
+  const ticker = setInterval(() => {
+    fake = Math.min(fake + 3, 85);
+    bar.style.width = fake + '%';
+  }, 4000);
+
+  try {
+    const res = await fetch(`${BASE}/api/admin/price-tracker/sites/${siteId}/search-all-products`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    clearInterval(ticker);
+
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    bar.style.width = '100%';
+    status.textContent = '✅ اكتمل!';
+    log.innerHTML += `<p>> انتهى: ${data.matched} مطابقة من ${data.total} منتج</p>`;
+
+    document.getElementById('rTotal').textContent = data.total;
+    document.getElementById('rMatched').textContent = data.matched;
+    document.getElementById('rSkipped').textContent = data.skipped;
+
+    document.getElementById('searchProgress').classList.add('hidden');
+    document.getElementById('searchResult').classList.remove('hidden');
+
+    loadMatchesBadge();
+  } catch(e) {
+    clearInterval(ticker);
+    bar.style.width = '0%';
+    status.textContent = 'حدث خطأ';
+    const errEl = document.getElementById('searchError');
+    errEl.textContent = '❌ خطأ: ' + e.message;
+    errEl.classList.remove('hidden');
+    document.getElementById('searchProgress').classList.add('hidden');
+    document.getElementById('searchIdle').classList.remove('hidden');
+  } finally {
+    searching = false;
+  }
+}
+
+function resetSearch() {
+  document.getElementById('searchResult').classList.add('hidden');
+  document.getElementById('searchError').classList.add('hidden');
+  document.getElementById('searchProgress').classList.add('hidden');
+  document.getElementById('searchIdle').classList.remove('hidden');
+}
+
+// ─── Matches ──────────────────────────────────────────────────────────────────
+async function loadMatchesBadge() {
+  try {
+    const res = await fetch(`${BASE}/api/admin/price-tracker/matches/count`, { credentials: 'include' });
+    const { count } = await res.json();
+    const badge = document.getElementById('matchesBadge');
+    if (count > 0) { badge.textContent = count; badge.classList.remove('hidden'); }
+    else badge.classList.add('hidden');
+  } catch(_) {}
+}
+
+async function loadMatches() {
+  const loading = document.getElementById('matchesLoading');
+  const empty   = document.getElementById('matchesEmpty');
+  const list    = document.getElementById('matchesList');
+
+  loading.classList.remove('hidden');
+  empty.classList.add('hidden');
+  list.classList.add('hidden');
+
+  try {
+    const res = await fetch(`${BASE}/api/admin/price-tracker/matches/pending`, { credentials: 'include' });
+    const matches = await res.json();
+    loading.classList.add('hidden');
+
+    if (!matches.length) { empty.classList.remove('hidden'); return; }
+
+    list.classList.remove('hidden');
+    list.innerHTML = matches.map(m => {
+      const diff = m.our_price && m.competitor_price
+        ? ((m.competitor_price - m.our_price) / m.our_price * 100).toFixed(1)
+        : null;
+      const diffHtml = diff !== null
+        ? `<span class="${parseFloat(diff) > 0 ? 'text-green-600' : 'text-red-600'} font-bold text-xs">${diff > 0 ? '+' : ''}${diff}%</span>`
+        : '';
+      return `
+        <div class="bg-white rounded-2xl border shadow-sm p-4 flex flex-col sm:flex-row gap-4">
+          <div class="flex-1 space-y-1">
+            <div class="text-xs text-gray-400 font-medium">منتجك</div>
+            <div class="font-bold text-gray-800">${escHtml(m.our_product_name)}</div>
+            <div class="text-blue-700 font-semibold text-sm">${fmt(m.our_price)} جنيه</div>
+          </div>
+          <div class="flex items-center justify-center text-2xl opacity-30">⇄</div>
+          <div class="flex-1 space-y-1">
+            <div class="text-xs text-gray-400 font-medium">${escHtml(m.site_name || 'منافس')}</div>
+            <div class="font-bold text-gray-800">${escHtml(m.competitor_title)}</div>
+            <div class="flex items-center gap-2">
+              <span class="text-orange-600 font-semibold text-sm">${fmt(m.competitor_price)} جنيه</span>
+              ${diffHtml}
+            </div>
+          </div>
+          <div class="flex sm:flex-col gap-2 justify-end">
+            <button onclick="reviewMatch(${m.id},'approved',this)"
+              class="px-4 py-2 bg-green-600 text-white text-xs font-bold rounded-xl hover:bg-green-700 transition">
+              ✓ تأكيد
+            </button>
+            <button onclick="reviewMatch(${m.id},'rejected',this)"
+              class="px-4 py-2 bg-red-100 text-red-700 text-xs font-bold rounded-xl hover:bg-red-200 transition">
+              ✗ رفض
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch(e) {
+    loading.textContent = '❌ خطأ في التحميل';
+  }
+}
+
+async function reviewMatch(id, status, btn) {
+  const card = btn.closest('.bg-white');
+  card.style.opacity = '0.5';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(`${BASE}/api/admin/price-tracker/matches/${id}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) throw new Error('خطأ');
+    card.remove();
+    loadMatchesBadge();
+
+    const list = document.getElementById('matchesList');
+    if (!list.children.length) {
+      list.classList.add('hidden');
+      document.getElementById('matchesEmpty').classList.remove('hidden');
+    }
+  } catch(e) {
+    card.style.opacity = '1';
+    btn.disabled = false;
+    alert('❌ حدث خطأ، حاول مرة أخرى');
+  }
+}
+
+// ─── Analytics ────────────────────────────────────────────────────────────────
+async function loadAnalytics() {
+  const loading = document.getElementById('analyticsLoading');
+  const empty   = document.getElementById('analyticsEmpty');
+  const content = document.getElementById('analyticsContent');
+
+  loading.classList.remove('hidden');
+  empty.classList.add('hidden');
+  content.classList.add('hidden');
+
+  try {
+    const res = await fetch(`${BASE}/api/admin/price-tracker/analytics`, { credentials: 'include' });
+    const data = await res.json();
+    loading.classList.add('hidden');
+
+    if (!data.products || !data.products.length) { empty.classList.remove('hidden'); return; }
+
+    const cheaper = data.products.filter(p => p.avg_competitor_price < p.our_price).length;
+    const pricier = data.products.filter(p => p.avg_competitor_price > p.our_price).length;
+    const equal   = data.products.length - cheaper - pricier;
+
+    document.getElementById('analyticsSummary').innerHTML = `
+      <div class="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+        <div class="text-2xl font-black text-green-700">${cheaper}</div>
+        <div class="text-xs text-green-600 mt-1">المنافس أرخص منك</div>
+      </div>
+      <div class="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
+        <div class="text-2xl font-black text-blue-700">${equal}</div>
+        <div class="text-xs text-blue-600 mt-1">أسعار متساوية تقريباً</div>
+      </div>
+      <div class="bg-orange-50 border border-orange-200 rounded-2xl p-4 text-center">
+        <div class="text-2xl font-black text-orange-700">${pricier}</div>
+        <div class="text-xs text-orange-600 mt-1">أسعارك أرخص من المنافس</div>
+      </div>
+    `;
+
+    document.getElementById('analyticsTable').innerHTML = data.products.map(p => {
+      const diff = p.our_price ? ((p.avg_competitor_price - p.our_price) / p.our_price * 100).toFixed(1) : 0;
+      const isExpensive = parseFloat(diff) > 5;
+      const isCheap = parseFloat(diff) < -5;
+      const badge = isExpensive
+        ? `<span class="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs font-bold">أنت أغلى</span>`
+        : isCheap
+          ? `<span class="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full text-xs font-bold">أنت أرخص</span>`
+          : `<span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">متقارب</span>`;
+      return `
+        <tr class="hover:bg-gray-50">
+          <td class="px-4 py-3 font-medium text-gray-800">${escHtml(p.product_name)}</td>
+          <td class="px-4 py-3 text-blue-700 font-semibold">${fmt(p.our_price)}</td>
+          <td class="px-4 py-3 text-orange-600 font-semibold">${fmt(p.avg_competitor_price)}</td>
+          <td class="px-4 py-3 font-bold ${isExpensive ? 'text-red-600' : isCheap ? 'text-green-600' : 'text-gray-500'}">
+            ${diff > 0 ? '+' : ''}${diff}%
+          </td>
+          <td class="px-4 py-3">${badge}</td>
+        </tr>
+      `;
+    }).join('');
+
+    content.classList.remove('hidden');
+  } catch(e) {
+    loading.textContent = '❌ خطأ في تحميل التحليلات';
+  }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fmt(n) {
+  const v = parseFloat(n);
+  if (!v && v !== 0) return '—';
+  return v.toLocaleString('ar-EG', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+// Close modal on backdrop click
+document.getElementById('addSiteModal').addEventListener('click', function(e) {
+  if (e.target === this) closeAddSiteModal();
+});
+
+// Init
+loadSites();
+loadMatchesBadge();
+</script>
+
+<%- include('partials/footer', locals) %>
