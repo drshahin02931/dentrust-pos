@@ -74,14 +74,11 @@ const OPEN_API = [
   '/api/sync/upsert-product', '/api/settings',
   '/api/ai/fashion-chat', '/api/ai/fashion-chat-stream', '/api/ai/fashion-tryon',
   '/api/ai/stylebot', '/api/products',
+  '/api/admin/price-tracker',
 ];
-
-const ADMIN_KEY = process.env.ADMIN_SECRET_KEY || '';
 
 function authGuard(req, res, next) {
   if (req.session?.user_id) return next();
-  // Allow requests with valid admin key (used by the website admin dashboard)
-  if (ADMIN_KEY && req.headers['x-admin-key'] === ADMIN_KEY) return next();
   const p = req.path;
   if (OPEN_PATHS.has(req.originalUrl.split('?')[0])) return next();
   if (OPEN_API.some(a => p.endsWith(a) || p.includes(a))) return next();
