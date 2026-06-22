@@ -764,6 +764,7 @@ function parseVariants(p) {
       Object.entries(cv).forEach(([key, val]) => {
         const sep = key.indexOf('::');
         if (sep === -1) return;
+        const group    = key.slice(0, sep);
         const label    = key.slice(sep + 2);
         const checked  = typeof val === 'boolean' ? val : (val?.checked ?? false);
         const disabled = typeof val === 'object'  ? (val?.disabled ?? false) : false;
@@ -771,7 +772,7 @@ function parseVariants(p) {
         const stock = (typeof val === 'object' && val?.stock !== null && val?.stock !== undefined)
           ? parseInt(val.stock)
           : (p.quantity || 0);
-        sizes.push({ label, qty: stock, _cbKey: key });
+        sizes.push({ label, qty: stock, _cbKey: key, group });
       });
       if (sizes.length > 0) return { sizes };
     } catch(e) {}
@@ -812,23 +813,49 @@ function closeVariantPicker() {
   _vpQty = 1;
 }
 
+function _renderSizeBtn(s) {
+  const outOfStock = s.qty <= 0;
+  const lowStock   = !outOfStock && s.qty <= 2;
+  const selected   = _vpSelSize === s._cbKey;
+  let btnClass, qtyClass;
+  if (selected)       { btnClass = 'border-blue-600 bg-blue-600 text-white shadow-lg scale-105';        qtyClass = 'text-blue-100'; }
+  else if (outOfStock){ btnClass = 'border-gray-200 text-gray-300 bg-gray-50 cursor-not-allowed';        qtyClass = 'text-red-400'; }
+  else if (lowStock)  { btnClass = 'border-orange-400 text-orange-700 bg-orange-50 hover:bg-orange-100'; qtyClass = 'text-orange-500 font-bold'; }
+  else                { btnClass = 'border-gray-200 text-gray-700 bg-white hover:border-blue-400 hover:bg-blue-50'; qtyClass = 'text-gray-400'; }
+  const key = (s._cbKey || s.label).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  return `<button type="button" onclick="selectVPSize('${key}')" ${outOfStock ? 'disabled' : ''}
+    class="relative flex flex-col items-center justify-center min-w-[4rem] px-4 py-3 rounded-2xl border-2 font-bold text-sm transition-all ${btnClass}">
+    <span class="text-base">${s.label}${lowStock ? ' ⚠️' : ''}</span>
+    <span class="text-xs font-normal mt-0.5 ${qtyClass}">${outOfStock ? 'نفذ' : s.qty + ' قطعة'}</span>
+  </button>`;
+}
+
 function renderVPSizes() {
   const sizes = _vpVariants.sizes || [];
-  document.getElementById("vp-sizes").innerHTML = sizes.map(s => {
-    const outOfStock = s.qty <= 0;
-    const lowStock   = !outOfStock && s.qty <= 2;   // ← warning threshold
-    const selected   = _vpSelSize === s.label;
-    let btnClass, qtyClass;
-    if (selected)       { btnClass = 'border-blue-600 bg-blue-600 text-white shadow-lg scale-105';       qtyClass = 'text-blue-100'; }
-    else if (outOfStock){ btnClass = 'border-gray-200 text-gray-300 bg-gray-50 cursor-not-allowed';       qtyClass = 'text-red-400'; }
-    else if (lowStock)  { btnClass = 'border-orange-400 text-orange-700 bg-orange-50 hover:bg-orange-100'; qtyClass = 'text-orange-500 font-bold'; }
-    else                { btnClass = 'border-gray-200 text-gray-700 bg-white hover:border-blue-400 hover:bg-blue-50'; qtyClass = 'text-gray-400'; }
-    return `<button type="button" onclick="selectVPSize('${s.label.replace(/'/g,"\\'")}')" ${outOfStock ? 'disabled' : ''}
-      class="relative flex flex-col items-center justify-center min-w-[4rem] px-4 py-3 rounded-2xl border-2 font-bold text-sm transition-all ${btnClass}">
-      <span class="text-base">${s.label}${lowStock ? ' ⚠️' : ''}</span>
-      <span class="text-xs font-normal mt-0.5 ${qtyClass}">${outOfStock ? 'نفذ' : s.qty + ' قطعة'}</span>
-    </button>`;
-  }).join("");
+  const hasGroups = sizes.some(s => s.group);
+  const container = document.getElementById("vp-sizes");
+
+  if (hasGroups) {
+    // Build ordered group map preserving insertion order
+    const groupMap = {};
+    const groupOrder = [];
+    sizes.forEach(s => {
+      const g = s.group || '';
+      if (!groupMap[g]) { groupMap[g] = []; groupOrder.push(g); }
+      groupMap[g].push(s);
+    });
+    container.style.flexDirection = 'column';
+    container.innerHTML = groupOrder.map(g => `
+      <div style="width:100%;margin-bottom:0.75rem;">
+        <div style="font-size:0.7rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.4rem;border-bottom:1px solid #e5e7eb;padding-bottom:2px;">${g}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.4rem;">
+          ${groupMap[g].map(s => _renderSizeBtn(s)).join('')}
+        </div>
+      </div>`).join('');
+  } else {
+    container.style.flexDirection = '';
+    container.innerHTML = sizes.map(s => _renderSizeBtn(s)).join('');
+  }
 }
 
 function renderVPColors() {
@@ -843,12 +870,12 @@ function renderVPColors() {
   }).join("");
 }
 
-function selectVPSize(label) {
-  _vpSelSize = label;
+function selectVPSize(key) {
+  _vpSelSize = key;  // key is now _cbKey (e.g. "SHORT::2") — unique per option
   _vpQty = 1;
   document.getElementById("vp-size-err").classList.add("hidden");
   renderVPSizes();
-  const s = (_vpVariants.sizes || []).find(x => x.label === label);
+  const s = (_vpVariants.sizes || []).find(x => (x._cbKey || x.label) === key);
   _vpSelCbKey = s?._cbKey || null;  // track full checkbox key for checkbox-based options
   if (s) {
     const info = document.getElementById("vp-stock-info");
@@ -905,7 +932,7 @@ function confirmVariantAdd() {
     document.getElementById("vp-sizes").scrollIntoView({ behavior: "smooth", block: "nearest" });
     return;
   }
-  const sizeObj = (_vpVariants.sizes || []).find(s => s.label === _vpSelSize);
+  const sizeObj = (_vpVariants.sizes || []).find(s => (s._cbKey || s.label) === _vpSelSize);
   const maxQty  = sizeObj ? sizeObj.qty : 1;
   const qty     = Math.min(_vpQty || 1, maxQty);
 
@@ -916,7 +943,7 @@ function confirmVariantAdd() {
     if (newTotal > maxQty) { alert(`لا يوجد مخزون كافٍ — متبقي ${Math.max(0, maxQty - existing.quantity)} قطعة فقط`); return; }
     existing.quantity = newTotal;
   } else {
-    const label = _vpSelSize + (_vpSelColor ? ` · ${_vpSelColor}` : "");
+    const label = (sizeObj?.label || _vpSelSize) + (_vpSelColor ? ` · ${_vpSelColor}` : "");
     cart.push({
       _cartKey:      cartKey,
       product_id:    _vpProduct.id,
