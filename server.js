@@ -243,7 +243,27 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
        FROM sales s LEFT JOIN customers c ON s.customer_id=c.id WHERE s.id=$1`, [sid]
     );
     if (!sale) return res.status(404).send('الفاتورة غير موجودة');
-    const { rows: items } = await posDb.query('SELECT * FROM sale_items WHERE sale_id=$1', [sid]);
+    // Fetch items with returned quantities per item
+    const { rows: items } = await posDb.query(`
+      SELECT si.*,
+        COALESCE(ri_sum.returned_qty, 0) AS returned_qty,
+        GREATEST(0, si.quantity - COALESCE(ri_sum.returned_qty, 0)) AS net_qty
+      FROM sale_items si
+      LEFT JOIN (
+        SELECT ri.sale_item_id, SUM(ri.quantity) AS returned_qty
+        FROM return_items ri
+        JOIN returns r ON r.id = ri.return_id
+        WHERE r.sale_id = $1
+        GROUP BY ri.sale_item_id
+      ) ri_sum ON ri_sum.sale_item_id = si.id
+      WHERE si.sale_id = $1
+    `, [sid]);
+    // Total returned amount for this sale
+    const { rows: [retRow] } = await posDb.query(
+      `SELECT COALESCE(SUM(total_refund),0) AS total_returned FROM returns WHERE sale_id=$1`, [sid]
+    );
+    const totalReturned = Math.round(parseFloat(retRow.total_returned || 0) * 100) / 100;
+    const netTotal = Math.max(0, Math.round((parseFloat(sale.total_amount || 0) - totalReturned) * 100) / 100);
     const customer = sale.customer_id ? {
       name: sale.customer_name || '',
       phone: sale.customer_phone || '',
@@ -251,11 +271,12 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
     } : null;
     let previousBalance = 0;
     if (sale.payment_method === 'credit' && sale.customer_id) {
+      // previousBalance = current debt minus this sale's NET amount (after returns)
       const { rows: [pb] } = await posDb.query('SELECT total_debt FROM customers WHERE id=$1', [sale.customer_id]);
-      previousBalance = pb ? Math.max(0, parseFloat(pb.total_debt || 0) - parseFloat(sale.total_amount || 0)) : 0;
+      previousBalance = pb ? Math.max(0, parseFloat(pb.total_debt || 0) - netTotal) : 0;
     }
     const st = await getSettings();
-    res.render('invoice', { sale, items, customer, previousBalance, st, base: BASE });
+    res.render('invoice', { sale, items, customer, previousBalance, totalReturned, netTotal, st, base: BASE });
   } catch (err) {
     console.error(err);
     res.status(500).send('خطأ داخلي');
