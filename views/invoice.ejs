@@ -17,6 +17,8 @@ const invoiceFooterEn = (st && st.invoice_footer_en) || 'Thank you for your busi
 const logoUrl = (st && st.logo_url) || '';
 const autoPrint = (st && st.auto_print) === '1';
 const prevBal = previousBalance || 0;
+const _netTotal   = (typeof netTotal !== 'undefined')   ? netTotal   : parseFloat(sale.total_amount || 0);
+const _totalRet   = (typeof totalReturned !== 'undefined') ? totalReturned : 0;
 
 function fmt(n) { return parseFloat(n || 0).toFixed(2); }
 function payMethodAr(m) {
@@ -172,17 +174,20 @@ function payMethodEn(m) {
       </tr>
     </thead>
     <tbody>
-      <% for (const item of items) { %>
+      <% for (const item of items) { const nq = parseInt(item.net_qty != null ? item.net_qty : item.quantity); const rq = parseInt(item.returned_qty || 0); if (nq <= 0 && rq > 0) continue; %>
       <tr>
         <td class="right" style="word-break:break-word;line-height:1.4;">
           <%- item.product_name %>
           <% if (item.selected_option) { %>
           <div style="font-size:9px;font-weight:700;color:#000;margin-top:1px;">◈ <%- item.selected_option %></div>
           <% } %>
+          <% if (rq > 0) { %>
+          <div style="font-size:9px;color:#c00;margin-top:1px;">مرتجع: <%= rq %></div>
+          <% } %>
         </td>
-        <td class="center"><%= item.quantity %></td>
+        <td class="center"><%= nq %></td>
         <td class="left"><%= fmt(item.unit_price) %></td>
-        <td class="left bold"><%= fmt(parseFloat(item.unit_price) * parseInt(item.quantity)) %></td>
+        <td class="left bold"><%= fmt(parseFloat(item.unit_price) * nq) %></td>
       </tr>
       <% } %>
     </tbody>
@@ -200,17 +205,20 @@ function payMethodEn(m) {
       </tr>
     </thead>
     <tbody>
-      <% for (const item of items) { %>
+      <% for (const item of items) { const nq = parseInt(item.net_qty != null ? item.net_qty : item.quantity); const rq = parseInt(item.returned_qty || 0); if (nq <= 0 && rq > 0) continue; %>
       <tr>
         <td class="left" style="word-break:break-word;line-height:1.4;">
           <%- item.product_name %>
           <% if (item.selected_option) { %>
           <div style="font-size:9px;font-weight:700;color:#000;margin-top:1px;">◈ <%- item.selected_option %></div>
           <% } %>
+          <% if (rq > 0) { %>
+          <div style="font-size:9px;color:#c00;margin-top:1px;">Returned: <%= rq %></div>
+          <% } %>
         </td>
-        <td class="center"><%= item.quantity %></td>
+        <td class="center"><%= nq %></td>
         <td class="left"><%= fmt(item.unit_price) %></td>
-        <td class="left bold"><%= fmt(parseFloat(item.unit_price) * parseInt(item.quantity)) %></td>
+        <td class="left bold"><%= fmt(parseFloat(item.unit_price) * nq) %></td>
       </tr>
       <% } %>
     </tbody>
@@ -234,16 +242,24 @@ function payMethodEn(m) {
     <div class="sub-row bold" style="direction:ltr;"><span>Delivery</span><span>+ <%= fmt(sale.delivery_amount) %> <%= currencyEnLabel %></span></div>
     <% } %>
     <% } %>
+    <% if (_totalRet > 0) { %>
+    <% if (showAr) { %>
+    <div class="sub-row" style="font-weight:700;color:#c00;"><span>مرتجع</span><span>- <%= fmt(_totalRet) %> <%= currencyLabel %></span></div>
+    <% } %>
+    <% if (showEn) { %>
+    <div class="sub-row bold" style="direction:ltr;color:#c00;"><span>Returns</span><span>- <%= fmt(_totalRet) %> <%= currencyEnLabel %></span></div>
+    <% } %>
+    <% } %>
     <% if (showAr) { %>
     <div class="total-main">
       <span>الإجمالي</span>
-      <span><%= fmt(sale.total_amount) %> <%= currencyLabel %></span>
+      <span><%= fmt(_netTotal) %> <%= currencyLabel %></span>
     </div>
     <% } %>
     <% if (showEn) { %>
     <div class="total-main" style="direction:ltr;">
       <span>TOTAL</span>
-      <span><%= fmt(sale.total_amount) %> <%= currencyEnLabel %></span>
+      <span><%= fmt(_netTotal) %> <%= currencyEnLabel %></span>
     </div>
     <% } %>
     <% if (sale.payment_method !== 'credit' && sale.amount_received) { %>
@@ -272,18 +288,18 @@ function payMethodEn(m) {
     <% if (prevBal > 0) { %>
     <% if (showAr) { %>
     <div class="row"><span>رصيد سابق:</span><span><%= fmt(prevBal) %> <%= currencyLabel %></span></div>
-    <div class="row"><span>هذا الطلب:</span><span><%= fmt(sale.total_amount) %> <%= currencyLabel %></span></div>
+    <div class="row"><span>هذا الطلب:</span><span><%= fmt(_netTotal) %> <%= currencyLabel %></span></div>
     <% } %>
     <% if (showEn) { %>
     <div class="row" style="direction:ltr;"><span>Previous:</span><span><%= fmt(prevBal) %> <%= currencyEnLabel %></span></div>
-    <div class="row" style="direction:ltr;"><span>This order:</span><span><%= fmt(sale.total_amount) %> <%= currencyEnLabel %></span></div>
+    <div class="row" style="direction:ltr;"><span>This order:</span><span><%= fmt(_netTotal) %> <%= currencyEnLabel %></span></div>
     <% } %>
     <% } %>
     <% if (showAr) { %>
-    <div class="balance-total"><span>إجمالي المتبقي</span><span><%= fmt(prevBal + parseFloat(sale.total_amount)) %> <%= currencyLabel %></span></div>
+    <div class="balance-total"><span>إجمالي المتبقي</span><span><%= fmt(prevBal + _netTotal) %> <%= currencyLabel %></span></div>
     <% } %>
     <% if (showEn) { %>
-    <div class="balance-total" style="direction:ltr;"><span>Total Due</span><span><%= fmt(prevBal + parseFloat(sale.total_amount)) %> <%= currencyEnLabel %></span></div>
+    <div class="balance-total" style="direction:ltr;"><span>Total Due</span><span><%= fmt(prevBal + _netTotal) %> <%= currencyEnLabel %></span></div>
     <% } %>
   </div>
   <% } %>
@@ -309,8 +325,8 @@ function payMethodEn(m) {
       var phone = "<%= customer.phone %>".replace(/[^0-9]/g, "");
       var intl  = phone.startsWith("0") ? "2" + phone : phone;
       var store = "<%- (st && st.store_name) || 'المحل' %>";
-      var items = [<% for (let _i=0; _i<items.length; _i++) { const it=items[_i]; %>"<%- it.product_name.replace(/"/g,'\\"') %> ×<%= parseInt(it.quantity) %>"<%= _i < items.length-1 ? ',' : '' %><% } %>];
-      var total = "<%= fmt(sale.total_amount) %>";
+      var items = [<% for (let _i=0; _i<items.length; _i++) { const it=items[_i]; const _nq=parseInt(it.net_qty!=null?it.net_qty:it.quantity); if(_nq<=0&&parseInt(it.returned_qty||0)>0) continue; %>"<%- it.product_name.replace(/"/g,'\\"') %> ×<%= _nq %>"<%= _i < items.length-1 ? ',' : '' %><% } %>];
+      var total = "<%= fmt(_netTotal) %>";
       var msg   = "🧾 فاتورة من " + store + "\n#<%= sale.id %> — <%= saleDateDay %>\n\n" +
                   items.join("\n") + "\n\nالإجمالي: " + total + " جنيه\nشكراً لتعاملكم معنا 🙏";
       document.getElementById("waBtn").href = "https://wa.me/" + intl + "?text=" + encodeURIComponent(msg);
