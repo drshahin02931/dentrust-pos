@@ -57,8 +57,9 @@
         <label class="text-xs font-medium text-gray-600" data-ar="خطة التقسيط" data-en="Installment Plan">خطة التقسيط</label>
         <input id="f-plan" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="مثال: 500 جنيه شهرياً"/>
       </div>
+      <div id="addModalErr" class="hidden bg-red-50 border border-red-300 text-red-700 text-sm rounded-xl px-3 py-2"></div>
       <div class="flex gap-3 pt-2">
-        <button type="submit" class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800" data-ar="إضافة" data-en="Add">إضافة</button>
+        <button type="submit" id="addModalBtn" class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800" data-ar="إضافة" data-en="Add">إضافة</button>
         <button type="button" onclick="closeAddModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl" data-ar="إلغاء" data-en="Cancel">إلغاء</button>
       </div>
     </form>
@@ -279,19 +280,40 @@ function openAddModal() { document.getElementById("addModal").classList.remove("
 function closeAddModal() {
   document.getElementById("addModal").classList.add("hidden");
   ["f-name","f-phone","f-address","f-plan"].forEach(id => document.getElementById(id).value="");
+  const errEl = document.getElementById("addModalErr");
+  if (errEl) { errEl.classList.add("hidden"); errEl.textContent=""; }
+  const btn = document.getElementById("addModalBtn");
+  if (btn) { btn.disabled=false; btn.textContent="إضافة"; }
 }
 async function addCustomer(e) {
   e.preventDefault();
-  await fetch(`${BASE}/api/customers`, {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({
-      name: document.getElementById("f-name").value,
-      phone: document.getElementById("f-phone").value,
-      address: document.getElementById("f-address").value,
-      installment_plan: document.getElementById("f-plan").value
-    })
-  });
-  closeAddModal(); loadCustomers();
+  const errEl = document.getElementById("addModalErr");
+  const btn   = document.getElementById("addModalBtn");
+  errEl.classList.add("hidden");
+  btn.disabled = true; btn.textContent = "جارٍ الإضافة...";
+  try {
+    const res  = await fetch(`${BASE}/api/customers`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        name:             document.getElementById("f-name").value,
+        phone:            document.getElementById("f-phone").value,
+        address:          document.getElementById("f-address").value,
+        installment_plan: document.getElementById("f-plan").value
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errEl.textContent = data.error || "حدث خطأ";
+      errEl.classList.remove("hidden");
+      btn.disabled = false; btn.textContent = "إضافة";
+      return;
+    }
+    closeAddModal(); loadCustomers();
+  } catch(_) {
+    errEl.textContent = "حدث خطأ في الاتصال";
+    errEl.classList.remove("hidden");
+    btn.disabled = false; btn.textContent = "إضافة";
+  }
 }
 
 // ── Detail modal ──────────────────────────────────────────────────────────────
