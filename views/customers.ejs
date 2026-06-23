@@ -17,10 +17,16 @@
     </div>
   </div>
 
-  <!-- Search -->
-  <input id="searchInput" oninput="filterCustomers()" type="text"
-    data-ar-placeholder="🔍 بحث عن عميل..." data-en-placeholder="🔍 Search customer..."
-    placeholder="🔍 بحث عن عميل..." class="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+  <!-- Search + Debtors filter -->
+  <div class="flex gap-2">
+    <input id="searchInput" oninput="filterCustomers()" type="text"
+      data-ar-placeholder="🔍 بحث عن عميل..." data-en-placeholder="🔍 Search customer..."
+      placeholder="🔍 بحث عن عميل..." class="flex-1 border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+    <button id="debtorsBtn" onclick="toggleDebtorsFilter()"
+      class="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-all bg-white border-gray-200 text-gray-600 hover:border-red-300 hover:bg-red-50 hover:text-red-600">
+      🔴 المديونون
+    </button>
+  </div>
 
   <!-- Customer List -->
   <div id="customerList" class="space-y-2"></div>
@@ -190,6 +196,7 @@ const BASE = "<%- base %>";
 let allCustomers = [];
 let currentCustomer = null;
 let currentTab = 'orders';
+let _debtorsOnly = false;
 
 // ── Load customers ────────────────────────────────────────────────────────────
 async function loadCustomers() {
@@ -242,11 +249,29 @@ function renderCustomers(data) {
   }).join("");
 }
 
+function toggleDebtorsFilter() {
+  _debtorsOnly = !_debtorsOnly;
+  const btn = document.getElementById("debtorsBtn");
+  if (_debtorsOnly) {
+    btn.className = "flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-all bg-red-600 border-red-600 text-white shadow";
+    btn.innerHTML = `🔴 المديونون <span class="bg-white text-red-600 rounded-full text-xs font-black px-1.5 leading-none py-0.5">${allCustomers.filter(c=>c.total_debt>0).length}</span>`;
+  } else {
+    btn.className = "flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-sm font-semibold transition-all bg-white border-gray-200 text-gray-600 hover:border-red-300 hover:bg-red-50 hover:text-red-600";
+    btn.innerHTML = "🔴 المديونون";
+  }
+  filterCustomers();
+}
+
 function filterCustomers() {
   const q = document.getElementById("searchInput").value.toLowerCase();
-  renderCustomers(allCustomers.filter(c =>
+  let result = allCustomers.filter(c =>
     c.name.toLowerCase().includes(q) || (c.phone||"").includes(q)
-  ));
+  );
+  if (_debtorsOnly) {
+    result = result.filter(c => c.total_debt > 0);
+    result.sort((a, b) => b.total_debt - a.total_debt);
+  }
+  renderCustomers(result);
 }
 
 // ── Add customer ──────────────────────────────────────────────────────────────
