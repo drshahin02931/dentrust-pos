@@ -1058,10 +1058,23 @@ app.get(`${BASE}/api/customers`, async (req, res) => {
 
 app.post(`${BASE}/api/customers`, async (req, res) => {
   const d = req.body;
+  if (!d.name) return res.status(400).json({ error: 'الاسم مطلوب' });
   try {
+    // Check duplicate phone before inserting
+    if (d.phone && d.phone.trim()) {
+      const { rows: [existing] } = await posDb.query(
+        'SELECT id, name FROM customers WHERE phone=$1', [d.phone.trim()]
+      );
+      if (existing) {
+        return res.status(409).json({
+          error: `رقم الهاتف موجود بالفعل باسم "${existing.name}"`,
+          existing: { id: existing.id, name: existing.name }
+        });
+      }
+    }
     await posDb.query(
       'INSERT INTO customers (name, phone, address, installment_plan) VALUES ($1,$2,$3,$4)',
-      [d.name, d.phone || '', d.address || '', d.installment_plan || '']
+      [d.name, d.phone?.trim() || '', d.address || '', d.installment_plan || '']
     );
     res.status(201).json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
@@ -1976,6 +1989,16 @@ async function upsertCustomerInPOS(data) {
     'INSERT INTO customers (name, phone, city, region, street, building_number, landmark, address, dentrust_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
     [name, cleanPhone, city || '', region || '', street || '', building || '', landmark || '', fullAddr, dentrust_id]
   );
+  // 🔔 Alert POS staff: new customer registered from website
+  try {
+    const addrDisplay = fullAddr || city || region || '';
+    await posDb.query(
+      `INSERT INTO website_order_alerts
+         (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id, total_amount, items_count, items_summary, seen)
+       VALUES ($1,$2,$3,$4,'new_customer',0,0,'تسجيل جديد من الموقع',false)`,
+      [name, cleanPhone, city || '', addrDisplay]
+    );
+  } catch (_) {}
   return ins.id;
 }
 
