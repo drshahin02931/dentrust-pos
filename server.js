@@ -2834,6 +2834,20 @@ async function getBotKnowledgeText() {
 }
 
 // ── AI – shared helper ────────────────────────────────────────────────────────
+// Free models tried in order — if one is rate-limited, next is used automatically
+const FREE_TEXT_MODELS = [
+  'google/gemini-2.0-flash-exp:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'qwen/qwen-2.5-72b-instruct:free',
+  'deepseek/deepseek-chat:free',
+  'mistralai/mistral-7b-instruct:free',
+  'meta-llama/llama-3.1-8b-instruct:free',
+];
+const FREE_VISION_MODELS = [
+  'google/gemini-2.0-flash-exp:free',
+  'meta-llama/llama-3.2-11b-vision-instruct:free',
+];
+
 async function callOpenRouter(payload) {
   const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -2849,20 +2863,44 @@ async function callOpenRouter(payload) {
   return resp.json();
 }
 
+// Tries each free model in order; skips on 429/402, returns first success
+async function callOpenRouterFree(payload, modelList) {
+  const models = modelList || FREE_TEXT_MODELS;
+  let lastErr = null;
+  for (const model of models) {
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://dentrust.site',
+        'X-Title': 'DenTrust DenBot',
+      },
+      body: JSON.stringify({ ...payload, model }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (resp.status === 429 || resp.status === 402) {
+      lastErr = `${model} → ${resp.status}`;
+      continue;
+    }
+    return { resp, model };
+  }
+  throw new Error(`All free models failed: ${lastErr}`);
+}
+
 // POST /api/ai/fashion-chat  (text chat)
 app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
     const { messages = [], system = '', max_tokens = 600 } = req.body;
-    const model = 'meta-llama/llama-3.3-70b-instruct:free';
     const knowledge = await getBotKnowledgeText();
     const fullSystem = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
-    const data = await callOpenRouter({
-      model, max_tokens,
+    const { resp } = await callOpenRouterFree({
+      max_tokens,
       messages: [{ role: 'system', content: fullSystem }, ...messages],
     });
-    res.json(data);
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+    res.json(await resp.json());
+  } catch (err) { res.status(500).json({ error: `خطأ داخلي: ${err.message}` }); }
 });
 
 // POST /api/ai/fashion-tryon  (vision)
@@ -2895,8 +2933,6 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
     const { messages = [], max_tokens = 800, stream = true } = req.body;
-    const model = 'meta-llama/llama-3.3-70b-instruct:free';
-    // Inject DenTrust system prompt + stored knowledge
     const knowledge = await getBotKnowledgeText();
     const sysContent = DENTRUST_BOT_SYSTEM + knowledge;
     let patchedMessages = [...messages];
@@ -2908,22 +2944,7 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
         patchedMessages = [{ role: 'system', content: sysContent }, ...patchedMessages];
       }
     }
-    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${OPENROUTER_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://dentrust.site',
-        'X-Title': 'DenTrust DenBot',
-      },
-      body: JSON.stringify({ model, messages: patchedMessages, max_tokens, stream }),
-      signal: AbortSignal.timeout(30000),
-    });
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => resp.status);
-      if (!res.headersSent) return res.status(502).json({ error: `OpenRouter error ${resp.status}: ${errText}` });
-      return res.end();
-    }
+    const { resp } = await callOpenRouterFree({ messages: patchedMessages, max_tokens, stream });
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -2950,14 +2971,13 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
   try {
     const { messages = [], max_tokens = 800, stream = true } = req.body;
     const hasImage = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'));
-    const model = hasImage ? 'meta-llama/llama-3.2-11b-vision-instruct:free' : 'meta-llama/llama-3.3-70b-instruct:free';
+    const modelList = hasImage ? FREE_VISION_MODELS : FREE_TEXT_MODELS;
     // Inject product knowledge from POS DB — same as DenBot
     const knowledge = await getBotKnowledgeText();
     let patchedMessages = [...messages];
     if (knowledge) {
       const sysIdx = patchedMessages.findIndex(m => m.role === 'system');
       if (sysIdx >= 0) {
-        // Append knowledge to existing system prompt so StyleBot knows products
         patchedMessages[sysIdx] = {
           ...patchedMessages[sysIdx],
           content: patchedMessages[sysIdx].content + '\n' + knowledge,
@@ -2966,22 +2986,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
         patchedMessages = [{ role: 'system', content: knowledge }, ...patchedMessages];
       }
     }
-    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${OPENROUTER_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://dentrust.site',
-        'X-Title': 'DenTrust StyleBot',
-      },
-      body: JSON.stringify({ model, messages: patchedMessages, max_tokens, stream }),
-      signal: AbortSignal.timeout(30000),
-    });
-    if (!resp.ok) {
-      const errText = await resp.text().catch(() => resp.status);
-      if (!res.headersSent) return res.status(502).json({ error: `OpenRouter error ${resp.status}: ${errText}` });
-      return res.end();
-    }
+    const { resp } = await callOpenRouterFree({ messages: patchedMessages, max_tokens, stream }, modelList);
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
