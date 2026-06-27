@@ -2822,9 +2822,13 @@ async function getBotKnowledgeText() {
     return _knowledgeCache;
   }
   try {
-    const { rows } = await posDb.query(
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('knowledge timeout')), 4000)
+    );
+    const query = posDb.query(
       "SELECT category, title, content FROM bot_knowledge WHERE active=true ORDER BY category, id"
     );
+    const { rows } = await Promise.race([query, timeout]);
     if (!rows.length) { _knowledgeCache = ''; _knowledgeCacheAt = now; return ''; }
     const lines = rows.map(r => `[${r.category}] ${r.title}: ${r.content}`).join('\n');
     _knowledgeCache = `\n\n=== معلومات مخزّنة من إدارة المتجر — التزم بها تماماً وأجب منها مباشرةً ===\n${lines}\n===`;
@@ -3865,6 +3869,7 @@ async function main() {
     await initPriceTracker();
     await seedManager();
     app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
+    app.get('/api/healthz', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`POS server running on port ${PORT} at ${BASE}`);
       const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
