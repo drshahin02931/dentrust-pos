@@ -2853,7 +2853,7 @@ async function callOpenRouter(payload) {
 app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { messages = [], system = '', model = 'google/gemini-2.0-flash-001', max_tokens = 600 } = req.body;
+    const { messages = [], system = '', model = 'google/gemini-2.0-flash-exp:free', max_tokens = 600 } = req.body;
     const knowledge = await getBotKnowledgeText();
     const fullSystem = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
     const data = await callOpenRouter({
@@ -2873,7 +2873,7 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
     const knowledge = await getBotKnowledgeText();
     const sysContent = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
     const data = await callOpenRouter({
-      model: 'google/gemini-2.5-flash',
+      model: 'google/gemini-2.0-flash-exp:free',
       max_tokens: 900,
       messages: [
         { role: 'system', content: sysContent },
@@ -2893,7 +2893,7 @@ const DENTRUST_BOT_SYSTEM = `أنت DenBot — مساعد ذكي ومتخصص ل
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { model = 'google/gemini-2.0-flash-001', messages = [], max_tokens = 800, stream = true } = req.body;
+    const { model = 'google/gemini-2.0-flash-exp:free', messages = [], max_tokens = 800, stream = true } = req.body;
     // Inject DenTrust system prompt + stored knowledge
     const knowledge = await getBotKnowledgeText();
     const sysContent = DENTRUST_BOT_SYSTEM + knowledge;
@@ -2948,7 +2948,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
   try {
     const { messages = [], max_tokens = 800, stream = true, model: _modelParam, _model: _modelAlt } = req.body;
     const hasImage = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'));
-    const model = hasImage ? 'google/gemini-2.0-flash-001' : (_modelParam || _modelAlt || 'google/gemini-2.0-flash-001');
+    const model = hasImage ? 'google/gemini-2.0-flash-exp:free' : (_modelParam || _modelAlt || 'google/gemini-2.0-flash-exp:free');
     // Inject product knowledge from POS DB — same as DenBot
     const knowledge = await getBotKnowledgeText();
     let patchedMessages = [...messages];
@@ -3249,7 +3249,7 @@ async function scrapePageProducts(siteUrl) {
         .replace(/\s+/g, ' ').trim().slice(0, 7000);
 
       const aiData = await callOpenRouter({
-        model: 'openai/gpt-4o-mini',
+        model: 'google/gemini-2.0-flash-exp:free',
         max_tokens: 1500,
         messages: [
           {
