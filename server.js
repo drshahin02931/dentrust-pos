@@ -2756,7 +2756,7 @@ function r2(n) { return Math.round(parseFloat(n || 0) * 100) / 100; }
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 const SUPABASE_BASE = 'https://ywfunodybcqakhweuxwn.supabase.co';
-const WEBSITE_ORIGINS = (process.env.WEBSITE_ORIGIN || 'https://dentrust.site')
+const WEBSITE_ORIGINS = (process.env.WEBSITE_ORIGIN || 'https://dentrust.site,https://www.dentrust.site')
   .split(',').map(s => s.trim());
 
 const webCors = cors({
@@ -2853,7 +2853,7 @@ async function callOpenRouter(payload) {
 app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { messages = [], system = '', model = 'google/gemini-3.5-flash', max_tokens = 600 } = req.body;
+    const { messages = [], system = '', model = 'google/gemini-2.0-flash-001', max_tokens = 600 } = req.body;
     const knowledge = await getBotKnowledgeText();
     const fullSystem = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
     const data = await callOpenRouter({
@@ -2893,7 +2893,7 @@ const DENTRUST_BOT_SYSTEM = `أنت DenBot — مساعد ذكي ومتخصص ل
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { model = 'google/gemini-3.5-flash', messages = [], max_tokens = 800, stream = true } = req.body;
+    const { model = 'google/gemini-2.0-flash-001', messages = [], max_tokens = 800, stream = true } = req.body;
     // Inject DenTrust system prompt + stored knowledge
     const knowledge = await getBotKnowledgeText();
     const sysContent = DENTRUST_BOT_SYSTEM + knowledge;
@@ -2917,6 +2917,11 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
       body: JSON.stringify({ model, messages: patchedMessages, max_tokens, stream }),
       signal: AbortSignal.timeout(30000),
     });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => resp.status);
+      if (!res.headersSent) return res.status(502).json({ error: `OpenRouter error ${resp.status}: ${errText}` });
+      return res.end();
+    }
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -2932,7 +2937,7 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
       res.json(await resp.json());
     }
   } catch (err) {
-    if (!res.headersSent) res.status(500).json({ error: 'خطأ داخلي' });
+    if (!res.headersSent) res.status(500).json({ error: `خطأ داخلي: ${err.message}` });
     else res.end();
   }
 });
@@ -2943,7 +2948,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
   try {
     const { messages = [], max_tokens = 800, stream = true, model: _modelParam, _model: _modelAlt } = req.body;
     const hasImage = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'));
-    const model = hasImage ? 'google/gemini-2.5-flash-image' : (_modelParam || _modelAlt || 'google/gemini-3.5-flash');
+    const model = hasImage ? 'google/gemini-2.0-flash-001' : (_modelParam || _modelAlt || 'google/gemini-2.0-flash-001');
     // Inject product knowledge from POS DB — same as DenBot
     const knowledge = await getBotKnowledgeText();
     let patchedMessages = [...messages];
@@ -2970,6 +2975,11 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
       body: JSON.stringify({ model, messages: patchedMessages, max_tokens, stream }),
       signal: AbortSignal.timeout(30000),
     });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => resp.status);
+      if (!res.headersSent) return res.status(502).json({ error: `OpenRouter error ${resp.status}: ${errText}` });
+      return res.end();
+    }
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -2985,7 +2995,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
       res.json(await resp.json());
     }
   } catch (err) {
-    if (!res.headersSent) res.status(500).json({ error: 'خطأ داخلي' });
+    if (!res.headersSent) res.status(500).json({ error: `خطأ داخلي: ${err.message}` });
     else res.end();
   }
 });
