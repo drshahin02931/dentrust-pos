@@ -2838,18 +2838,44 @@ async function getBotKnowledgeText() {
 }
 
 // ── AI – shared helper ────────────────────────────────────────────────────────
-// Free models tried in order — if one is rate-limited, next is used automatically
-const FREE_TEXT_MODELS = [
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'qwen/qwen-2.5-72b-instruct:free',
-  'deepseek/deepseek-chat:free',
-  'mistralai/mistral-7b-instruct:free',
-  'meta-llama/llama-3.1-8b-instruct:free',
-];
-const FREE_VISION_MODELS = [
-  'meta-llama/llama-3.2-11b-vision-instruct:free',
-  'qwen/qwen2.5-vl-72b-instruct:free',
-];
+// Dynamic free-model cache — refreshed from OpenRouter every hour
+let _freeModelCache = null;
+let _freeModelCacheAt = 0;
+
+async function fetchFreeModels() {
+  if (_freeModelCache && Date.now() - _freeModelCacheAt < 3600_000) return _freeModelCache;
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/models', {
+      headers: { Authorization: `Bearer ${OPENROUTER_KEY}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!r.ok) throw new Error(`models list ${r.status}`);
+    const { data } = await r.json();
+    const all = (data || []).map(m => m.id).filter(id => id.endsWith(':free'));
+    // vision-capable models (those mentioning vision/vl/multimodal in id or architecture)
+    const vision = all.filter(id => /vision|vl\b|multimodal/i.test(id));
+    const text   = all.filter(id => !vision.includes(id));
+    _freeModelCache = { text: text.length ? text : all, vision: vision.length ? vision : all };
+    _freeModelCacheAt = Date.now();
+    console.log(`[AI] free text models: ${_freeModelCache.text.length}, vision: ${_freeModelCache.vision.length}`);
+    return _freeModelCache;
+  } catch (e) {
+    console.warn('[AI] fetchFreeModels failed:', e.message, '— using fallback list');
+    // hard-coded fallbacks in case the API call fails
+    return {
+      text: [
+        'meta-llama/llama-3.3-70b-instruct:free',
+        'qwen/qwen-2.5-72b-instruct:free',
+        'deepseek/deepseek-chat:free',
+        'mistralai/mistral-7b-instruct:free',
+      ],
+      vision: [
+        'meta-llama/llama-3.2-11b-vision-instruct:free',
+        'qwen/qwen2.5-vl-72b-instruct:free',
+      ],
+    };
+  }
+}
 
 async function callOpenRouter(payload) {
   const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -2866,10 +2892,15 @@ async function callOpenRouter(payload) {
   return resp.json();
 }
 
-// Tries each free model in order; skips on 429/402/404, returns first success
+// Tries each free model in order; skips on 429/402/404/error-body, returns first success
 async function callOpenRouterFree(payload, modelList) {
-  const models = modelList || FREE_TEXT_MODELS;
-  let lastErr = null;
+  // if no explicit list provided, fetch dynamically from OpenRouter
+  let models = modelList;
+  if (!models) {
+    const cache = await fetchFreeModels();
+    models = cache.text;
+  }
+  let lastErr = 'no models available';
   for (const model of models) {
     let resp;
     try {
@@ -2885,7 +2916,7 @@ async function callOpenRouterFree(payload, modelList) {
         signal: AbortSignal.timeout(30000),
       });
     } catch (e) { lastErr = `${model} → ${e.message}`; continue; }
-    if (resp.status === 429 || resp.status === 402 || resp.status === 404) {
+    if (resp.status === 429 || resp.status === 402 || resp.status === 404 || resp.status >= 500) {
       lastErr = `${model} → ${resp.status}`;
       continue;
     }
@@ -2906,24 +2937,32 @@ app.get('/api/ai/test', async (req, res) => {
   const key = OPENROUTER_KEY;
   if (!key) return res.json({ ok: false, step: 'key', error: 'OPENROUTER_API_KEY is not set on Render' });
   try {
+    // step 1: fetch available free models
+    const cache = await fetchFreeModels();
+    const firstText   = cache.text[0]   || null;
+    const firstVision = cache.vision[0] || null;
+    if (!firstText) return res.json({ ok: false, step: 'models', error: 'No free text models found on OpenRouter', cache });
+
+    // step 2: try a quick chat with the first available model
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${key}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://dentrust.site',
+        'X-Title': 'DenTrust DenBot',
       },
       body: JSON.stringify({
-        model: 'meta-llama/llama-3.3-70b-instruct:free',
+        model: firstText,
         max_tokens: 20,
         messages: [{ role: 'user', content: 'say hi in arabic' }],
       }),
       signal: AbortSignal.timeout(20000),
     });
     const data = await resp.json();
-    if (data.error) return res.json({ ok: false, step: 'openrouter', status: resp.status, error: data.error });
+    if (data.error) return res.json({ ok: false, step: 'chat', model: firstText, status: resp.status, error: data.error, availableText: cache.text.slice(0,5), availableVision: cache.vision.slice(0,5) });
     const reply = data.choices?.[0]?.message?.content || '(no content)';
-    res.json({ ok: true, model: 'meta-llama/llama-3.3-70b-instruct:free', reply, keyPrefix: key.slice(0, 8) + '...' });
+    res.json({ ok: true, model: firstText, reply, keyPrefix: key.slice(0, 8) + '...', availableText: cache.text.length, availableVision: cache.vision.length });
   } catch (err) {
     res.json({ ok: false, step: 'fetch', error: err.message });
   }
@@ -2952,6 +2991,7 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
     const imgUrl = image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}`;
     const knowledge = await getBotKnowledgeText();
     const sysContent = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
+    const visionModels = (await fetchFreeModels()).vision;
     const { resp: visionResp } = await callOpenRouterFree({
       max_tokens: 900,
       messages: [
@@ -2961,7 +3001,7 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
           { type: 'text', text: prompt },
         ]},
       ],
-    }, FREE_VISION_MODELS);
+    }, visionModels);
     const data = await visionResp.json();
     res.json(data);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
