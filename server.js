@@ -1139,6 +1139,55 @@ app.get(`${BASE}/api/customers/:cid/statement`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+// ── تعديل بيانات عميل ────────────────────────────────────────────────────────
+app.patch(`${BASE}/api/customers/:cid`, async (req, res) => {
+  if (!isMgr(req) && !hasPerm(req, 'customers')) return res.status(403).json({ error: 'غير مصرح' });
+  const cid = parseInt(req.params.cid, 10);
+  const { name, phone, address, installment_plan } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'الاسم مطلوب' });
+  try {
+    const { rowCount } = await posDb.query(
+      `UPDATE customers SET
+         name             = $1,
+         phone            = COALESCE(NULLIF($2,''), phone),
+         address          = COALESCE(NULLIF($3,''), address),
+         installment_plan = COALESCE(NULLIF($4,''), installment_plan)
+       WHERE id = $5`,
+      [name.trim(), (phone||'').trim(), (address||'').trim(), (installment_plan||'').trim(), cid]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'العميل غير موجود' });
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── دمج عميلين ────────────────────────────────────────────────────────────────
+app.post(`${BASE}/api/customers/merge`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'المدير فقط يمكنه دمج العملاء' });
+  const keepId = parseInt(req.body.keep_id, 10);
+  const dropId = parseInt(req.body.drop_id, 10);
+  if (!keepId || !dropId) return res.status(400).json({ error: 'يجب اختيار عميلين' });
+  if (keepId === dropId) return res.status(400).json({ error: 'لا يمكن دمج عميل مع نفسه' });
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [keep] } = await client.query('SELECT * FROM customers WHERE id=$1', [keepId]);
+    const { rows: [drop] } = await client.query('SELECT * FROM customers WHERE id=$1', [dropId]);
+    if (!keep || !drop) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'أحد العملاء غير موجود' }); }
+    await client.query('UPDATE sales                SET customer_id=$1 WHERE customer_id=$2', [keepId, dropId]);
+    await client.query('UPDATE customer_payments    SET customer_id=$1 WHERE customer_id=$2', [keepId, dropId]);
+    await client.query('UPDATE customer_manual_debts SET customer_id=$1 WHERE customer_id=$2', [keepId, dropId]);
+    await client.query('UPDATE installment_schedules SET customer_id=$1 WHERE customer_id=$2', [keepId, dropId]);
+    const mergedDebt = parseFloat(keep.total_debt || 0) + parseFloat(drop.total_debt || 0);
+    await client.query('UPDATE customers SET total_debt=$1 WHERE id=$2', [mergedDebt, keepId]);
+    await client.query('DELETE FROM customers WHERE id=$1', [dropId]);
+    await client.query('COMMIT');
+    res.json({ ok: true, merged_debt: mergedDebt, kept: keep.name, dropped: drop.name });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
+  } finally { client.release(); }
+});
+
 app.delete(`${BASE}/api/customers/:cid`, async (req, res) => {
   try {
     await posDb.query('DELETE FROM customers WHERE id=$1', [parseInt(req.params.cid, 10)]);
@@ -1386,10 +1435,15 @@ app.get(`${BASE}/api/invoices/:sid`, async (req, res) => {
   const sid = parseInt(req.params.sid, 10);
   try {
     const { rows: [inv] } = await posDb.query(
-      `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone
+      `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone,
+              c.address AS customer_address, c.city AS customer_city
        FROM sales s LEFT JOIN customers c ON s.customer_id = c.id WHERE s.id=$1`, [sid]
     );
     if (!inv) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+    const { rows: [refRow] } = await posDb.query(
+      `SELECT COALESCE(SUM(total_refund),0) AS total_refunded FROM returns WHERE sale_id=$1`, [sid]
+    );
+    inv.total_refunded = parseFloat(refRow.total_refunded || 0);
     const { rows: itemsRaw } = await posDb.query('SELECT * FROM sale_items WHERE sale_id=$1', [sid]);
     const items = [];
     for (const item of itemsRaw) {
@@ -1409,6 +1463,60 @@ app.get(`${BASE}/api/invoices/:sid`, async (req, res) => {
     );
     res.json({ invoice: inv, items, returns });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── تعديل بيانات العميل على الفاتورة ──────────────────────────────────────────
+app.patch(`${BASE}/api/sales/:sid/customer`, async (req, res) => {
+  if (!isMgr(req) && !hasPerm(req, 'invoices')) return res.status(403).json({ error: 'غير مصرح' });
+  const sid = parseInt(req.params.sid, 10);
+  const { customer_name, customer_phone, customer_address } = req.body;
+  try {
+    const { rows: [sale] } = await posDb.query('SELECT * FROM sales WHERE id=$1', [sid]);
+    if (!sale) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+    await posDb.query('UPDATE sales SET customer_name=$1 WHERE id=$2', [customer_name || sale.customer_name, sid]);
+    if (sale.customer_id) {
+      await posDb.query(
+        `UPDATE customers SET
+           name    = COALESCE(NULLIF($1,''), name),
+           phone   = COALESCE(NULLIF($2,''), phone),
+           address = COALESCE(NULLIF($3,''), address)
+         WHERE id=$4`,
+        [customer_name, customer_phone, customer_address, sale.customer_id]
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── تعديل أسعار الأصناف في الفاتورة ──────────────────────────────────────────
+app.patch(`${BASE}/api/sales/:sid/item-prices`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'المدير فقط يمكنه تعديل الأسعار' });
+  const sid = parseInt(req.params.sid, 10);
+  const { items } = req.body; // [{ id, unit_price }]
+  if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'لا توجد أصناف للتعديل' });
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    for (const it of items) {
+      const price = parseFloat(it.unit_price);
+      if (isNaN(price) || price < 0) continue;
+      await client.query(
+        'UPDATE sale_items SET unit_price=$1, snapshot_unit_price=$1 WHERE id=$2 AND sale_id=$3',
+        [price, parseInt(it.id, 10), sid]
+      );
+    }
+    const { rows: [tot] } = await client.query(
+      'SELECT COALESCE(SUM(unit_price * quantity),0) AS t FROM sale_items WHERE sale_id=$1', [sid]
+    );
+    const { rows: [disc] } = await client.query('SELECT discount_amount, delivery_amount FROM sales WHERE id=$1', [sid]);
+    const newTotal = parseFloat(tot.t) - parseFloat(disc?.discount_amount || 0) + parseFloat(disc?.delivery_amount || 0);
+    await client.query('UPDATE sales SET total_amount=$1 WHERE id=$2', [Math.max(0, newTotal), sid]);
+    await client.query('COMMIT');
+    res.json({ ok: true, new_total: Math.max(0, newTotal) });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: 'خطأ داخلي' });
+  } finally { client.release(); }
 });
 
 app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
