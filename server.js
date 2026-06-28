@@ -2841,15 +2841,14 @@ async function getBotKnowledgeText() {
 // Free models tried in order — if one is rate-limited, next is used automatically
 const FREE_TEXT_MODELS = [
   'meta-llama/llama-3.3-70b-instruct:free',
-  'google/gemini-2.0-flash-exp:free',
   'qwen/qwen-2.5-72b-instruct:free',
   'deepseek/deepseek-chat:free',
   'mistralai/mistral-7b-instruct:free',
   'meta-llama/llama-3.1-8b-instruct:free',
 ];
 const FREE_VISION_MODELS = [
-  'google/gemini-2.0-flash-exp:free',
   'meta-llama/llama-3.2-11b-vision-instruct:free',
+  'qwen/qwen2.5-vl-72b-instruct:free',
 ];
 
 async function callOpenRouter(payload) {
@@ -2867,30 +2866,68 @@ async function callOpenRouter(payload) {
   return resp.json();
 }
 
-// Tries each free model in order; skips on 429/402, returns first success
+// Tries each free model in order; skips on 429/402/404, returns first success
 async function callOpenRouterFree(payload, modelList) {
   const models = modelList || FREE_TEXT_MODELS;
   let lastErr = null;
   for (const model of models) {
-    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${OPENROUTER_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://dentrust.site',
-        'X-Title': 'DenTrust DenBot',
-      },
-      body: JSON.stringify({ ...payload, model }),
-      signal: AbortSignal.timeout(30000),
-    });
-    if (resp.status === 429 || resp.status === 402) {
+    let resp;
+    try {
+      resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${OPENROUTER_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://dentrust.site',
+          'X-Title': 'DenTrust DenBot',
+        },
+        body: JSON.stringify({ ...payload, model }),
+        signal: AbortSignal.timeout(30000),
+      });
+    } catch (e) { lastErr = `${model} → ${e.message}`; continue; }
+    if (resp.status === 429 || resp.status === 402 || resp.status === 404) {
       lastErr = `${model} → ${resp.status}`;
       continue;
     }
+    /* check for error body on 200 (OpenRouter wraps some errors as 200) */
+    const clone = resp.clone();
+    try {
+      const json = await clone.json();
+      if (json.error) { lastErr = `${model} → ${json.error.message}`; continue; }
+    } catch (_) { /* not JSON — treat as success */ }
     return { resp, model };
   }
   throw new Error(`All free models failed: ${lastErr}`);
 }
+
+// GET /api/ai/test  — diagnostic endpoint, open in browser to check AI status
+app.get('/api/ai/test', async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  const key = OPENROUTER_KEY;
+  if (!key) return res.json({ ok: false, step: 'key', error: 'OPENROUTER_API_KEY is not set on Render' });
+  try {
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://dentrust.site',
+      },
+      body: JSON.stringify({
+        model: 'meta-llama/llama-3.3-70b-instruct:free',
+        max_tokens: 20,
+        messages: [{ role: 'user', content: 'say hi in arabic' }],
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const data = await resp.json();
+    if (data.error) return res.json({ ok: false, step: 'openrouter', status: resp.status, error: data.error });
+    const reply = data.choices?.[0]?.message?.content || '(no content)';
+    res.json({ ok: true, model: 'meta-llama/llama-3.3-70b-instruct:free', reply, keyPrefix: key.slice(0, 8) + '...' });
+  } catch (err) {
+    res.json({ ok: false, step: 'fetch', error: err.message });
+  }
+});
 
 // POST /api/ai/fashion-chat  (text chat)
 app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
@@ -2915,8 +2952,7 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
     const imgUrl = image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}`;
     const knowledge = await getBotKnowledgeText();
     const sysContent = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
-    const data = await callOpenRouter({
-      model: 'google/gemini-2.0-flash-exp:free',
+    const { resp: visionResp } = await callOpenRouterFree({
       max_tokens: 900,
       messages: [
         { role: 'system', content: sysContent },
@@ -2925,7 +2961,8 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
           { type: 'text', text: prompt },
         ]},
       ],
-    });
+    }, FREE_VISION_MODELS);
+    const data = await visionResp.json();
     res.json(data);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
