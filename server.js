@@ -2842,17 +2842,26 @@ async function getBotKnowledgeText() {
 let _freeModelCache = null;
 let _freeModelCacheAt = 0;
 
+// Stable high-quality free models — always tried first
+const PREFERRED_FREE_MODELS = [
+  'openai/gpt-oss-120b:free',
+  'google/gemma-4-31b-it:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
+];
+
 // Keywords that mark a model as code/math-only — bad for Arabic chat
 const CODE_MODEL_RE = /code|math|coder|sql|starcoder|wizard.*math/i;
 // Keywords that mark a model as good for general chat
 const CHAT_MODEL_RE = /llama|qwen|mistral|gemma|deepseek|phi|command|hermes|nous|zephyr|solar|openchat|smollm|internlm/i;
 
 function sortFreeModels(ids) {
-  // preferred first, code/math last
-  const preferred = ids.filter(id => CHAT_MODEL_RE.test(id) && !CODE_MODEL_RE.test(id));
-  const neutral   = ids.filter(id => !CHAT_MODEL_RE.test(id) && !CODE_MODEL_RE.test(id));
-  const codeLast  = ids.filter(id => CODE_MODEL_RE.test(id));
-  return [...preferred, ...neutral, ...codeLast];
+  // preferred (known-good) first, then general chat, then neutral, then code last
+  const top      = PREFERRED_FREE_MODELS.filter(p => ids.includes(p));
+  const rest     = ids.filter(id => !PREFERRED_FREE_MODELS.includes(id));
+  const chatGood = rest.filter(id => CHAT_MODEL_RE.test(id) && !CODE_MODEL_RE.test(id));
+  const neutral  = rest.filter(id => !CHAT_MODEL_RE.test(id) && !CODE_MODEL_RE.test(id));
+  const codeLast = rest.filter(id => CODE_MODEL_RE.test(id));
+  return [...top, ...chatGood, ...neutral, ...codeLast];
 }
 
 async function fetchFreeModels() {
@@ -2876,10 +2885,11 @@ async function fetchFreeModels() {
     console.warn('[AI] fetchFreeModels failed:', e.message, '— using fallback list');
     return {
       text: [
+        'openai/gpt-oss-120b:free',
+        'google/gemma-4-31b-it:free',
+        'nvidia/nemotron-3-super-120b-a12b:free',
         'meta-llama/llama-3.3-70b-instruct:free',
         'qwen/qwen-2.5-72b-instruct:free',
-        'deepseek/deepseek-chat:free',
-        'mistralai/mistral-7b-instruct:free',
       ],
       vision: [
         'meta-llama/llama-3.2-11b-vision-instruct:free',
@@ -2925,7 +2935,7 @@ async function callOpenRouterFree(payload, modelList) {
           'X-Title': 'DenTrust DenBot',
         },
         body: JSON.stringify({ ...payload, model }),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(12000),
       });
     } catch (e) { lastErr = `${model} → ${e.message}`; continue; }
     if (resp.status === 429 || resp.status === 402 || resp.status === 404 || resp.status >= 500) {
@@ -2988,7 +2998,7 @@ app.get('/api/ai/test', async (req, res) => {
 app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
   if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
   try {
-    const { messages = [], system = '', max_tokens = 600 } = req.body;
+    const { messages = [], system = '', max_tokens = 350 } = req.body;
     const knowledge = await getBotKnowledgeText();
     const fullSystem = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
     const { resp } = await callOpenRouterFree({
@@ -3963,6 +3973,8 @@ async function main() {
     await seedManager();
     app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     app.get('/api/healthz', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
+    // pre-warm AI model list so first user request is fast
+    if (OPENROUTER_KEY) fetchFreeModels().catch(() => {});
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`POS server running on port ${PORT} at ${BASE}`);
       const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
