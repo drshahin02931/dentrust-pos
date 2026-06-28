@@ -2842,6 +2842,19 @@ async function getBotKnowledgeText() {
 let _freeModelCache = null;
 let _freeModelCacheAt = 0;
 
+// Keywords that mark a model as code/math-only — bad for Arabic chat
+const CODE_MODEL_RE = /code|math|coder|sql|starcoder|wizard.*math/i;
+// Keywords that mark a model as good for general chat
+const CHAT_MODEL_RE = /llama|qwen|mistral|gemma|deepseek|phi|command|hermes|nous|zephyr|solar|openchat|smollm|internlm/i;
+
+function sortFreeModels(ids) {
+  // preferred first, code/math last
+  const preferred = ids.filter(id => CHAT_MODEL_RE.test(id) && !CODE_MODEL_RE.test(id));
+  const neutral   = ids.filter(id => !CHAT_MODEL_RE.test(id) && !CODE_MODEL_RE.test(id));
+  const codeLast  = ids.filter(id => CODE_MODEL_RE.test(id));
+  return [...preferred, ...neutral, ...codeLast];
+}
+
 async function fetchFreeModels() {
   if (_freeModelCache && Date.now() - _freeModelCacheAt < 3600_000) return _freeModelCache;
   try {
@@ -2854,14 +2867,13 @@ async function fetchFreeModels() {
     const all = (data || []).map(m => m.id).filter(id => id.endsWith(':free'));
     // vision-capable models (those mentioning vision/vl/multimodal in id or architecture)
     const vision = all.filter(id => /vision|vl\b|multimodal/i.test(id));
-    const text   = all.filter(id => !vision.includes(id));
-    _freeModelCache = { text: text.length ? text : all, vision: vision.length ? vision : all };
+    const text   = sortFreeModels(all.filter(id => !vision.includes(id)));
+    _freeModelCache = { text: text.length ? text : sortFreeModels(all), vision: vision.length ? vision : all };
     _freeModelCacheAt = Date.now();
-    console.log(`[AI] free text models: ${_freeModelCache.text.length}, vision: ${_freeModelCache.vision.length}`);
+    console.log(`[AI] free text models: ${_freeModelCache.text.length}, first: ${_freeModelCache.text[0]}, vision: ${_freeModelCache.vision.length}`);
     return _freeModelCache;
   } catch (e) {
     console.warn('[AI] fetchFreeModels failed:', e.message, '— using fallback list');
-    // hard-coded fallbacks in case the API call fails
     return {
       text: [
         'meta-llama/llama-3.3-70b-instruct:free',
@@ -2920,11 +2932,15 @@ async function callOpenRouterFree(payload, modelList) {
       lastErr = `${model} → ${resp.status}`;
       continue;
     }
-    /* check for error body on 200 (OpenRouter wraps some errors as 200) */
+    /* check for error body or empty content on 200 */
     const clone = resp.clone();
     try {
       const json = await clone.json();
       if (json.error) { lastErr = `${model} → ${json.error.message}`; continue; }
+      const content = json.choices?.[0]?.message?.content;
+      if (content !== undefined && content !== null && String(content).trim() === '') {
+        lastErr = `${model} → empty response`; continue;
+      }
     } catch (_) { /* not JSON — treat as success */ }
     return { resp, model };
   }
