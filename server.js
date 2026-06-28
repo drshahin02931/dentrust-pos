@@ -2441,8 +2441,8 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     await posDb.query(
       `INSERT INTO website_order_alerts
          (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id,
-          total_amount, items_count, items_summary, promo_code, discount_amount)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          total_amount, items_count, items_summary, promo_code, discount_amount, delivery_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
         d.customer_name || 'عميل',
         d.customer_phone || '',
@@ -2453,7 +2453,8 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
         d.dentrust_order_id || null,
         alertTotal, alertItems.length, alertSummary || '—',
         d.promo_code || null,
-        d.discount_amount ? parseFloat(d.discount_amount) : null
+        d.discount_amount ? parseFloat(d.discount_amount) : null,
+        d.delivery_amount ? parseFloat(d.delivery_amount) : null
       ]
     ).catch(() => {});
 
@@ -2470,10 +2471,12 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     const items = d.items || [];
     let total = parseFloat(d.total_amount || d.total || 0);
     if (!total && items.length) total = items.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
+    const onlineDiscount = d.discount_amount ? parseFloat(d.discount_amount) : 0;
+    const onlineDelivery = d.delivery_amount ? parseFloat(d.delivery_amount) : 0;
     const { rows: [sale] } = await posDb.query(
-      `INSERT INTO sales (total_amount, payment_method, customer_id, source, dentrust_order_id, customer_name)
-       VALUES ($1,'online',$2,'online',$3,$4) RETURNING id`,
-      [total, customerId, d.dentrust_order_id || null, d.customer_name || '']
+      `INSERT INTO sales (total_amount, payment_method, customer_id, source, dentrust_order_id, customer_name, discount_amount, delivery_amount)
+       VALUES ($1,'online',$2,'online',$3,$4,$5,$6) RETURNING id`,
+      [total, customerId, d.dentrust_order_id || null, d.customer_name || '', onlineDiscount, onlineDelivery]
     );
     const saleId = sale.id;
     let deducted = 0;
@@ -3221,6 +3224,8 @@ const PT_INIT_SQL = `
   ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0;
   ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC DEFAULT 0;
   ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS promo_code TEXT;
+  ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0;
+  ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC DEFAULT 0;
   CREATE TABLE IF NOT EXISTS pt_history (
     id SERIAL PRIMARY KEY,
     our_product_id INTEGER,
