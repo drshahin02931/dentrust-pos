@@ -335,6 +335,38 @@ let _detailOrder = null;
 let _detailWaLink = null;
 let _detailItems  = [];
 
+// Parse "product x4، product2 x2" summary text into item rows when no DB items available
+function parseItemsSummary(summary) {
+  if (!summary) return [];
+  return summary.split(/[،,]/).map(s => s.trim()).filter(Boolean).map(part => {
+    const m = part.match(/^(.+?)\s+[xX×](\d+)\s*$/);
+    if (m) return { product_name: m[1].trim(), quantity: parseInt(m[2]), unit_price: null, total_price: null };
+    return { product_name: part, quantity: '—', unit_price: null, total_price: null };
+  });
+}
+
+function buildItemsRows(items, summary, stylePrefix) {
+  const src = items.length ? items : parseItemsSummary(summary);
+  if (!src.length) return `<tr><td colspan='4' style='text-align:center;padding:12px;color:#9ca3af;font-size:13px;'>—</td></tr>`;
+  return src.map(it => {
+    const opt       = (it.selected_option || '').trim();
+    const optHtml   = opt ? `<div style='font-size:11px;color:#7c3aed;font-weight:700;margin-top:2px;'>◈ ${escHtml(opt)}</div>` : '';
+    const hasPrice  = it.unit_price !== null && it.unit_price !== undefined;
+    const lineTotal = hasPrice ? parseFloat(it.total_price || (parseFloat(it.unit_price||0) * parseInt(it.quantity||1))) : null;
+    const priceCell = hasPrice ? parseFloat(it.unit_price||0).toLocaleString('ar-EG') : '—';
+    const totalCell = hasPrice ? lineTotal.toLocaleString('ar-EG') : '—';
+    return `<tr>
+      <td style='width:48%;padding:6px 4px 6px 2px;border-bottom:1px dashed #d1d5db;vertical-align:top;'>
+        <div style='font-weight:600;color:#1f2937;font-size:13px;line-height:1.3;'>${escHtml(it.product_name || '—')}</div>
+        ${optHtml}
+      </td>
+      <td style='width:8%;text-align:center;padding:6px 2px;border-bottom:1px dashed #d1d5db;font-size:13px;'>${it.quantity}</td>
+      <td style='width:18%;text-align:left;padding:6px 2px;border-bottom:1px dashed #d1d5db;font-size:13px;'>${priceCell}</td>
+      <td style='width:26%;text-align:left;padding:6px 2px;border-bottom:1px dashed #d1d5db;font-size:13px;font-weight:700;'>${totalCell}</td>
+    </tr>`;
+  }).join('');
+}
+
 // Status select background colors
 const STATUS_SELECT_CLASSES = {
   pending:   'bg-yellow-50 text-yellow-800',
@@ -377,22 +409,7 @@ async function openDetail(id) {
     const total     = parseFloat(order.total_amount    || 0);
     const subtotal  = total + discount - delivery;
 
-    const itemsRows = items.length
-      ? items.map(it => {
-          const opt       = (it.selected_option || '').trim();
-          const lineTotal = parseFloat(it.total_price || (parseFloat(it.unit_price||0) * parseInt(it.quantity||1)));
-          const optHtml   = opt ? `<div style='font-size:11px;color:#7c3aed;font-weight:700;margin-top:2px;'>◈ ${escHtml(opt)}</div>` : '';
-          return `<tr>
-            <td style='width:48%;padding:6px 4px 6px 2px;border-bottom:1px dashed #d1d5db;vertical-align:top;'>
-              <div style='font-weight:600;color:#1f2937;font-size:13px;line-height:1.3;'>${escHtml(it.product_name || '—')}</div>
-              ${optHtml}
-            </td>
-            <td style='width:8%;text-align:center;padding:6px 2px;border-bottom:1px dashed #d1d5db;font-size:13px;'>${it.quantity}</td>
-            <td style='width:18%;text-align:left;padding:6px 2px;border-bottom:1px dashed #d1d5db;font-size:13px;'>${parseFloat(it.unit_price||0).toLocaleString('ar-EG')}</td>
-            <td style='width:26%;text-align:left;padding:6px 2px;border-bottom:1px dashed #d1d5db;font-size:13px;font-weight:700;'>${lineTotal.toLocaleString('ar-EG')}</td>
-          </tr>`;
-        }).join('')
-      : `<tr><td colspan='4' style='text-align:center;padding:12px;color:#9ca3af;font-size:13px;'>${escHtml(order.items_summary||'—')}</td></tr>`;
+    const itemsRows = buildItemsRows(items, order.items_summary);
 
     const dt      = new Date(order.created_at);
     const dateStr = dt.toLocaleDateString('ar-EG', {day:'numeric', month:'long', year:'numeric'});
@@ -445,11 +462,10 @@ async function openDetail(id) {
           <span>خصم${order.promo_code ? ' (' + escHtml(order.promo_code) + ')' : ''}</span>
           <span>− ${discount.toLocaleString('ar-EG')} ج.م</span>
         </div>` : ''}
-        ${delivery > 0 ? `
         <div style='display:flex;justify-content:space-between;font-size:13px;color:#374151;font-weight:600;padding:3px 0;'>
           <span>مصاريف التوصيل</span>
-          <span>+ ${delivery.toLocaleString('ar-EG')} ج.م</span>
-        </div>` : ''}
+          <span>${delivery > 0 ? '+ '+delivery.toLocaleString('ar-EG')+' ج.م' : 'مجاني'}</span>
+        </div>
         <div style='display:flex;justify-content:space-between;font-size:15px;font-weight:900;color:#111827;border-top:2px solid #111827;border-bottom:2px solid #111827;padding:6px 0;margin-top:4px;'>
           <span>الإجمالي</span><span>${total.toLocaleString('ar-EG')} ج.م</span>
         </div>
@@ -510,21 +526,23 @@ function printOrderDetail() {
   const subtotal = discount > 0 ? total + discount - delivery : total - delivery;
   const orderNum = o.dentrust_order_id || o.id;
 
-  const itemsRows = items.length
-    ? items.map(it => {
+  const _printSrc = items.length ? items : parseItemsSummary(o.items_summary);
+  const itemsRows = _printSrc.length
+    ? _printSrc.map(it => {
         const opt      = (it.selected_option || '').trim();
-        const lineTotal = parseFloat(it.total_price || (parseFloat(it.unit_price||0) * parseInt(it.quantity||1))).toFixed(2);
+        const hasPrice = it.unit_price !== null && it.unit_price !== undefined;
+        const lineTotal = hasPrice ? parseFloat(it.total_price || (parseFloat(it.unit_price||0) * parseInt(it.quantity||1))).toFixed(2) : '—';
         return `<tr>
           <td style="text-align:right;word-break:break-word;padding:4px 3px;border-bottom:1px dotted #bbb;line-height:1.4;">
             ${escHtml(it.product_name || '—')}
             ${opt ? `<div style="font-size:9px;font-weight:600;color:#555;margin-top:1px;">◈ ${escHtml(opt)}</div>` : ''}
           </td>
           <td style="text-align:center;padding:4px 3px;border-bottom:1px dotted #bbb;">${it.quantity}</td>
-          <td style="text-align:left;padding:4px 3px;border-bottom:1px dotted #bbb;">${parseFloat(it.unit_price||0).toFixed(2)}</td>
+          <td style="text-align:left;padding:4px 3px;border-bottom:1px dotted #bbb;">${hasPrice ? parseFloat(it.unit_price||0).toFixed(2) : '—'}</td>
           <td style="text-align:left;font-weight:bold;padding:4px 3px;border-bottom:1px dotted #bbb;">${lineTotal}</td>
         </tr>`;
       }).join('')
-    : `<tr><td colspan="4" style="text-align:center;padding:10px;color:#999;">${escHtml(o.items_summary||'—')}</td></tr>`;
+    : `<tr><td colspan="4" style="text-align:center;padding:10px;color:#999;">—</td></tr>`;
 
   const w = window.open('', '_blank', 'width=480,height=700');
   w.document.write(`<!DOCTYPE html><html dir="rtl" lang="ar"><head>
@@ -571,10 +589,10 @@ function printOrderDetail() {
       <tbody>${itemsRows}</tbody>
     </table>
     <div class="totals">
-      ${(discount > 0 || delivery > 0) ? `
+      ${(discount > 0 || delivery >= 0) ? `
         <div class="tot-row"><span>المجموع الجزئي</span><span>${subtotal.toLocaleString('ar-EG')} ج.م</span></div>
         ${discount > 0 ? `<div class="tot-row tot-disc"><span>خصم${o.promo_code ? ' ('+escHtml(o.promo_code)+')' : ''}</span><span>− ${discount.toLocaleString('ar-EG')} ج.م</span></div>` : ''}
-        ${delivery > 0 ? `<div class="tot-row" style="font-weight:600;"><span>مصاريف التوصيل</span><span>+ ${delivery.toLocaleString('ar-EG')} ج.م</span></div>` : ''}
+        <div class="tot-row" style="font-weight:600;"><span>مصاريف التوصيل</span><span>${delivery > 0 ? '+ '+delivery.toLocaleString('ar-EG')+' ج.م' : 'مجاني'}</span></div>
       ` : ''}
       <div class="tot-main"><span>الإجمالي</span><span>${total.toLocaleString('ar-EG')} ج.م</span></div>
     </div>
