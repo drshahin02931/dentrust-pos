@@ -275,12 +275,13 @@ function renderTable() {
     const isOnline = inv.dentrust_order_id || inv.payment_method === 'online';
     const onlineBadge = isOnline ? `<span class="mr-1 text-xs font-bold px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">🌐 أونلاين</span>` : '';
     const canReturnThis = CAN_RETURN && inv.return_status < 2;
+    const refundedStrike = inv.total_refunded > 0 ? ' <span class="text-xs text-red-400 font-normal line-through">' + inv.total_amount.toFixed(2) + '</span>' : '';
     return `<tr class="${fullyReturned?'bg-red-50/40 opacity-75':isOnline?'bg-teal-50/30 hover:bg-teal-50':'hover:bg-gray-50'} transition-colors cursor-pointer" onclick="viewInvoice(${inv.id})">
       <td class="px-4 py-3 font-mono font-bold text-blue-700">#${String(inv.id).padStart(5,'0')}${onlineBadge}</td>
       <td class="px-4 py-3 text-gray-600 text-xs">${inv.date.replace('T',' ').slice(0,16)}</td>
       <td class="px-4 py-3 text-gray-700">${inv.customer_name||'—'}</td>
       <td class="px-4 py-3">${payBadge}</td>
-      <td class="px-4 py-3 font-bold ${fullyReturned?'text-red-400 line-through':'text-gray-800'}">${inv.total_amount.toFixed(2)} جنيه</td>
+      <td class="px-4 py-3 font-bold ${fullyReturned?'text-red-400 line-through':'text-gray-800'}">${(inv.total_amount-(inv.total_refunded||0)).toFixed(2)} جنيه${refundedStrike}</td>
       <td class="px-4 py-3">${statusBadge(inv)}</td>
       <td class="px-4 py-3" onclick="event.stopPropagation()">
         <div class="flex gap-1.5 flex-wrap">
@@ -381,7 +382,10 @@ async function viewInvoice(id) {
     </div>` : ''}
     <div class="bg-blue-50 rounded-xl p-4 flex justify-between items-center">
       <span class="font-bold text-gray-700">الإجمالي الكلي</span>
-      <span class="text-2xl font-black text-blue-700">${inv.total_amount.toFixed(2)} جنيه</span>
+      <div class="text-left">
+        <span class="text-2xl font-black text-blue-700">${(inv.total_amount-(inv.total_refunded||0)).toFixed(2)} جنيه</span>
+        ${inv.total_refunded > 0 ? '<div class="text-xs text-red-400 line-through">' + inv.total_amount.toFixed(2) + ' جنيه (قبل المردود)</div>' : ''}
+      </div>
     </div>
     ${returnsHtml}
   </div>`;
@@ -389,6 +393,8 @@ async function viewInvoice(id) {
   const canReturnThis = CAN_RETURN && inv.return_status < 2;
   document.getElementById("modalActions").innerHTML = `
     <button onclick="printInv(${inv.id})" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl hover:bg-gray-200">🖨️ طباعة</button>
+    <button onclick="openEditCustomer(${inv.id},(inv.customer_name||''),(inv.customer_phone||''),(inv.customer_address||inv.customer_city||''))" class="flex-1 bg-purple-100 text-purple-700 font-semibold py-2.5 rounded-xl hover:bg-purple-200">✏️ تعديل العميل</button>
+    ${IS_MGR ? `<button onclick="openEditPrices(${inv.id})" class="flex-1 bg-yellow-100 text-yellow-700 font-semibold py-2.5 rounded-xl hover:bg-yellow-200">💲 تعديل الأسعار</button>` : ''}
     <button onclick="closeDetail(); openAddItems(${inv.id})" class="flex-1 bg-green-600 text-white font-semibold py-2.5 rounded-xl hover:bg-green-700">➕ إضافة أصناف</button>
     ${canReturnThis ? `<button onclick="closeDetail(); openReturn(${inv.id})" class="flex-1 bg-orange-500 text-white font-semibold py-2.5 rounded-xl hover:bg-orange-600">↩️ استرجاع</button>` : ''}
     ${IS_MGR ? `<button onclick="closeDetail(); voidInvoice(${inv.id})" class="flex-1 bg-red-600 text-white font-semibold py-2.5 rounded-xl hover:bg-red-700">🗑 حذف نهائي</button>` : ''}
@@ -658,7 +664,130 @@ async function confirmAddItems() {
 }
 
 loadInvoices();
+
+// ── تعديل العميل ──────────────────────────────────────────────────────────────
+let _editCustSaleId = null;
+function openEditCustomer(saleId, name, phone, address) {
+  _editCustSaleId = saleId;
+  document.getElementById('editCustName').value    = (name||'').trim();
+  document.getElementById('editCustPhone').value   = (phone||'').trim();
+  document.getElementById('editCustAddress').value = (address||'').trim();
+  document.getElementById('editCustError').classList.add('hidden');
+  document.getElementById('editCustModal').classList.remove('hidden');
+}
+function closeEditCustomer() { document.getElementById('editCustModal').classList.add('hidden'); }
+async function saveEditCustomer() {
+  const btn = document.getElementById('editCustSaveBtn');
+  btn.disabled = true; btn.textContent = '⏳ جاري...';
+  const body = {
+    customer_name:    document.getElementById('editCustName').value.trim(),
+    customer_phone:   document.getElementById('editCustPhone').value.trim(),
+    customer_address: document.getElementById('editCustAddress').value.trim(),
+  };
+  const res  = await fetch(`${BASE}/api/sales/${_editCustSaleId}/customer`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  btn.disabled = false; btn.textContent = 'حفظ';
+  if (!res.ok) {
+    document.getElementById('editCustError').textContent = data.error || 'حدث خطأ';
+    document.getElementById('editCustError').classList.remove('hidden');
+    return;
+  }
+  closeEditCustomer(); closeDetail();
+  await loadInvoices();
+  alert('✅ تم تحديث بيانات العميل');
+}
+
+// ── تعديل الأسعار ─────────────────────────────────────────────────────────────
+let _editPricesSaleId = null;
+let _editPricesItems  = [];
+async function openEditPrices(saleId) {
+  _editPricesSaleId = saleId;
+  document.getElementById('editPricesError').classList.add('hidden');
+  document.getElementById('editPricesList').innerHTML = '<div class="text-center text-gray-400 py-4">جارٍ التحميل...</div>';
+  document.getElementById('editPricesModal').classList.remove('hidden');
+  const res  = await fetch(`${BASE}/api/invoices/${saleId}`);
+  const data = await res.json();
+  _editPricesItems = data.items || [];
+  renderEditPrices();
+}
+function renderEditPrices() {
+  document.getElementById('editPricesList').innerHTML = _editPricesItems.map((it, idx) => `
+    <div class="flex items-center gap-3 border rounded-xl p-3 bg-gray-50">
+      <div class="flex-1 min-w-0">
+        <div class="font-medium text-sm">${it.product_name}</div>
+        <div class="text-xs text-gray-400">الكمية: ${it.quantity}</div>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <label class="text-xs text-gray-500">السعر</label>
+        <input type="number" min="0" step="0.01" value="${parseFloat(it.unit_price||0).toFixed(2)}"
+          onchange="_editPricesItems[${idx}].unit_price = parseFloat(this.value)||0"
+          class="w-24 border rounded-lg px-2 py-1 text-sm text-center focus:outline-none focus:ring-2 focus:ring-yellow-300"/>
+      </div>
+    </div>`).join('');
+}
+function closeEditPrices() { document.getElementById('editPricesModal').classList.add('hidden'); }
+async function saveEditPrices() {
+  const btn = document.getElementById('editPricesSaveBtn');
+  btn.disabled = true; btn.textContent = '⏳ جاري...';
+  const res = await fetch(`${BASE}/api/sales/${_editPricesSaleId}/item-prices`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ items: _editPricesItems.map(i => ({ id: i.id, unit_price: i.unit_price })) })
+  });
+  const data = await res.json();
+  btn.disabled = false; btn.textContent = 'حفظ';
+  if (!res.ok) {
+    document.getElementById('editPricesError').textContent = data.error || 'حدث خطأ';
+    document.getElementById('editPricesError').classList.remove('hidden');
+    return;
+  }
+  closeEditPrices(); closeDetail();
+  await loadInvoices();
+  alert(`✅ تم تحديث الأسعار — الإجمالي الجديد: ${data.new_total.toFixed(2)} جنيه`);
+}
+
 </script>
+
+<!-- modal تعديل العميل -->
+<div id="editCustModal" class="hidden fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+    <div class="flex items-center justify-between">
+      <h2 class="font-black text-gray-800 text-lg">✏️ تعديل بيانات العميل</h2>
+      <button onclick="closeEditCustomer()" class="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
+    </div>
+    <div class="space-y-3">
+      <div><label class="text-xs font-semibold text-gray-500 block mb-1">الاسم</label>
+        <input id="editCustName" type="text" class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"/></div>
+      <div><label class="text-xs font-semibold text-gray-500 block mb-1">الهاتف</label>
+        <input id="editCustPhone" type="text" class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"/></div>
+      <div><label class="text-xs font-semibold text-gray-500 block mb-1">العنوان</label>
+        <input id="editCustAddress" type="text" class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"/></div>
+    </div>
+    <p id="editCustError" class="hidden text-sm text-red-600 bg-red-50 rounded-xl p-2"></p>
+    <div class="flex gap-2 pt-1">
+      <button id="editCustSaveBtn" onclick="saveEditCustomer()" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 rounded-xl text-sm">حفظ</button>
+      <button onclick="closeEditCustomer()" class="px-5 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-2.5 rounded-xl text-sm">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- modal تعديل الأسعار -->
+<div id="editPricesModal" class="hidden fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+    <div class="flex items-center justify-between">
+      <h2 class="font-black text-gray-800 text-lg">💲 تعديل أسعار الأصناف</h2>
+      <button onclick="closeEditPrices()" class="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
+    </div>
+    <p class="text-xs text-yellow-700 bg-yellow-50 rounded-xl p-2">⚠️ سيتم إعادة حساب إجمالي الفاتورة تلقائياً بعد التعديل.</p>
+    <div id="editPricesList" class="space-y-2 max-h-72 overflow-y-auto"></div>
+    <p id="editPricesError" class="hidden text-sm text-red-600 bg-red-50 rounded-xl p-2"></p>
+    <div class="flex gap-2 pt-1">
+      <button id="editPricesSaveBtn" onclick="saveEditPrices()" class="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2.5 rounded-xl text-sm">حفظ</button>
+      <button onclick="closeEditPrices()" class="px-5 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-2.5 rounded-xl text-sm">إلغاء</button>
+    </div>
+  </div>
+</div>
 
 </main>
 <%- include('partials/footer', locals) %>
