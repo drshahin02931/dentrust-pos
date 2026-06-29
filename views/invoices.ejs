@@ -240,9 +240,12 @@ function applyFilters() {
 }
 
 function updateSummary() {
-  const active = filteredInvoices.filter(i => i.return_status === 0);
   const withReturns = filteredInvoices.filter(i => i.return_status > 0);
-  document.getElementById("sumRevenue").textContent = active.reduce((s,i) => s + i.total_amount, 0).toFixed(2);
+  // Include partial-return invoices (return_status=1) but subtract refunded amount; exclude fully-returned (status=2)
+  document.getElementById("sumRevenue").textContent = filteredInvoices
+    .filter(i => i.return_status !== 2)
+    .reduce((s, i) => s + i.total_amount - (i.total_refunded || 0), 0)
+    .toFixed(2);
   document.getElementById("sumCount").textContent = filteredInvoices.length;
   document.getElementById("sumReturned").textContent = withReturns.length;
   document.getElementById("sumRefunds").textContent = filteredInvoices.reduce((s,i) => s + (i.total_refunded||0), 0).toFixed(2);
