@@ -1127,9 +1127,9 @@ app.get(`${BASE}/api/customers/:cid/statement`, async (req, res) => {
   try {
     const { rows: [c] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [cid]);
     if (!c) return res.status(404).json({ error: 'العميل غير موجود' });
-    const { rows: [ti] } = await posDb.query("SELECT COALESCE(SUM(total_amount),0) as t FROM sales WHERE customer_id=$1 AND payment_method='credit'", [cid]);
+    const { rows: [ti] } = await posDb.query("SELECT COALESCE(SUM(total_amount),0) as t FROM sales WHERE customer_id=$1 AND payment_method IN ('credit','split')", [cid]);
     const { rows: [tp] } = await posDb.query("SELECT COALESCE(SUM(amount),0) as t FROM customer_payments WHERE customer_id=$1", [cid]);
-    const { rows: [tr] } = await posDb.query("SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r JOIN sales s ON s.id=r.sale_id WHERE s.customer_id=$1 AND s.payment_method='credit'", [cid]);
+    const { rows: [tr] } = await posDb.query("SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r JOIN sales s ON s.id=r.sale_id WHERE s.customer_id=$1 AND s.payment_method IN ('credit','split')", [cid]);
     res.json({
       total_invoiced: Math.round(parseFloat(ti.t) * 100) / 100,
       total_returned: Math.round(parseFloat(tr.t) * 100) / 100,
@@ -1204,17 +1204,23 @@ app.post(`${BASE}/api/customers/:cid/manual-debt`, async (req, res) => {
   if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
     return res.status(400).json({ error: 'أدخل مبلغاً صحيحاً' });
   }
+  const client = await posDb.connect();
   try {
-    await posDb.query(
+    await client.query('BEGIN');
+    await client.query(
       'INSERT INTO customer_manual_debts (customer_id, amount, reason) VALUES ($1,$2,$3)',
       [cid, parseFloat(amount), reason || '']
     );
-    await posDb.query(
+    await client.query(
       'UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2',
       [parseFloat(amount), cid]
     );
+    await client.query('COMMIT');
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: 'خطأ داخلي' });
+  } finally { client.release(); }
 });
 
 app.get(`${BASE}/api/customers/:cid/manual-debts`, async (req, res) => {
@@ -1591,7 +1597,7 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
       await client.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [totalRefund, sale.customer_id]);
     }
     await client.query('INSERT INTO expenses (title, amount, date) VALUES ($1,$2,CURRENT_DATE::text)',
-      [`مردود فاتورة #${sid}${reason ? ` (${reason})` : ''}`, totalRefund]);
+      [`مردود #${returnId} فاتورة #${sid}${reason ? ` (${reason})` : ''}`, totalRefund]);
     await client.query('COMMIT');
     syncProductsNow(validated.filter(v => v.item.product_id).map(v => v.item.product_id)).catch(() => {});
     res.status(201).json({ ok: true, refund_amount: totalRefund });
@@ -1604,28 +1610,32 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
 app.delete(`${BASE}/api/returns/:rid`, async (req, res) => {
   if (!hasPerm(req, 'process_returns')) return res.status(403).json({ error: 'ليس لديك صلاحية' });
   const rid = parseInt(req.params.rid, 10);
+  const client = await posDb.connect();
   try {
-    const { rows: [ret] } = await posDb.query('SELECT * FROM returns WHERE id=$1', [rid]);
-    if (!ret) return res.status(404).json({ error: 'المردود غير موجود' });
-    const { rows: [sale] } = await posDb.query('SELECT * FROM sales WHERE id=$1', [ret.sale_id]);
-    const { rows: returnItems } = await posDb.query('SELECT * FROM return_items WHERE return_id=$1', [rid]);
+    await client.query('BEGIN');
+    const { rows: [ret] } = await client.query('SELECT * FROM returns WHERE id=$1', [rid]);
+    if (!ret) { await client.query('ROLLBACK'); client.release(); return res.status(404).json({ error: 'المردود غير موجود' }); }
+    const { rows: [sale] } = await client.query('SELECT * FROM sales WHERE id=$1', [ret.sale_id]);
+    const { rows: returnItems } = await client.query('SELECT * FROM return_items WHERE return_id=$1', [rid]);
+    const productIds = [];
     for (const ri of returnItems) {
-      if (ri.product_id) await posDb.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [ri.quantity, ri.product_id]);
-      // Also revert checkbox option stock if the original sale item had a selected_option
+      if (ri.product_id) {
+        await client.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [ri.quantity, ri.product_id]);
+        productIds.push(ri.product_id);
+      }
       if (ri.product_id && ri.sale_item_id) {
         try {
-          const { rows: [si] } = await posDb.query('SELECT selected_option FROM sale_items WHERE id=$1', [ri.sale_item_id]);
+          const { rows: [si] } = await client.query('SELECT selected_option FROM sale_items WHERE id=$1', [ri.sale_item_id]);
           if (si?.selected_option) {
-            const { rows: [pcb] } = await posDb.query('SELECT checkbox_values FROM products WHERE id=$1', [ri.product_id]);
+            const { rows: [pcb] } = await client.query('SELECT checkbox_values FROM products WHERE id=$1', [ri.product_id]);
             if (pcb?.checkbox_values) {
               const cbv = typeof pcb.checkbox_values === 'string' ? JSON.parse(pcb.checkbox_values) : { ...pcb.checkbox_values };
               if (cbv[si.selected_option] && typeof cbv[si.selected_option] === 'object' && cbv[si.selected_option].stock != null) {
                 cbv[si.selected_option].stock = Math.max(0, (cbv[si.selected_option].stock || 0) - ri.quantity);
                 if (cbv[si.selected_option].stock === 0) cbv[si.selected_option].disabled = true;
-                // Keep overall quantity in sync with sum of checkbox stocks
                 const totalCbQty = Object.values(cbv).reduce((sum, v) =>
                   sum + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
-                await posDb.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
+                await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
                   [totalCbQty, JSON.stringify(cbv), ri.product_id]);
               }
             }
@@ -1634,14 +1644,26 @@ app.delete(`${BASE}/api/returns/:rid`, async (req, res) => {
       }
     }
     if (sale?.payment_method === 'credit' && sale.customer_id) {
-      await posDb.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [ret.total_refund, sale.customer_id]);
+      await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [ret.total_refund, sale.customer_id]);
     }
-    await posDb.query("DELETE FROM expenses WHERE id = (SELECT id FROM expenses WHERE title LIKE $1 AND amount=$2 LIMIT 1)",
-      [`مردود فاتورة #${ret.sale_id}%`, ret.total_refund]);
-    await posDb.query('DELETE FROM return_items WHERE return_id=$1', [rid]);
-    await posDb.query('DELETE FROM returns WHERE id=$1', [rid]);
+    // Delete matching expense — try new format (includes return id) then fall back to old format
+    await client.query(
+      `DELETE FROM expenses WHERE id = (
+         SELECT id FROM expenses
+         WHERE (title LIKE $1 OR title LIKE $2) AND amount=$3
+         ORDER BY id DESC LIMIT 1
+       )`,
+      [`مردود #${rid} %`, `مردود فاتورة #${ret.sale_id}%`, ret.total_refund]
+    );
+    await client.query('DELETE FROM return_items WHERE return_id=$1', [rid]);
+    await client.query('DELETE FROM returns WHERE id=$1', [rid]);
+    await client.query('COMMIT');
+    if (productIds.length) syncProductsNow(productIds).catch(() => {});
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: 'خطأ داخلي' });
+  } finally { client.release(); }
 });
 
 app.post(`${BASE}/api/invoices/:sid/add-items`, async (req, res) => {
