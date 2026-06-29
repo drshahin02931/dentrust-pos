@@ -2966,7 +2966,7 @@ async function getBotKnowledgeText() {
     const [knowledgeResult, productsResult] = await Promise.race([
       Promise.all([
         posDb.query("SELECT category, title, content FROM bot_knowledge WHERE active=true ORDER BY category, id"),
-        posDb.query("SELECT product_name, sale_price, category, quantity, description FROM products WHERE quantity > 0 ORDER BY product_name"),
+        posDb.query("SELECT id, product_name, sale_price, category, quantity, description FROM products WHERE quantity > 0 ORDER BY product_name"),
       ]),
       timeout,
     ]);
@@ -2980,7 +2980,7 @@ async function getBotKnowledgeText() {
 
     if (productsResult.rows.length) {
       const productLines = productsResult.rows.map(r => {
-        let line = `- ${r.product_name}`;
+        let line = `- [ID:${r.id}] ${r.product_name}`;
         if (r.category) line += ` (${r.category})`;
         if (r.sale_price) line += ` — السعر: ${r.sale_price} جنيه`;
         if (r.description) line += ` — ${r.description}`;
@@ -3305,7 +3305,7 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
 
 const DENTRUST_BOT_SYSTEM = `أنت DenBot — مساعد ذكي ومتخصص لمتجر Dentrust للمستلزمات الطبية والأسنان في مصر. شخصيتك ودودة وذكية وواثقة. تجاوب بالعامية المصرية أو بالفرانكو عربي حسب أسلوب السؤال. تساعد في: أسئلة المنتجات، الأسعار، الشحن والتوصيل، العروض، وطرق الدفع. لو مش عارف الإجابة قول بصراحة واقترح يتواصلوا على الواتساب أو بالإيميل. لا تتكلم في مواضيع سياسية أو دينية. كن مختصراً ومفيداً — لا تطول من غير داعي.
 
-قاعدة مهمة جداً للمنتجات: لما تذكر أي منتج متوفر عندنا، اكتب اسمه بالشكل ده بالظبط: [[P:اسم المنتج]] — استخدم نفس الاسم الموجود في قائمة المنتجات حرفاً بحرف. ده بيخلي المنتج يظهر كـ card للعميل. مثال: [[P:dentsply Neo Spectra]]. لو المنتج مش موجود عندنا خالص، متكتبش الـ tag ده.`;
+قاعدة مهمة جداً للمنتجات: لما تذكر أي منتج متوفر عندنا، اكتب الـ ID بتاعه بالشكل ده بالظبط: [[P:ID]] — استخدم الرقم اللي جنب [ID:] في قائمة المنتجات. ده بيخلي المنتج يظهر كـ card للعميل. مثال: لو المنتج عنده [ID:42] اكتب [[P:42]]. لو المنتج مش موجود في قائمتنا خالص، متكتبش الـ tag ده.`;
 
 // POST /api/ai/fashion-chat-stream  (DenBot – streaming chat proxy, Gemini-powered)
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
