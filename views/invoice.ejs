@@ -312,6 +312,144 @@ function payMethodEn(m) {
     <% if (showEn) { %><%- invoiceFooterEn %><% } %>
   </div>
 
+  <!-- ── Edit Section (screen only, never printed) ── -->
+  <div class="no-print" style="margin-top:14px;border-top:2px dashed #ccc;padding-top:12px;">
+    <!-- Edit Customer Info -->
+    <div id="editCustomerBox" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px;margin-bottom:8px;">
+      <div style="font-size:11px;font-weight:900;margin-bottom:6px;color:#0369a1;">✏️ تعديل بيانات العميل</div>
+      <div style="margin-bottom:4px;"><label style="font-size:10px;color:#555;">الاسم</label>
+        <input id="edit_cust_name" value="<%= ((customer && customer.name) || sale.customer_name || '').replace(/"/g,'&quot;') %>" style="width:100%;border:1px solid #cbd5e1;border-radius:4px;padding:3px 6px;font-size:11px;"/></div>
+      <div style="margin-bottom:4px;"><label style="font-size:10px;color:#555;">الهاتف</label>
+        <input id="edit_cust_phone" value="<%= ((customer && customer.phone) || '').replace(/"/g,'&quot;') %>" style="width:100%;border:1px solid #cbd5e1;border-radius:4px;padding:3px 6px;font-size:11px;"/></div>
+      <div style="margin-bottom:6px;"><label style="font-size:10px;color:#555;">العنوان</label>
+        <input id="edit_cust_addr" value="<%= ((customer && customer.address) || '').replace(/"/g,'&quot;') %>" style="width:100%;border:1px solid #cbd5e1;border-radius:4px;padding:3px 6px;font-size:11px;"/></div>
+      <div style="display:flex;gap:6px;">
+        <button onclick="saveCustomerEdit()" style="flex:1;background:#0284c7;color:#fff;border:none;border-radius:6px;padding:5px;font-size:11px;font-weight:bold;cursor:pointer;">💾 حفظ</button>
+        <button onclick="document.getElementById('editCustomerBox').style.display='none'" style="background:#e2e8f0;border:none;border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;">إلغاء</button>
+      </div>
+      <div id="editCustMsg" style="font-size:10px;margin-top:4px;color:green;display:none;"></div>
+    </div>
+
+    <!-- Edit Item Prices -->
+    <% if (canEditPrices) { %>
+    <div id="editPricesBox" style="display:none;background:#fefce8;border:1px solid #fde68a;border-radius:8px;padding:10px;margin-bottom:8px;">
+      <div style="font-size:11px;font-weight:900;margin-bottom:6px;color:#92400e;">✏️ تعديل الأسعار والكميات</div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr>
+          <th style="text-align:right;padding:3px 2px;border-bottom:1px solid #fde68a;">المنتج</th>
+          <th style="text-align:center;padding:3px 2px;border-bottom:1px solid #fde68a;width:40px;">ك</th>
+          <th style="text-align:left;padding:3px 2px;border-bottom:1px solid #fde68a;width:60px;">السعر</th>
+        </tr></thead>
+        <tbody>
+          <% for (const item of items) { const nq = parseInt(item.net_qty != null ? item.net_qty : item.quantity); %>
+          <tr>
+            <td style="padding:3px 2px;font-weight:600;"><%- item.product_name %></td>
+            <td style="padding:3px 2px;text-align:center;">
+              <input type="number" min="1" value="<%= nq %>" data-item-id="<%= item.id %>" data-field="quantity"
+                style="width:38px;border:1px solid #fbbf24;border-radius:3px;padding:2px 3px;text-align:center;font-size:11px;"/>
+            </td>
+            <td style="padding:3px 2px;">
+              <input type="number" min="0" step="0.01" value="<%= parseFloat(item.unit_price).toFixed(2) %>" data-item-id="<%= item.id %>" data-field="unit_price"
+                style="width:55px;border:1px solid #fbbf24;border-radius:3px;padding:2px 3px;font-size:11px;"/>
+            </td>
+          </tr>
+          <% } %>
+        </tbody>
+      </table>
+      <div style="margin-top:8px;padding-top:6px;border-top:1px dashed #fde68a;">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">
+          <label style="font-size:10px;color:#555;min-width:65px;">خصم (جنيه)</label>
+          <input type="number" id="edit_discount" min="0" step="0.01" value="<%= parseFloat(sale.discount_amount||0).toFixed(2) %>"
+            style="width:70px;border:1px solid #fbbf24;border-radius:3px;padding:2px 5px;font-size:11px;"/>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <label style="font-size:10px;color:#555;min-width:65px;">توصيل (جنيه)</label>
+          <input type="number" id="edit_delivery" min="0" step="0.01" value="<%= parseFloat(sale.delivery_amount||0).toFixed(2) %>"
+            style="width:70px;border:1px solid #fbbf24;border-radius:3px;padding:2px 5px;font-size:11px;"/>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px;">
+        <button onclick="savePriceEdits()" style="flex:1;background:#d97706;color:#fff;border:none;border-radius:6px;padding:5px;font-size:11px;font-weight:bold;cursor:pointer;">💾 حفظ الأسعار</button>
+        <button onclick="document.getElementById('editPricesBox').style.display='none'" style="background:#e2e8f0;border:none;border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;">إلغاء</button>
+      </div>
+      <div id="editPriceMsg" style="font-size:10px;margin-top:4px;color:green;display:none;"></div>
+    </div>
+    <% } %>
+
+    <!-- Edit Buttons Row -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:8px;">
+      <button onclick="toggleBox('editCustomerBox')"
+        style="display:inline-flex;align-items:center;gap:4px;background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:bold;cursor:pointer;">
+        👤 تعديل العميل
+      </button>
+      <% if (canEditPrices) { %>
+      <button onclick="toggleBox('editPricesBox')"
+        style="display:inline-flex;align-items:center;gap:4px;background:#fefce8;color:#92400e;border:1px solid #fde68a;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:bold;cursor:pointer;">
+        💲 تعديل الأسعار
+      </button>
+      <% } %>
+      <button onclick="window.print()"
+        style="display:inline-flex;align-items:center;gap:4px;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:bold;cursor:pointer;">
+        🖨️ طباعة
+      </button>
+    </div>
+
+    <script>
+    const _BASE_EDIT = "<%- base %>";
+    const _SALE_ID   = <%= sale.id %>;
+
+    function toggleBox(id) {
+      const el = document.getElementById(id);
+      el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    }
+
+    async function saveCustomerEdit() {
+      const name  = document.getElementById('edit_cust_name').value.trim();
+      const phone = document.getElementById('edit_cust_phone').value.trim();
+      const addr  = document.getElementById('edit_cust_addr').value.trim();
+      const msg   = document.getElementById('editCustMsg');
+      try {
+        const r = await fetch(`${_BASE_EDIT}/api/sales/${_SALE_ID}/customer`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ customer_name: name, customer_phone: phone, customer_address: addr })
+        });
+        const d = await r.json();
+        if (d.ok) {
+          msg.textContent = '✅ تم الحفظ بنجاح — أعِد تحميل الصفحة لرؤية التغييرات';
+          msg.style.color = 'green'; msg.style.display = 'block';
+        } else {
+          msg.textContent = '❌ ' + (d.error || 'خطأ');
+          msg.style.color = 'red'; msg.style.display = 'block';
+        }
+      } catch(e) { msg.textContent = '❌ ' + e.message; msg.style.color='red'; msg.style.display='block'; }
+    }
+
+    async function savePriceEdits() {
+      const msg = document.getElementById('editPriceMsg');
+      try {
+        // Collect all items: { id, unit_price } array — existing /item-prices endpoint
+        const inputs = document.querySelectorAll('#editPricesBox input[data-item-id][data-field="unit_price"]');
+        const itemsPayload = Array.from(inputs).map(inp => ({
+          id:         inp.dataset.itemId,
+          unit_price: parseFloat(inp.value) || 0
+        }));
+        const r = await fetch(`${_BASE_EDIT}/api/sales/${_SALE_ID}/item-prices`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ items: itemsPayload })
+        });
+        const d = await r.json();
+        if (!d.ok) throw new Error(d.error || 'خطأ في حفظ الأسعار');
+        msg.textContent = '✅ تم الحفظ — أعِد تحميل الصفحة لرؤية الإجمالي الجديد';
+        msg.style.color = 'green'; msg.style.display = 'block';
+      } catch(e) { msg.textContent = '❌ ' + e.message; msg.style.color='red'; msg.style.display='block'; }
+    }
+    </script>
+  </div>
+
   <% if (customer && customer.phone) { %>
   <div style="margin-top:10px;text-align:center;" class="no-print">
     <a id="waBtn" href="#" target="_blank"
