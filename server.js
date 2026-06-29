@@ -276,7 +276,8 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
       previousBalance = pb ? Math.max(0, parseFloat(pb.total_debt || 0) - netTotal) : 0;
     }
     const st = await getSettings();
-    res.render('invoice', { sale, items, customer, previousBalance, totalReturned, netTotal, st, base: BASE });
+    res.render('invoice', { sale, items, customer, previousBalance, totalReturned, netTotal, st, base: BASE,
+      canEditPrices: hasPerm(req, 'edit_prices'), isMgr: isMgr(req) });
   } catch (err) {
     console.error(err);
     res.status(500).send('خطأ داخلي');
@@ -2543,7 +2544,7 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
   try {
     // 🔔 Insert alert for POS staff
     const alertItems = (d.items || []);
-    const alertSummary = alertItems.slice(0, 3).map(i => `${i.product_name || i.name || '?'} x${i.quantity || 1}`).join('، ');
+    const alertSummary = alertItems.map(i => `${i.product_name || i.name || '?'} x${i.quantity || 1}`).join('، ');
     const alertTotal = parseFloat(d.total_amount || d.total || 0) ||
       alertItems.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
     await posDb.query(
@@ -2561,8 +2562,8 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
         d.dentrust_order_id || null,
         alertTotal, alertItems.length, alertSummary || '—',
         d.promo_code || null,
-        d.discount_amount ? parseFloat(d.discount_amount) : null,
-        d.delivery_amount ? parseFloat(d.delivery_amount) : null
+        d.discount_amount != null && d.discount_amount !== '' ? parseFloat(d.discount_amount) : null,
+        (d.delivery_amount != null && d.delivery_amount !== '' ? parseFloat(d.delivery_amount) : (d.delivery_fee != null && d.delivery_fee !== '' ? parseFloat(d.delivery_fee) : null))
       ]
     ).catch(() => {});
 
@@ -2579,8 +2580,8 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     const items = d.items || [];
     let total = parseFloat(d.total_amount || d.total || 0);
     if (!total && items.length) total = items.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
-    const onlineDiscount = d.discount_amount ? parseFloat(d.discount_amount) : 0;
-    const onlineDelivery = d.delivery_amount ? parseFloat(d.delivery_amount) : 0;
+    const onlineDiscount = d.discount_amount != null && d.discount_amount !== '' ? parseFloat(d.discount_amount) : 0;
+    const onlineDelivery = d.delivery_amount != null && d.delivery_amount !== '' ? parseFloat(d.delivery_amount) : (d.delivery_fee != null && d.delivery_fee !== '' ? parseFloat(d.delivery_fee) : 0);
     const { rows: [sale] } = await posDb.query(
       `INSERT INTO sales (total_amount, payment_method, customer_id, source, dentrust_order_id, customer_name, discount_amount, delivery_amount)
        VALUES ($1,'online',$2,'online',$3,$4,$5,$6) RETURNING id`,
