@@ -462,10 +462,10 @@ async function openDetail(id) {
           <span>خصم${order.promo_code ? ' (' + escHtml(order.promo_code) + ')' : ''}</span>
           <span>− ${discount.toLocaleString('ar-EG')} ج.م</span>
         </div>` : ''}
-        <div style='display:flex;justify-content:space-between;font-size:13px;color:#374151;font-weight:600;padding:3px 0;'>
+        ${delivery > 0 ? `<div style='display:flex;justify-content:space-between;font-size:13px;color:#374151;font-weight:600;padding:3px 0;'>
           <span>مصاريف التوصيل</span>
-          <span>${delivery > 0 ? '+ '+delivery.toLocaleString('ar-EG')+' ج.م' : 'مجاني'}</span>
-        </div>
+          <span>+ ${delivery.toLocaleString('ar-EG')} ج.م</span>
+        </div>` : ''}
         <div style='display:flex;justify-content:space-between;font-size:15px;font-weight:900;color:#111827;border-top:2px solid #111827;border-bottom:2px solid #111827;padding:6px 0;margin-top:4px;'>
           <span>الإجمالي</span><span>${total.toLocaleString('ar-EG')} ج.م</span>
         </div>
@@ -589,10 +589,10 @@ function printOrderDetail() {
       <tbody>${itemsRows}</tbody>
     </table>
     <div class="totals">
-      ${(discount > 0 || delivery >= 0) ? `
+      ${(discount > 0 || delivery > 0) ? `
         <div class="tot-row"><span>المجموع الجزئي</span><span>${subtotal.toLocaleString('ar-EG')} ج.م</span></div>
         ${discount > 0 ? `<div class="tot-row tot-disc"><span>خصم${o.promo_code ? ' ('+escHtml(o.promo_code)+')' : ''}</span><span>− ${discount.toLocaleString('ar-EG')} ج.م</span></div>` : ''}
-        <div class="tot-row" style="font-weight:600;"><span>مصاريف التوصيل</span><span>${delivery > 0 ? '+ '+delivery.toLocaleString('ar-EG')+' ج.م' : 'مجاني'}</span></div>
+        ${delivery > 0 ? `<div class="tot-row" style="font-weight:600;"><span>مصاريف التوصيل</span><span>+ ${delivery.toLocaleString('ar-EG')} ج.م</span></div>` : ''}
       ` : ''}
       <div class="tot-main"><span>الإجمالي</span><span>${total.toLocaleString('ar-EG')} ج.م</span></div>
     </div>
