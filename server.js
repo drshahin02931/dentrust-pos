@@ -2890,7 +2890,7 @@ function r2(n) { return Math.round(parseFloat(n || 0) * 100) / 100; }
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 const GEMINI_API_KEY  = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL    = 'gemini-1.5-flash';
+const GEMINI_MODEL    = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const GEMINI_BASE     = 'https://generativelanguage.googleapis.com/v1beta/models';
 const SUPABASE_BASE = 'https://ywfunodybcqakhweuxwn.supabase.co';
 const WEBSITE_ORIGINS = (process.env.WEBSITE_ORIGIN || 'https://dentrust.site,https://www.dentrust.site')
