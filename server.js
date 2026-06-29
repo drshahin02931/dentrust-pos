@@ -2889,6 +2889,9 @@ function r2(n) { return Math.round(parseFloat(n || 0) * 100) / 100; }
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
+const GEMINI_API_KEY  = process.env.GEMINI_API_KEY || '';
+const GEMINI_MODEL    = 'gemini-2.5-flash';
+const GEMINI_BASE     = 'https://generativelanguage.googleapis.com/v1beta/models';
 const SUPABASE_BASE = 'https://ywfunodybcqakhweuxwn.supabase.co';
 const WEBSITE_ORIGINS = (process.env.WEBSITE_ORIGIN || 'https://dentrust.site,https://www.dentrust.site')
   .split(',').map(s => s.trim());
@@ -3091,11 +3094,119 @@ async function callOpenRouterFree(payload, modelList) {
   throw new Error(`All free models failed: ${lastErr}`);
 }
 
+// ── Gemini Direct API helper ───────────────────────────────────────────────
+// يحوّل messages بتاعة OpenAI format لـ Gemini format ويرجع response بـ OpenAI format
+async function callGemini(messages, { max_tokens = 800, stream = false } = {}) {
+  const key = GEMINI_API_KEY;
+  if (!key) throw new Error('GEMINI_API_KEY is not set');
+
+  // فصل system message
+  const sysMsg = messages.find(m => m.role === 'system');
+  const chatMsgs = messages.filter(m => m.role !== 'system');
+
+  // حوّل لـ Gemini contents
+  const contents = chatMsgs.map(m => {
+    const role = m.role === 'assistant' ? 'model' : 'user';
+    if (Array.isArray(m.content)) {
+      const parts = m.content.map(p => {
+        if (p.type === 'text') return { text: p.text };
+        if (p.type === 'image_url') {
+          const url = p.image_url?.url || '';
+          if (url.startsWith('data:')) {
+            const [meta, b64] = url.split(',');
+            const mimeType = meta.match(/:(.*?);/)?.[1] || 'image/jpeg';
+            return { inlineData: { mimeType, data: b64 } };
+          }
+          return { text: '[image]' };
+        }
+        return { text: String(p) };
+      });
+      return { role, parts };
+    }
+    return { role, parts: [{ text: String(m.content || '') }] };
+  });
+
+  const body = {
+    contents,
+    generationConfig: { maxOutputTokens: max_tokens, temperature: 0.7 },
+    ...(sysMsg ? { systemInstruction: { parts: [{ text: sysMsg.content }] } } : {}),
+  };
+
+  if (stream) {
+    const url = `${GEMINI_BASE}/${GEMINI_MODEL}:streamGenerateContent?alt=sse&key=${key}`;
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30000),
+    });
+  }
+
+  const url = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${key}`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `Gemini ${r.status}`);
+  }
+  const data = await r.json();
+  // حوّل response لـ OpenAI format عشان الكود القديم يفضل شغّال
+  const text = data.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
+  return { choices: [{ message: { role: 'assistant', content: text } }] };
+}
+
+// بيحول Gemini SSE stream لـ OpenAI SSE stream format
+async function pipeGeminiStream(geminiResp, res) {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  const reader = geminiResp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data:')) continue;
+      const raw = line.slice(5).trim();
+      if (raw === '[DONE]') { res.write('data: [DONE]\r\n\r\n'); continue; }
+      try {
+        const parsed = JSON.parse(raw);
+        const text = parsed.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
+        if (!text) continue;
+        // OpenAI SSE chunk format
+        const chunk = JSON.stringify({
+          choices: [{ delta: { content: text }, finish_reason: null }]
+        });
+        res.write(`data: ${chunk}\r\n\r\n`);
+      } catch (_) {}
+    }
+  }
+  res.write('data: [DONE]\r\n\r\n');
+  res.end();
+}
+
 // GET /api/ai/test  — diagnostic endpoint, open in browser to check AI status
 app.get('/api/ai/test', async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
+  // Gemini test — أسرع وأبسط
+  if (GEMINI_API_KEY) {
+    try {
+      const data = await callGemini([{ role: 'user', content: 'قل مرحبا باختصار' }], { max_tokens: 30 });
+      const reply = data.choices?.[0]?.message?.content || '(no content)';
+      return res.json({ ok: true, provider: 'gemini', model: GEMINI_MODEL, reply });
+    } catch (err) {
+      return res.json({ ok: false, provider: 'gemini', model: GEMINI_MODEL, error: err.message });
+    }
+  }
   const key = OPENROUTER_KEY;
-  if (!key) return res.json({ ok: false, step: 'key', error: 'OPENROUTER_API_KEY is not set on Render' });
+  if (!key) return res.json({ ok: false, step: 'key', error: 'Set GEMINI_API_KEY or OPENROUTER_API_KEY on Render' });
   try {
     // step 1: fetch available free models
     const cache = await fetchFreeModels();
@@ -3130,38 +3241,42 @@ app.get('/api/ai/test', async (req, res) => {
 
 // POST /api/ai/fashion-chat  (text chat)
 app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
-  if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
+  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'Set GEMINI_API_KEY on Render.' });
   try {
     const { messages = [], system = '', max_tokens = 350 } = req.body;
     const knowledge = await getBotKnowledgeText();
     const fullSystem = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
-    const { resp } = await callOpenRouterFree({
-      max_tokens,
-      messages: [{ role: 'system', content: fullSystem }, ...messages],
-    });
+    const allMsgs = [{ role: 'system', content: fullSystem }, ...messages];
+    if (GEMINI_API_KEY) {
+      const data = await callGemini(allMsgs, { max_tokens });
+      return res.json(data);
+    }
+    const { resp } = await callOpenRouterFree({ max_tokens, messages: allMsgs });
     res.json(await resp.json());
   } catch (err) { res.status(500).json({ error: `خطأ داخلي: ${err.message}` }); }
 });
 
 // POST /api/ai/fashion-tryon  (vision)
 app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
-  if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
+  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'Set GEMINI_API_KEY on Render.' });
   try {
     const { image = '', prompt = '', system = '' } = req.body;
     const imgUrl = image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}`;
     const knowledge = await getBotKnowledgeText();
     const sysContent = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
+    const visionMsgs = [
+      { role: 'system', content: sysContent },
+      { role: 'user', content: [
+        { type: 'image_url', image_url: { url: imgUrl } },
+        { type: 'text', text: prompt },
+      ]},
+    ];
+    if (GEMINI_API_KEY) {
+      const data = await callGemini(visionMsgs, { max_tokens: 900 });
+      return res.json(data);
+    }
     const visionModels = (await fetchFreeModels()).vision;
-    const { resp: visionResp } = await callOpenRouterFree({
-      max_tokens: 900,
-      messages: [
-        { role: 'system', content: sysContent },
-        { role: 'user', content: [
-          { type: 'image_url', image_url: { url: imgUrl } },
-          { type: 'text', text: prompt },
-        ]},
-      ],
-    }, visionModels);
+    const { resp: visionResp } = await callOpenRouterFree({ max_tokens: 900, messages: visionMsgs }, visionModels);
     const data = await visionResp.json();
     res.json(data);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
@@ -3171,7 +3286,7 @@ const DENTRUST_BOT_SYSTEM = `أنت DenBot — مساعد ذكي ومتخصص ل
 
 // POST /api/ai/fashion-chat-stream  (DenBot – streaming chat proxy, Gemini-powered)
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
-  if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
+  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'Set GEMINI_API_KEY on Render.' });
   try {
     const { messages = [], max_tokens = 800, stream = true } = req.body;
     const knowledge = await getBotKnowledgeText();
@@ -3184,6 +3299,14 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
       } else {
         patchedMessages = [{ role: 'system', content: sysContent }, ...patchedMessages];
       }
+    }
+    if (GEMINI_API_KEY) {
+      if (stream) {
+        const geminiResp = await callGemini(patchedMessages, { max_tokens, stream: true });
+        return await pipeGeminiStream(geminiResp, res);
+      }
+      const data = await callGemini(patchedMessages, { max_tokens });
+      return res.json(data);
     }
     const { resp } = await callOpenRouterFree({ messages: patchedMessages, max_tokens, stream });
     if (stream) {
@@ -3208,11 +3331,9 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
 
 // POST /api/ai/stylebot  (StyleBot – vision + chat proxy)
 app.post('/api/ai/stylebot', webCors, async (req, res) => {
-  if (!OPENROUTER_KEY) return res.status(503).json({ error: 'Set OPENROUTER_API_KEY on Render.' });
+  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'Set GEMINI_API_KEY on Render.' });
   try {
     const { messages = [], max_tokens = 800, stream = true } = req.body;
-    const hasImage = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'));
-    const modelList = hasImage ? FREE_VISION_MODELS : FREE_TEXT_MODELS;
     // Inject product knowledge from POS DB — same as DenBot
     const knowledge = await getBotKnowledgeText();
     let patchedMessages = [...messages];
@@ -3227,6 +3348,16 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
         patchedMessages = [{ role: 'system', content: knowledge }, ...patchedMessages];
       }
     }
+    if (GEMINI_API_KEY) {
+      if (stream) {
+        const geminiResp = await callGemini(patchedMessages, { max_tokens, stream: true });
+        return await pipeGeminiStream(geminiResp, res);
+      }
+      const data = await callGemini(patchedMessages, { max_tokens });
+      return res.json(data);
+    }
+    const hasImage = patchedMessages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'));
+    const modelList = hasImage ? FREE_VISION_MODELS : FREE_TEXT_MODELS;
     const { resp } = await callOpenRouterFree({ messages: patchedMessages, max_tokens, stream }, modelList);
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -4111,6 +4242,7 @@ async function main() {
     app.get('/api/healthz', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     // pre-warm AI model list so first user request is fast
     if (OPENROUTER_KEY) fetchFreeModels().catch(() => {});
+    if (GEMINI_API_KEY) console.log(`[AI] Gemini enabled — model: ${GEMINI_MODEL}`);
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`POS server running on port ${PORT} at ${BASE}`);
       const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
