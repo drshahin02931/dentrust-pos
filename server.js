@@ -2962,13 +2962,34 @@ async function getBotKnowledgeText() {
     const timeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('knowledge timeout')), 4000)
     );
-    const query = posDb.query(
-      "SELECT category, title, content FROM bot_knowledge WHERE active=true ORDER BY category, id"
-    );
-    const { rows } = await Promise.race([query, timeout]);
-    if (!rows.length) { _knowledgeCache = ''; _knowledgeCacheAt = now; return ''; }
-    const lines = rows.map(r => `[${r.category}] ${r.title}: ${r.content}`).join('\n');
-    _knowledgeCache = `\n\n=== معلومات مخزّنة من إدارة المتجر — التزم بها تماماً وأجب منها مباشرةً ===\n${lines}\n===`;
+
+    const [knowledgeResult, productsResult] = await Promise.race([
+      Promise.all([
+        posDb.query("SELECT category, title, content FROM bot_knowledge WHERE active=true ORDER BY category, id"),
+        posDb.query("SELECT product_name, sale_price, category, quantity, description FROM products WHERE quantity > 0 ORDER BY product_name"),
+      ]),
+      timeout,
+    ]);
+
+    let text = '';
+
+    if (knowledgeResult.rows.length) {
+      const lines = knowledgeResult.rows.map(r => `[${r.category}] ${r.title}: ${r.content}`).join('\n');
+      text += `\n\n=== معلومات مخزّنة من إدارة المتجر — التزم بها تماماً وأجب منها مباشرةً ===\n${lines}\n===`;
+    }
+
+    if (productsResult.rows.length) {
+      const productLines = productsResult.rows.map(r => {
+        let line = `- ${r.product_name}`;
+        if (r.category) line += ` (${r.category})`;
+        if (r.sale_price) line += ` — السعر: ${r.sale_price} جنيه`;
+        if (r.description) line += ` — ${r.description}`;
+        return line;
+      }).join('\n');
+      text += `\n\n=== قائمة المنتجات المتوفرة حالياً في المخزون ===\n${productLines}\n===`;
+    }
+
+    _knowledgeCache = text;
     _knowledgeCacheAt = now;
     return _knowledgeCache;
   } catch { return ''; }
