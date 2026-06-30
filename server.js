@@ -3117,6 +3117,20 @@ async function callOpenRouterFree(payload, modelList) {
 
 // ── Gemini Direct API helper ───────────────────────────────────────────────
 // يحوّل messages بتاعة OpenAI format لـ Gemini format ويرجع response بـ OpenAI format
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+function isQuotaError(status, msg = '') {
+  return status === 429 || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED');
+}
+
+function extractRetryDelay(errMsg = '') {
+  // Gemini بيقول "retry in X.XXs" في رسالة الخطأ
+  const match = errMsg.match(/retry in ([\d.]+)s/i);
+  if (match) return Math.ceil(parseFloat(match[1]) * 1000);
+  return 15000; // default 15 ثانية
+}
+
 async function callGemini(messages, { max_tokens = 800, stream = false } = {}) {
   const key = GEMINI_API_KEY;
   if (!key) throw new Error('GEMINI_API_KEY is not set');
@@ -3153,6 +3167,7 @@ async function callGemini(messages, { max_tokens = 800, stream = false } = {}) {
     ...(sysMsg ? { systemInstruction: { parts: [{ text: sysMsg.content }] } } : {}),
   };
 
+  // Stream: محدش بيعمل retry عليه لأن الـ response بدأت تتبعت — ارجعه مباشرة
   if (stream) {
     const url = `${GEMINI_BASE}/${GEMINI_MODEL}:streamGenerateContent?alt=sse&key=${key}`;
     return fetch(url, {
@@ -3163,21 +3178,46 @@ async function callGemini(messages, { max_tokens = 800, stream = false } = {}) {
     });
   }
 
-  const url = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${key}`;
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(20000),
-  });
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `Gemini ${r.status}`);
+  // Non-stream: retry تلقائي لو quota أو rate limit
+  const MAX_RETRIES = 3;
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const url = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${key}`;
+    let r;
+    try {
+      r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(20000),
+      });
+    } catch (fetchErr) {
+      lastErr = fetchErr;
+      if (attempt < MAX_RETRIES) await sleep(3000 * attempt);
+      continue;
+    }
+
+    if (!r.ok) {
+      const errBody = await r.json().catch(() => ({}));
+      const errMsg = errBody?.error?.message || `Gemini ${r.status}`;
+      lastErr = new Error(errMsg);
+
+      if (isQuotaError(r.status, errMsg) && attempt < MAX_RETRIES) {
+        const delay = extractRetryDelay(errMsg);
+        console.warn(`[Gemini] quota/rate-limit — retry ${attempt}/${MAX_RETRIES} بعد ${delay}ms`);
+        await sleep(delay);
+        continue;
+      }
+      throw lastErr;
+    }
+
+    const data = await r.json();
+    // حوّل response لـ OpenAI format عشان الكود القديم يفضل شغّال
+    const text = data.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
+    return { choices: [{ message: { role: 'assistant', content: text } }] };
   }
-  const data = await r.json();
-  // حوّل response لـ OpenAI format عشان الكود القديم يفضل شغّال
-  const text = data.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
-  return { choices: [{ message: { role: 'assistant', content: text } }] };
+
+  throw lastErr || new Error('Gemini: فشل بعد عدة محاولات');
 }
 
 // بيحول Gemini SSE stream لـ OpenAI SSE stream format
@@ -3213,18 +3253,23 @@ async function pipeGeminiStream(geminiResp, res) {
   res.end();
 }
 
-// GET /api/ai/test  — diagnostic endpoint, open in browser to check AI status
+// GET /api/ai/test  — diagnostic endpoint, checks key presence only (no API call to avoid quota waste)
+// Add ?live=1 to force a real API call (use sparingly — counts against free tier quota)
 app.get('/api/ai/test', async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
-  // Gemini test — أسرع وأبسط
   if (GEMINI_API_KEY) {
-    try {
-      const data = await callGemini([{ role: 'user', content: 'قل مرحبا باختصار' }], { max_tokens: 30 });
-      const reply = data.choices?.[0]?.message?.content || '(no content)';
-      return res.json({ ok: true, provider: 'gemini', model: GEMINI_MODEL, reply });
-    } catch (err) {
-      return res.json({ ok: false, provider: 'gemini', model: GEMINI_MODEL, error: err.message });
+    // Only call Gemini if ?live=1 is explicitly passed
+    if (req.query.live === '1') {
+      try {
+        const data = await callGemini([{ role: 'user', content: 'قل مرحبا باختصار' }], { max_tokens: 30 });
+        const reply = data.choices?.[0]?.message?.content || '(no content)';
+        return res.json({ ok: true, provider: 'gemini', model: GEMINI_MODEL, reply, live: true });
+      } catch (err) {
+        return res.json({ ok: false, provider: 'gemini', model: GEMINI_MODEL, error: err.message, live: true });
+      }
     }
+    // Default: just confirm key is configured — no API call, no quota usage
+    return res.json({ ok: true, provider: 'gemini', model: GEMINI_MODEL, keyConfigured: true, note: 'Add ?live=1 to test a real API call' });
   }
   const key = OPENROUTER_KEY;
   if (!key) return res.json({ ok: false, step: 'key', error: 'Set GEMINI_API_KEY or OPENROUTER_API_KEY on Render' });
