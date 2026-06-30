@@ -1,6 +1,7 @@
   </main>
 
-  <% if (currentUser) { %>
+  <!-- Change Password Modal -->
+  <% if (typeof currentUser !== 'undefined' && currentUser) { %>
   <div id="changePwModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4">
     <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl">
       <div class="p-5 border-b flex items-center justify-between">
@@ -42,7 +43,7 @@
     </div>
   </div>
   <script>
-  const _BASE_PATH = "<%- base %>";
+  const _BASE_PATH = "<%= base %>";
   function openChangePw() {
     document.getElementById("cpCurrent").value = "";
     document.getElementById("cpNew").value = "";
@@ -73,6 +74,7 @@
       const res = await fetch(`${_BASE_PATH}/api/users/me/password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ current_password: current, new_password: newPw })
       });
       const data = await res.json();
@@ -96,6 +98,7 @@
   </script>
   <% } %>
 
+  <!-- Global Language Toggle Script -->
   <script>
   (function() {
     const LANG_KEY = 'pos_ui_lang';
@@ -122,21 +125,18 @@
   })();
   </script>
 
+  <!-- Notifications Badge Script -->
   <script>
   (function() {
-    const BASE_PATH = "<%- base %>";
+    const BASE_PATH = "<%= base %>";
     async function refreshBadge() {
       try {
-        const res = await fetch(`${BASE_PATH}/api/products/low-stock`);
+        const res = await fetch(`${BASE_PATH}/api/products/low-stock`, { credentials: 'include' });
         const items = await res.json();
         const badge = document.getElementById("lowStockBadge");
         if (!badge) return;
-        if (items.length > 0) {
-          badge.textContent = items.length;
-          badge.classList.remove("hidden");
-        } else {
-          badge.classList.add("hidden");
-        }
+        if (items.length > 0) { badge.textContent = items.length; badge.classList.remove("hidden"); }
+        else { badge.classList.add("hidden"); }
       } catch(e) {}
     }
     window.refreshBadge = refreshBadge;
@@ -144,10 +144,20 @@
     setInterval(refreshBadge, 60000);
   })();
   </script>
+
+  <!-- PWA: Service Worker + Push Notifications -->
   <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(regs => { regs.forEach(r => r.unregister()); });
-    }
+  (function () {
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.register('<%= base %>/static/sw.js', { scope: '/pos-system/' })
+      .then(function (reg) {
+        if ('Notification' in window && Notification.permission === 'default') {
+          setTimeout(function () { Notification.requestPermission(); }, 3000);
+        }
+      })
+      .catch(function (err) { console.warn('[DenTrust SW]', err); });
+  })();
   </script>
+
 </body>
 </html>
