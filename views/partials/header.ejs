@@ -107,14 +107,33 @@
       <a href="<%= base %>/suppliers" class="nav-link <%= reqPath.includes('/suppliers') ? 'active' : '' %>">
         🏭 الموردين
       </a>
+      <a href="<%= base %>/cash-register" class="nav-link <%= reqPath.includes('/cash-register') ? 'active' : '' %>">
+        💰 الخزينة
+      </a>
       <a href="<%= base %>/settings" class="nav-link <%= reqPath.includes('/settings') ? 'active' : '' %>">
         ⚙️ الإعدادات
       </a>
       <% } %>
 
-      <a href="<%= base %>/logout" class="nav-link mr-auto text-red-200 hover:text-white hover:bg-red-600/40">
-        🚪 خروج
-      </a>
+      <div class="mr-auto flex items-center gap-2 flex-shrink-0">
+        <button onclick="toggleLang()" id="langBtn"
+          class="text-xs bg-white/15 hover:bg-white/25 text-white rounded-xl px-3 py-1.5 font-bold transition-colors border border-white/20 flex items-center gap-1">
+          <span id="langBtnText">EN</span>
+        </button>
+
+        <% if (typeof currentUser !== 'undefined' && currentUser) { %>
+        <button onclick="openChangePw()"
+          class="text-xs bg-blue-600 hover:bg-blue-500 rounded-xl px-3 py-1.5 flex items-center gap-1.5 transition-colors"
+          title="تغيير كلمة المرور">
+          <% if (typeof isMgr !== 'undefined' && isMgr) { %><span class="text-yellow-300">👑</span><% } else { %><span>👤</span><% } %>
+          <span class="font-semibold"><%= currentUser.username %></span>
+        </button>
+        <a href="<%= base %>/logout"
+          class="text-xs bg-red-500/20 hover:bg-red-500/40 text-red-100 rounded-xl px-3 py-1.5 font-medium transition-colors">
+          خروج
+        </a>
+        <% } %>
+      </div>
     </div>
   </nav>
 
