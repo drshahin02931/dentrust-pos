@@ -12,6 +12,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const bwip = require('bwip-js');
+const webpush = require('web-push');
 const { posDb, dentrustDb, isSingleDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
 
 const BASE = (process.env.BASE_PATH || '/pos-system').replace(/\/$/, '');
@@ -19,6 +20,17 @@ const PORT = parseInt(process.env.PORT || '5000', 10);
 const DATABASE_URL = process.env.DATABASE_URL;
 const SUPABASE_DATABASE_URL = process.env.SUPABASE_DATABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
+
+// ── VAPID / Web Push ─────────────────────────────────────────────────────────
+const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  || '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
+const VAPID_EMAIL       = process.env.VAPID_EMAIL || 'mailto:admin@dentrust.site';
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+  console.log('[Push] VAPID configured ✓');
+} else {
+  console.warn('[Push] VAPID keys not set — push notifications disabled');
+}
 // HAS_WEBSITE_DB: true when connected to website DB (Supabase or single-DB mode)
 const HAS_WEBSITE_DB = !!(SUPABASE_DATABASE_URL || isSingleDb);
 const UPLOAD_FOLDER = path.join(__dirname, 'static', 'uploads');
@@ -75,6 +87,7 @@ const OPEN_API = [
   '/api/ai/fashion-chat', '/api/ai/fashion-chat-stream', '/api/ai/fashion-tryon',
   '/api/ai/stylebot', '/api/products',
   '/api/admin/price-tracker',
+  '/api/push/vapid-public-key',
 ];
 
 function authGuard(req, res, next) {
@@ -932,6 +945,7 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
       );
       lowStock = lsRows.map(r => ({ id: r.id, name: r.product_name, qty: r.quantity, min: r.min_stock }));
     }
+    if (lowStock.length > 0) sendLowStockPush(lowStock).catch(() => {});
     syncProductsNow(items.map(i => i.product_id).filter(Boolean)).catch(() => {});
     res.status(201).json({ ok: true, sale_id: saleId, low_stock: lowStock });
   } catch (err) {
@@ -4284,6 +4298,109 @@ app.delete(`${BASE}/api/website-orders/:id`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── Push Notifications ────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Helper: send push to all subscribed devices
+async function sendPushToAll(title, body, url = null, tag = 'dentrust-notif') {
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  try {
+    const { rows: subs } = await posDb.query('SELECT * FROM push_subscriptions');
+    const payload = JSON.stringify({ title, body, icon: '/pos-system/static/icon-192.png', badge: '/pos-system/static/icon-192.png', tag, url });
+    const results = await Promise.allSettled(
+      subs.map(sub => {
+        const subscription = { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } };
+        return webpush.sendNotification(subscription, payload).catch(async err => {
+          // Remove expired/invalid subscriptions (410 Gone)
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            await posDb.query('DELETE FROM push_subscriptions WHERE endpoint=$1', [sub.endpoint]).catch(() => {});
+          }
+          throw err;
+        });
+      })
+    );
+    const ok = results.filter(r => r.status === 'fulfilled').length;
+    console.log(`[Push] Sent to ${ok}/${subs.length} devices`);
+  } catch (err) {
+    console.error('[Push] sendPushToAll error:', err.message);
+  }
+}
+
+// Helper: send low-stock push notification
+async function sendLowStockPush(lowStockItems) {
+  if (!lowStockItems?.length) return;
+  const names = lowStockItems.map(i => `${i.name} (${i.qty}/${i.min})`).join('، ');
+  const title = `⚠️ مخزون منخفض — ${lowStockItems.length} منتج`;
+  const body = names.length > 120 ? names.slice(0, 117) + '...' : names;
+  await sendPushToAll(title, body, '/pos-system/inventory', 'low-stock');
+}
+
+// GET /api/push/vapid-public-key  — returns public VAPID key to client (open, no auth needed)
+app.get(`${BASE}/api/push/vapid-public-key`, (req, res) => {
+  if (!VAPID_PUBLIC_KEY) return res.status(503).json({ error: 'Push notifications not configured on server' });
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+// POST /api/push/subscribe  — save device push subscription
+app.post(`${BASE}/api/push/subscribe`, async (req, res) => {
+  if (!req.session?.user_id) return res.status(401).json({ error: 'غير مصرح' });
+  const { endpoint, keys } = req.body || {};
+  if (!endpoint || !keys?.p256dh || !keys?.auth) {
+    return res.status(400).json({ error: 'بيانات الاشتراك ناقصة' });
+  }
+  try {
+    await posDb.query(
+      `INSERT INTO push_subscriptions (endpoint, p256dh, auth, user_id)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (endpoint) DO UPDATE SET p256dh=$2, auth=$3, user_id=$4, updated_at=NOW()`,
+      [endpoint, keys.p256dh, keys.auth, req.session.user_id]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// DELETE /api/push/unsubscribe  — remove device subscription
+app.delete(`${BASE}/api/push/unsubscribe`, async (req, res) => {
+  const { endpoint } = req.body || {};
+  if (!endpoint) return res.status(400).json({ error: 'endpoint مطلوب' });
+  try {
+    await posDb.query('DELETE FROM push_subscriptions WHERE endpoint=$1', [endpoint]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// POST /api/push/test  — manager-only test notification
+app.post(`${BASE}/api/push/test`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  if (!VAPID_PUBLIC_KEY) return res.status(503).json({ error: 'Push notifications غير مفعّلة' });
+  try {
+    await sendPushToAll('🔔 اختبار الإشعارات', 'إشعارات الـ Push تعمل بنجاح! ✅', '/pos-system/', 'test-notif');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/push/send  — manager-only: send custom notification to all devices
+app.post(`${BASE}/api/push/send`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const { title, body, url } = req.body;
+  if (!title || !body) return res.status(400).json({ error: 'title و body مطلوبان' });
+  try {
+    await sendPushToAll(title, body, url || null);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/push/subscriptions  — manager only: how many devices subscribed
+app.get(`${BASE}/api/push/subscriptions`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    const { rows: [r] } = await posDb.query('SELECT COUNT(*) as count FROM push_subscriptions');
+    res.json({ count: parseInt(r.count, 10) });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
 // ── Start Server ──────────────────────────────────────────────────────────────
 
 async function main() {
@@ -4303,6 +4420,15 @@ async function main() {
       amount DECIMAL(10,2) NOT NULL,
       reason TEXT DEFAULT '',
       date TIMESTAMPTZ DEFAULT NOW()
+    )`);
+    await posDb.query(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id SERIAL PRIMARY KEY,
+      endpoint TEXT UNIQUE NOT NULL,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     )`);
     await initPriceTracker();
     await seedManager();
