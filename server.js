@@ -1538,6 +1538,9 @@ app.patch(`${BASE}/api/sales/:sid/item-prices`, async (req, res) => {
   const client = await posDb.connect();
   try {
     await client.query('BEGIN');
+    const { rows: [oldSale] } = await client.query(
+      'SELECT total_amount, payment_method, customer_id, amount_received FROM sales WHERE id=$1', [sid]
+    );
     for (const it of items) {
       const price = parseFloat(it.unit_price);
       if (isNaN(price) || price < 0) continue;
@@ -1550,10 +1553,22 @@ app.patch(`${BASE}/api/sales/:sid/item-prices`, async (req, res) => {
       'SELECT COALESCE(SUM(unit_price * quantity),0) AS t FROM sale_items WHERE sale_id=$1', [sid]
     );
     const { rows: [disc] } = await client.query('SELECT discount_amount, delivery_amount FROM sales WHERE id=$1', [sid]);
-    const newTotal = parseFloat(tot.t) - parseFloat(disc?.discount_amount || 0) + parseFloat(disc?.delivery_amount || 0);
-    await client.query('UPDATE sales SET total_amount=$1 WHERE id=$2', [Math.max(0, newTotal), sid]);
+    const newTotal = Math.max(0, parseFloat(tot.t) - parseFloat(disc?.discount_amount || 0) + parseFloat(disc?.delivery_amount || 0));
+    await client.query('UPDATE sales SET total_amount=$1 WHERE id=$2', [newTotal, sid]);
+    if (oldSale && oldSale.payment_method === 'credit' && oldSale.customer_id) {
+      const amtReceived = parseFloat(oldSale.amount_received || 0);
+      const oldDebt = Math.max(0, parseFloat(oldSale.total_amount || 0) - amtReceived);
+      const newDebt = Math.max(0, newTotal - amtReceived);
+      const diff = newDebt - oldDebt;
+      if (diff !== 0) {
+        await client.query(
+          'UPDATE customers SET total_debt = GREATEST(0, total_debt + $1) WHERE id=$2',
+          [diff, oldSale.customer_id]
+        );
+      }
+    }
     await client.query('COMMIT');
-    res.json({ ok: true, new_total: Math.max(0, newTotal) });
+    res.json({ ok: true, new_total: newTotal });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: 'خطأ داخلي' });
