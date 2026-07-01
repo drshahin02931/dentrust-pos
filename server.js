@@ -979,8 +979,8 @@ app.post(`${BASE}/api/sales/:sid/mark-credit-paid`, async (req, res) => {
       const splitData = JSON.parse(sale.payment_split || '{}');
       debtAmount = parseFloat(splitData.credit || 0);
     } else {
-      // آجل كامل: الدين = إجمالي الفاتورة بالكامل
-      debtAmount = parseFloat(sale.total_amount || 0);
+      // آجل كامل: الدين = إجمالي الفاتورة ناقص ما دُفع وقت الشراء
+      debtAmount = parseFloat(sale.total_amount || 0) - parseFloat(sale.amount_received || 0);
     }
     await posDb.query('UPDATE sales SET credit_paid=true WHERE id=$1', [sid]);
     if (debtAmount > 0 && sale.customer_id) {
@@ -1061,7 +1061,7 @@ app.get(`${BASE}/api/customers`, async (req, res) => {
   try {
     const { rows } = await posDb.query(`
       SELECT c.*,
-        COALESCE(SUM(s.total_amount), 0) AS total_purchases
+        COALESCE(SUM(CASE WHEN s.payment_method != 'refund' THEN s.total_amount ELSE 0 END), 0) AS total_purchases
       FROM customers c
       LEFT JOIN sales s ON s.customer_id = c.id
       GROUP BY c.id
@@ -1141,13 +1141,25 @@ app.get(`${BASE}/api/customers/:cid/statement`, async (req, res) => {
   try {
     const { rows: [c] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [cid]);
     if (!c) return res.status(404).json({ error: 'العميل غير موجود' });
-    const { rows: [ti] } = await posDb.query("SELECT COALESCE(SUM(total_amount),0) as t FROM sales WHERE customer_id=$1 AND payment_method IN ('credit','split')", [cid]);
+    const { rows: creditSales } = await posDb.query(
+      "SELECT total_amount, amount_received, payment_method, payment_split FROM sales WHERE customer_id=$1 AND payment_method IN ('credit','split')", [cid]
+    );
+    let totalInvoiced = 0;
+    for (const s of creditSales) {
+      if (s.payment_method === 'split') {
+        try { totalInvoiced += parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
+      } else {
+        totalInvoiced += parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0);
+      }
+    }
     const { rows: [tp] } = await posDb.query("SELECT COALESCE(SUM(amount),0) as t FROM customer_payments WHERE customer_id=$1", [cid]);
     const { rows: [tr] } = await posDb.query("SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r JOIN sales s ON s.id=r.sale_id WHERE s.customer_id=$1 AND s.payment_method IN ('credit','split')", [cid]);
+    const totalReturned = Math.round(parseFloat(tr.t) * 100) / 100;
+    const netInvoiced   = Math.round(Math.max(0, totalInvoiced - totalReturned) * 100) / 100;
     res.json({
-      total_invoiced: Math.round(parseFloat(ti.t) * 100) / 100,
-      total_returned: Math.round(parseFloat(tr.t) * 100) / 100,
-      net_invoiced: Math.round((parseFloat(ti.t) - parseFloat(tr.t)) * 100) / 100,
+      total_invoiced: Math.round(totalInvoiced * 100) / 100,
+      total_returned: totalReturned,
+      net_invoiced:   netInvoiced,
       total_paid: Math.round(parseFloat(tp.t) * 100) / 100,
       remaining: Math.round(parseFloat(c.total_debt) * 100) / 100,
     });
@@ -1866,9 +1878,30 @@ app.post(`${BASE}/api/installments`, async (req, res) => {
 
 app.put(`${BASE}/api/installments/:iid`, async (req, res) => {
   const d = req.body;
-  await posDb.query('UPDATE installment_schedules SET status=$1, paid_date=$2, notes=$3 WHERE id=$4',
-    [d.status, d.paid_date || null, d.notes || '', req.params.iid]);
-  res.json({ ok: true });
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [prev] } = await client.query('SELECT * FROM installment_schedules WHERE id=$1', [req.params.iid]);
+    await client.query('UPDATE installment_schedules SET status=$1, paid_date=$2, notes=$3 WHERE id=$4',
+      [d.status, d.paid_date || null, d.notes || '', req.params.iid]);
+    if (prev && d.status === 'paid' && prev.status !== 'paid' && prev.customer_id) {
+      await client.query(
+        'UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2',
+        [parseFloat(prev.amount || 0), prev.customer_id]
+      );
+    }
+    if (prev && d.status !== 'paid' && prev.status === 'paid' && prev.customer_id) {
+      await client.query(
+        'UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2',
+        [parseFloat(prev.amount || 0), prev.customer_id]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: 'خطأ داخلي' });
+  } finally { client.release(); }
 });
 
 app.delete(`${BASE}/api/installments/:iid`, async (req, res) => {
