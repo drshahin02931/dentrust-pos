@@ -1301,7 +1301,16 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
        FROM sales s WHERE ${df}`
     );
     const { rows: [sdC] } = await posDb.query(
-      `SELECT COALESCE(SUM(si.quantity*COALESCE(si.snapshot_purchase_price,0)),0) as c
+      `SELECT
+         COALESCE(SUM(si.quantity * COALESCE(si.snapshot_purchase_price,0)),0)
+         - COALESCE((
+             SELECT SUM(ri.quantity * COALESCE(si2.snapshot_purchase_price,0))
+             FROM return_items ri
+             JOIN sale_items si2 ON si2.id = ri.sale_item_id
+             JOIN returns r2 ON r2.id = ri.return_id
+             JOIN sales s2 ON s2.id = r2.sale_id
+             WHERE ${df.replace(/s\./g, 's2.')}
+           ), 0) as c
        FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE ${df}`
     );
     const sd = { r: sdR.r, c: sdC.c };
@@ -1402,10 +1411,9 @@ app.get(`${BASE}/api/stats`, async (req, res) => {
                           COALESCE(SUM(CASE WHEN COALESCE(s.source,'pos')='pos' THEN s.total_amount - COALESCE(s.delivery_amount,0) ELSE 0 END),0) as pos_revenue,
                           COALESCE(SUM(CASE WHEN s.source='online' THEN s.total_amount - COALESCE(s.delivery_amount,0) ELSE 0 END),0) as online_revenue,
                           COALESCE(SUM(s.total_amount - COALESCE(s.delivery_amount,0)),0) as revenue,
-                          COALESCE(SUM(si.unit_price * si.quantity * COALESCE(p.purchase_price / NULLIF(p.sale_price,0), 0)),0) as cost
+                          COALESCE(SUM(si.quantity * COALESCE(si.snapshot_purchase_price, 0)),0) as cost
                    FROM sales s
                    LEFT JOIN sale_items si ON si.sale_id = s.id
-                   LEFT JOIN products p ON p.id = si.product_id
                    WHERE s.payment_method != 'refund'`),
       posDb.query(`SELECT COALESCE(SUM(amount),0) as total_expenses FROM expenses`),
     ]);
