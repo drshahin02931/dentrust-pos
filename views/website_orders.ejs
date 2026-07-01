@@ -494,13 +494,28 @@ async function saveDetailStatus() {
     const res  = await fetch(`${BASE}/api/website-orders/${_detailOrder.id}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
+      body: JSON.stringify({ status, notes: '' })
     });
     const data = await res.json();
     if (data.ok) {
       _detailOrder.status = status;
       _detailWaLink = data.wa_link || null;
       loadOrders();
+      if (data.wa_message) {
+        document.getElementById('waMsgPreview').textContent = data.wa_message;
+        const link = document.getElementById('waOpenLink');
+        if (data.wa_link) {
+          link.href = data.wa_link;
+          link.classList.remove('opacity-40', 'pointer-events-none');
+        } else {
+          link.classList.add('opacity-40', 'pointer-events-none');
+          link.href = '#';
+        }
+        const autoSent = document.getElementById('waAutoSent');
+        if (data.twilio_sent) autoSent.classList.remove('hidden');
+        else autoSent.classList.add('hidden');
+        document.getElementById('waModal').classList.remove('hidden');
+      }
     }
   } catch(_) {}
 }
@@ -724,4 +739,4 @@ function escAttr(s) {
 loadOrders();
 </script>
 
-<%- include('partials/footer') %>
+<%- include('partials/footer', locals) %>
