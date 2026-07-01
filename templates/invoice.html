@@ -26,7 +26,6 @@
       body { border: none; padding: 0; margin: 0; }
     }
 
-    /* ── Utilities ── */
     .center { text-align: center; }
     .right  { text-align: right; }
     .left   { text-align: left; }
@@ -34,14 +33,11 @@
     .divider { border: none; border-top: 1px dashed #000; margin: 5px 0; }
     .row { display: flex; justify-content: space-between; align-items: baseline; margin: 2.5px 0; font-size: 11px; }
 
-    /* ── Header ── */
     .store-name { font-size: 17px; font-weight: 900; letter-spacing: 0.5px; margin: 3px 0 1px; }
     .store-sub  { font-size: 10px; margin: 1px 0; }
 
-    /* ── Invoice title ── */
     .inv-title { font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; margin: 4px 0; }
 
-    /* ── Items table ── */
     table { width: 100%; border-collapse: collapse; margin: 2px 0; }
     thead th {
       font-size: 10px;
@@ -58,7 +54,6 @@
     }
     tbody tr:last-child td { border-bottom: none; }
 
-    /* ── Totals ── */
     .total-section { margin-top: 4px; }
     .total-main {
       display: flex;
@@ -72,7 +67,6 @@
     }
     .sub-row { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; }
 
-    /* ── Credit ── */
     .credit-stamp {
       border: 2px solid #000;
       border-radius: 4px;
@@ -99,7 +93,6 @@
       margin-top: 3px;
     }
 
-    /* ── Footer ── */
     .footer-text {
       white-space: pre-line;
       text-align: center;
@@ -108,7 +101,6 @@
       margin-top: 5px;
     }
 
-    /* ── Logo ── */
     .logo-box { margin: 0 auto 6px; text-align: center; }
     .logo-box img { max-width: 110px; max-height: 110px; object-fit: contain; filter: grayscale(100%) brightness(0); -webkit-filter: grayscale(100%) brightness(0); }
   </style>
@@ -156,6 +148,7 @@
   {% if show_ar %}
   <div class="row"><span>رقم الفاتورة</span><span class="bold">#{{ sale.id }}</span></div>
   <div class="row"><span>التاريخ</span><span>{{ sale.date[:16] }}</span></div>
+  <div class="row"><span>الكاشير</span><span class="bold">{{ cashierName or '—' }}</span></div>
   <div class="row">
     <span>الدفع</span>
     <span class="bold">
@@ -177,6 +170,7 @@
   <div style="direction:ltr;{% if is_both %}border-top:1px dashed #aaa;margin-top:4px;padding-top:4px;{% endif %}">
     <div class="row"><span>Invoice #</span><span class="bold">{{ sale.id }}</span></div>
     <div class="row"><span>Date</span><span>{{ sale.date[:16] }}</span></div>
+    <div class="row"><span>Cashier</span><span class="bold">{{ cashierName or '—' }}</span></div>
     <div class="row">
       <span>Payment</span>
       <span class="bold">
