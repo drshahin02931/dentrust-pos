@@ -109,8 +109,8 @@
     }
 
     /* ── Logo ── */
-    .logo-box { margin: 0 auto 4px; text-align: center; }
-    .logo-box img { max-width: 60px; max-height: 60px; object-fit: contain; }
+    .logo-box { margin: 0 auto 6px; text-align: center; }
+    .logo-box img { max-width: 110px; max-height: 110px; object-fit: contain; filter: grayscale(100%) brightness(0); -webkit-filter: grayscale(100%) brightness(0); }
   </style>
 </head>
 <body>
@@ -214,10 +214,15 @@
     <tbody>
       {% for item in items %}
       <tr>
-        <td class="right" style="word-break:break-word;line-height:1.4;">{{ item.product_name }}</td>
-        <td class="center">{{ item.quantity }}</td>
+        <td class="right" style="word-break:break-word;line-height:1.4;">
+          {{ item.product_name }}
+          {% if item.returned_qty and item.returned_qty > 0 %}
+          <div style="font-size:9px;color:#999;">مرتجع: {{ item.returned_qty|int }}</div>
+          {% endif %}
+        </td>
+        <td class="center">{{ item.net_qty if item.net_qty is defined else item.quantity }}</td>
         <td class="left">{{ "%.2f"|format(item.unit_price) }}</td>
-        <td class="left bold">{{ "%.2f"|format(item.unit_price * item.quantity) }}</td>
+        <td class="left bold">{{ "%.2f"|format(item.unit_price * (item.net_qty if item.net_qty is defined else item.quantity)) }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -237,10 +242,15 @@
     <tbody>
       {% for item in items %}
       <tr>
-        <td class="left" style="word-break:break-word;line-height:1.4;">{{ item.product_name }}</td>
-        <td class="center">{{ item.quantity }}</td>
+        <td class="left" style="word-break:break-word;line-height:1.4;">
+          {{ item.product_name }}
+          {% if item.returned_qty and item.returned_qty > 0 %}
+          <div style="font-size:9px;color:#999;">Returned: {{ item.returned_qty|int }}</div>
+          {% endif %}
+        </td>
+        <td class="center">{{ item.net_qty if item.net_qty is defined else item.quantity }}</td>
         <td class="left">{{ "%.2f"|format(item.unit_price) }}</td>
-        <td class="left bold">{{ "%.2f"|format(item.unit_price * item.quantity) }}</td>
+        <td class="left bold">{{ "%.2f"|format(item.unit_price * (item.net_qty if item.net_qty is defined else item.quantity)) }}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -250,15 +260,23 @@
   <!-- ══ Totals ══ -->
   <div class="total-section">
     {% if show_ar %}
+    {% if total_returned and total_returned > 0 %}
+    <div class="sub-row"><span>إجمالي الفاتورة</span><span>{{ "%.2f"|format(sale.total_amount) }} {{ currency_label }}</span></div>
+    <div class="sub-row"><span>مرتجع</span><span>- {{ "%.2f"|format(total_returned) }} {{ currency_label }}</span></div>
+    {% endif %}
     <div class="total-main">
       <span>الإجمالي</span>
-      <span>{{ "%.2f"|format(sale.total_amount) }} {{ currency_label }}</span>
+      <span>{{ "%.2f"|format(net_total if net_total is defined else sale.total_amount) }} {{ currency_label }}</span>
     </div>
     {% endif %}
     {% if show_en %}
+    {% if total_returned and total_returned > 0 %}
+    <div class="sub-row" style="direction:ltr;"><span>Subtotal</span><span>{{ "%.2f"|format(sale.total_amount) }} {{ currency_en_label }}</span></div>
+    <div class="sub-row" style="direction:ltr;"><span>Returned</span><span>- {{ "%.2f"|format(total_returned) }} {{ currency_en_label }}</span></div>
+    {% endif %}
     <div class="total-main" style="direction:ltr;">
       <span>TOTAL</span>
-      <span>{{ "%.2f"|format(sale.total_amount) }} {{ currency_en_label }}</span>
+      <span>{{ "%.2f"|format(net_total if net_total is defined else sale.total_amount) }} {{ currency_en_label }}</span>
     </div>
     {% endif %}
 
