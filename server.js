@@ -252,8 +252,12 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
   try {
     const sid = parseInt(req.params.sale_id, 10);
     const { rows: [sale] } = await posDb.query(
-      `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone, c.address AS customer_address
-       FROM sales s LEFT JOIN customers c ON s.customer_id=c.id WHERE s.id=$1`, [sid]
+      `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone, c.address AS customer_address,
+              u.username AS cashier_name
+       FROM sales s
+       LEFT JOIN customers c ON s.customer_id=c.id
+       LEFT JOIN users u ON u.id=s.cashier_id
+       WHERE s.id=$1`, [sid]
     );
     if (!sale) return res.status(404).send('الفاتورة غير موجودة');
     // Fetch items with returned quantities per item
@@ -290,7 +294,7 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
     }
     const st = await getSettings();
     res.render('invoice', { sale, items, customer, previousBalance, totalReturned, netTotal, st, base: BASE,
-      canEditPrices: hasPerm(req, 'edit_prices'), isMgr: isMgr(req) });
+      canEditPrices: hasPerm(req, 'edit_prices'), isMgr: isMgr(req), cashierName: sale.cashier_name || null });
   } catch (err) {
     console.error(err);
     res.status(500).send('خطأ داخلي');
