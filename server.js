@@ -1095,6 +1095,24 @@ app.post(`${BASE}/api/customers`, async (req, res) => {
       'INSERT INTO customers (name, phone, address, installment_plan) VALUES ($1,$2,$3,$4)',
       [d.name, d.phone?.trim() || '', d.address || '', d.installment_plan || '']
     );
+    // ── Sync new customer to website (Supabase) ──────────────────────────────
+    try {
+      const dtClient = await dentrustDb.connect();
+      try {
+        const { rows: [dtExisting] } = await dtClient.query(
+          'SELECT id FROM customers WHERE phone=$1', [d.phone?.trim() || '']
+        );
+        if (!dtExisting) {
+          await dtClient.query(
+            'INSERT INTO customers (name, phone) VALUES ($1, $2)',
+            [d.name, d.phone?.trim() || '']
+          );
+        }
+      } finally { dtClient.release(); }
+    } catch (syncErr) {
+      console.error('[sync] POS→Supabase customer sync failed:', syncErr.message);
+    }
+    // ────────────────────────────────────────────────────────────────────────
     res.status(201).json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
