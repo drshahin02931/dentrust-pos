@@ -951,6 +951,10 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
     }
     if (lowStock.length > 0) sendLowStockPush(lowStock).catch(() => {});
     syncProductsNow(items.map(i => i.product_id).filter(Boolean)).catch(() => {});
+    if (customerId) {
+      const splitParsed = splitJson ? JSON.parse(splitJson) : null;
+      syncSaleToSupabase(customerId, customerNameFree, saleId, total, method, splitParsed, items).catch(() => {});
+    }
     res.status(201).json({ ok: true, sale_id: saleId, low_stock: lowStock });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -1097,18 +1101,8 @@ app.post(`${BASE}/api/customers`, async (req, res) => {
     );
     // ── Sync new customer to website (Supabase) ──────────────────────────────
     try {
-      const dtClient = await dentrustDb.connect();
-      try {
-        const { rows: [dtExisting] } = await dtClient.query(
-          'SELECT id FROM customers WHERE phone=$1', [d.phone?.trim() || '']
-        );
-        if (!dtExisting) {
-          await dtClient.query(
-            'INSERT INTO customers (name, phone) VALUES ($1, $2)',
-            [d.name, d.phone?.trim() || '']
-          );
-        }
-      } finally { dtClient.release(); }
+      const { rows: [newCust] } = await posDb.query('SELECT id, name, phone FROM customers WHERE phone=$1', [d.phone?.trim() || '']);
+      if (newCust) syncCustomerToSupabase(newCust).catch(() => {});
     } catch (syncErr) {
       console.error('[sync] POS→Supabase customer sync failed:', syncErr.message);
     }
@@ -2190,6 +2184,74 @@ async function syncUpdateProductToDentrust(pid, d) {
   } finally { client.release(); }
 }
 
+// ── Sync POS customer → Supabase (creates account with token for website login) ─
+async function syncCustomerToSupabase(posCustomer) {
+  if (!HAS_WEBSITE_DB) return null;
+  const phone = posCustomer.phone?.trim();
+  if (!phone) return null;
+  const client = await dentrustDb.connect();
+  try {
+    const { rows: [existing] } = await client.query(
+      'SELECT id FROM customers WHERE phone=$1', [phone]
+    );
+    if (existing) {
+      await client.query(
+        `UPDATE customers SET name = CASE WHEN name IS NULL OR name='' THEN $1 ELSE name END WHERE phone=$2`,
+        [posCustomer.name || '', phone]
+      );
+      if (posCustomer.id) {
+        await posDb.query(
+          'UPDATE customers SET dentrust_id=$1 WHERE id=$2 AND dentrust_id IS NULL',
+          [existing.id, posCustomer.id]
+        );
+      }
+      return existing.id;
+    } else {
+      const token = uuidv4();
+      const { rows: [ins] } = await client.query(
+        'INSERT INTO customers (name, phone, token) VALUES ($1,$2,$3) RETURNING id',
+        [posCustomer.name || '', phone, token]
+      );
+      if (ins && posCustomer.id) {
+        await posDb.query('UPDATE customers SET dentrust_id=$1 WHERE id=$2', [ins.id, posCustomer.id]);
+      }
+      return ins?.id ?? null;
+    }
+  } finally {
+    client.release();
+  }
+}
+
+// ── Sync POS sale → Supabase orders (so customer sees it on the website) ────
+async function syncSaleToSupabase(posCustomerId, posCustomerName, saleId, totalAmount, paymentMethod, splitData, items) {
+  if (!HAS_WEBSITE_DB || !posCustomerId) return;
+  const { rows: [cust] } = await posDb.query(
+    'SELECT name, phone FROM customers WHERE id=$1', [posCustomerId]
+  );
+  const phone = cust?.phone?.trim();
+  if (!phone) return;
+  const custName = cust?.name || posCustomerName || '';
+  const client = await dentrustDb.connect();
+  try {
+    const instapayAmt = parseFloat(splitData?.instapay || 0);
+    const { rows: [order] } = await client.query(
+      `INSERT INTO orders (customer_name, phone, total_price, payment_method, status, shipping_fee, instapay_amount)
+       VALUES ($1,$2,$3,$4,'completed',0,$5) RETURNING id`,
+      [custName, phone, totalAmount, paymentMethod, instapayAmt]
+    );
+    if (!order) return;
+    for (const item of items) {
+      await client.query(
+        'INSERT INTO order_items (order_id, product_name, quantity, unit_price) VALUES ($1,$2,$3,$4)',
+        [order.id, item.product_name || item.product_name, item.quantity, item.unit_price]
+      ).catch(() => {});
+    }
+    await posDb.query('UPDATE sales SET dentrust_order_id=$1 WHERE id=$2', [String(order.id), saleId]).catch(() => {});
+  } finally {
+    client.release();
+  }
+}
+
 async function upsertCustomerInPOS(data) {
   const { name, phone, city, region, street, building, landmark, address, dentrust_id } = data;
   if (!phone) return null;
@@ -2631,6 +2693,49 @@ app.post(`${BASE}/api/sync/force-full`, async (req, res) => {
   try {
     const result = await doFullSync();
     res.json({ ok: true, ...result });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── Bulk push: POS customers → Supabase ──────────────────────────────────────
+app.post(`${BASE}/api/sync/push-customers-to-supabase`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!HAS_WEBSITE_DB) return res.status(503).json({ error: 'الاتصال بـ Supabase غير متاح' });
+  try {
+    const { rows: posCustomers } = await posDb.query(
+      "SELECT id, name, phone FROM customers WHERE phone IS NOT NULL AND phone <> '' ORDER BY id"
+    );
+    let synced = 0, failed = 0;
+    for (const c of posCustomers) {
+      try { await syncCustomerToSupabase(c); synced++; } catch (_) { failed++; }
+    }
+    res.json({ ok: true, total: posCustomers.length, synced, failed });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── Bulk push: POS sales → Supabase orders ────────────────────────────────────
+app.post(`${BASE}/api/sync/push-sales-to-supabase`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!HAS_WEBSITE_DB) return res.status(503).json({ error: 'الاتصال بـ Supabase غير متاح' });
+  try {
+    const { rows: sales } = await posDb.query(
+      `SELECT s.id, s.total_amount, s.payment_method, s.payment_split, s.customer_id, s.customer_name
+       FROM sales s
+       JOIN customers c ON c.id = s.customer_id AND c.phone IS NOT NULL AND c.phone <> ''
+       WHERE s.dentrust_order_id IS NULL
+       ORDER BY s.id`
+    );
+    let synced = 0, failed = 0;
+    for (const sale of sales) {
+      try {
+        const { rows: items } = await posDb.query(
+          'SELECT product_name, quantity, unit_price FROM sale_items WHERE sale_id=$1', [sale.id]
+        );
+        const splitData = sale.payment_split ? JSON.parse(sale.payment_split) : null;
+        await syncSaleToSupabase(sale.customer_id, sale.customer_name, sale.id, sale.total_amount, sale.payment_method, splitData, items);
+        synced++;
+      } catch (_) { failed++; }
+    }
+    res.json({ ok: true, total: sales.length, synced, failed });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
