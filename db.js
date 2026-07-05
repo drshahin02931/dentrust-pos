@@ -37,6 +37,9 @@ const EMPLOYEE_DEFAULT_PERMS = {
   edit_prices: false, process_returns: false,
 };
 
+// NOTE: products table is removed from pos_data schema.
+// pos_data.products is now a VIEW pointing to public.products (Supabase).
+// All POS product queries run unchanged — the VIEW + INSTEAD OF triggers handle translation.
 const PG_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -53,25 +56,6 @@ const PG_SCHEMA_SQL = `
     login_at TEXT DEFAULT (NOW()::text),
     logout_at TEXT,
     ip_address TEXT
-  );
-  CREATE TABLE IF NOT EXISTS products (
-    id SERIAL PRIMARY KEY,
-    barcode TEXT UNIQUE,
-    product_name TEXT NOT NULL,
-    quantity INTEGER DEFAULT 0,
-    purchase_price NUMERIC DEFAULT 0,
-    sale_price NUMERIC DEFAULT 0,
-    expiry_date TEXT,
-    dentrust_id INTEGER,
-    image_url TEXT,
-    category TEXT,
-    min_stock INTEGER DEFAULT 0,
-    supplier_id INTEGER,
-    description TEXT,
-    variants TEXT,
-    section TEXT DEFAULT 'dental',
-    checkbox_values TEXT,
-    created_at TEXT DEFAULT (NOW()::text)
   );
   CREATE TABLE IF NOT EXISTS customers (
     id SERIAL PRIMARY KEY,
@@ -107,13 +91,14 @@ const PG_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS sale_items (
     id SERIAL PRIMARY KEY,
     sale_id INTEGER REFERENCES sales(id),
-    product_id INTEGER REFERENCES products(id),
+    product_id INTEGER,
     product_name TEXT,
     quantity INTEGER,
     unit_price NUMERIC,
     sale_item_id INTEGER,
     snapshot_purchase_price NUMERIC,
-    snapshot_unit_price NUMERIC
+    snapshot_unit_price NUMERIC,
+    selected_option TEXT
   );
   CREATE TABLE IF NOT EXISTS expenses (
     id SERIAL PRIMARY KEY,
@@ -133,7 +118,7 @@ const PG_SCHEMA_SQL = `
     id SERIAL PRIMARY KEY,
     return_id INTEGER NOT NULL REFERENCES returns(id),
     sale_item_id INTEGER REFERENCES sale_items(id),
-    product_id INTEGER REFERENCES products(id),
+    product_id INTEGER,
     product_name TEXT,
     quantity INTEGER,
     unit_price NUMERIC
@@ -196,7 +181,7 @@ const PG_SCHEMA_SQL = `
     sale_item_id INTEGER,
     created_at TIMESTAMPTZ DEFAULT NOW()
   );
-    CREATE TABLE IF NOT EXISTS cash_sessions (
+  CREATE TABLE IF NOT EXISTS cash_sessions (
     id SERIAL PRIMARY KEY,
     cashier_id INTEGER,
     date TEXT,
@@ -218,16 +203,6 @@ const PG_SCHEMA_SQL = `
 
 const MIGRATIONS = [
   "ALTER TABLE customers ADD COLUMN IF NOT EXISTS dentrust_id INTEGER",
-  "ALTER TABLE products ADD COLUMN IF NOT EXISTS variants TEXT",
-  "ALTER TABLE products ADD COLUMN IF NOT EXISTS expiry_date TEXT",
-  "ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier_id INTEGER",
-  "ALTER TABLE products ADD COLUMN IF NOT EXISTS description TEXT",
-  "ALTER TABLE products ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0",
-  "ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT",
-  "ALTER TABLE products ADD COLUMN IF NOT EXISTS category TEXT",
-  "ALTER TABLE products ADD COLUMN IF NOT EXISTS dentrust_id INTEGER",
-  "ALTER TABLE products ADD COLUMN IF NOT EXISTS section TEXT DEFAULT 'dental'",
-  "ALTER TABLE products ADD COLUMN IF NOT EXISTS checkbox_values TEXT",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'pos'",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS customer_name TEXT",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS amount_received NUMERIC",
@@ -258,6 +233,211 @@ const MIGRATIONS = [
   "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS selected_option TEXT",
 ];
 
+// Migrations that run on the PUBLIC schema (Supabase website DB).
+// Adds POS-specific columns to public.products so the VIEW can expose them.
+const PUBLIC_PRODUCTS_MIGRATIONS = [
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS barcode TEXT",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS supplier_id INTEGER",
+];
+
+// The VIEW that makes pos_data.products a transparent window into public.products.
+// Column mapping: product_name=name, sale_price=price, quantity=stock,
+//                 image_url=first element of photos[], category=categories.name,
+//                 description=details, dentrust_id=id (same DB, id is universal now)
+const PRODUCTS_VIEW_SQL = `
+CREATE OR REPLACE VIEW pos_data.products AS
+SELECT
+  p.id,
+  p.barcode,
+  p.name                                                           AS product_name,
+  COALESCE(p.stock, 0)                                            AS quantity,
+  COALESCE(p.purchase_price, 0)                                   AS purchase_price,
+  COALESCE(p.price, 0)                                            AS sale_price,
+  p.expiry_date,
+  p.id                                                            AS dentrust_id,
+  CASE
+    WHEN p.photos IS NOT NULL
+     AND array_length(p.photos, 1) > 0
+    THEN (p.photos[1])
+    ELSE NULL
+  END                                                             AS image_url,
+  c.name                                                          AS category,
+  COALESCE(p.min_stock, 0)                                        AS min_stock,
+  p.supplier_id,
+  p.details                                                       AS description,
+  p.variants,
+  COALESCE(p.section, 'dental')                                   AS section,
+  p.checkbox_values,
+  p.is_sold_out,
+  COALESCE(p.created_at::text, NOW()::text)                       AS created_at
+FROM public.products p
+LEFT JOIN public.categories c ON c.id = p.category_id
+`;
+
+// INSTEAD OF INSERT — translates POS column names to public.products columns
+const INSERT_TRIGGER_FN_SQL = `
+CREATE OR REPLACE FUNCTION pos_data.products_insert_fn()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+  v_cat_id  INTEGER;
+  v_new_id  INTEGER;
+  v_photos  TEXT[];
+BEGIN
+  -- Resolve category name → category_id
+  IF NEW.category IS NOT NULL AND TRIM(NEW.category) <> '' THEN
+    SELECT id INTO v_cat_id
+      FROM public.categories
+     WHERE LOWER(TRIM(name)) = LOWER(TRIM(NEW.category))
+     LIMIT 1;
+    IF v_cat_id IS NULL THEN
+      BEGIN
+        INSERT INTO public.categories (name, section)
+        VALUES (TRIM(NEW.category), COALESCE(NEW.section, 'dental'))
+        RETURNING id INTO v_cat_id;
+      EXCEPTION WHEN unique_violation THEN
+        SELECT id INTO v_cat_id
+          FROM public.categories
+         WHERE LOWER(TRIM(name)) = LOWER(TRIM(NEW.category))
+         LIMIT 1;
+      END;
+    END IF;
+  END IF;
+
+  -- Build photos JSON array from image_url string
+  IF NEW.image_url IS NOT NULL AND NEW.image_url <> '' THEN
+    v_photos := ARRAY[NEW.image_url];
+  ELSE
+    v_photos := ARRAY[]::TEXT[];
+  END IF;
+
+  INSERT INTO public.products (
+    barcode, name, stock, purchase_price, price,
+    expiry_date, photos, category_id, min_stock, supplier_id,
+    details, variants, section, checkbox_values, is_offer, is_sold_out
+  ) VALUES (
+    NEW.barcode,
+    NEW.product_name,
+    COALESCE(NEW.quantity, 0),
+    COALESCE(NEW.purchase_price, 0),
+    COALESCE(NEW.sale_price, 0),
+    NEW.expiry_date,
+    v_photos,
+    v_cat_id,
+    COALESCE(NEW.min_stock, 0),
+    NEW.supplier_id,
+    NEW.description,
+    NEW.variants,
+    COALESCE(NEW.section, 'dental'),
+    NEW.checkbox_values,
+    false,
+    (COALESCE(NEW.quantity, 0) <= 0)
+  ) RETURNING id INTO v_new_id;
+
+  NEW.id         := v_new_id;
+  NEW.dentrust_id := v_new_id;
+  RETURN NEW;
+END;
+$$
+`;
+
+const INSERT_TRIGGER_SQL = `
+CREATE OR REPLACE TRIGGER products_instead_of_insert
+INSTEAD OF INSERT ON pos_data.products
+FOR EACH ROW EXECUTE FUNCTION pos_data.products_insert_fn()
+`;
+
+// INSTEAD OF UPDATE — translates updates back to public.products
+const UPDATE_TRIGGER_FN_SQL = `
+CREATE OR REPLACE FUNCTION pos_data.products_update_fn()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+DECLARE
+  v_cat_id  INTEGER;
+  v_photos  TEXT[];
+BEGIN
+  -- Resolve category if it changed
+  IF NEW.category IS DISTINCT FROM OLD.category
+     AND NEW.category IS NOT NULL AND TRIM(NEW.category) <> '' THEN
+    SELECT id INTO v_cat_id
+      FROM public.categories
+     WHERE LOWER(TRIM(name)) = LOWER(TRIM(NEW.category))
+     LIMIT 1;
+    IF v_cat_id IS NULL THEN
+      BEGIN
+        INSERT INTO public.categories (name, section)
+        VALUES (TRIM(NEW.category), COALESCE(NEW.section, 'dental'))
+        RETURNING id INTO v_cat_id;
+      EXCEPTION WHEN unique_violation THEN
+        SELECT id INTO v_cat_id
+          FROM public.categories
+         WHERE LOWER(TRIM(name)) = LOWER(TRIM(NEW.category))
+         LIMIT 1;
+      END;
+    END IF;
+  ELSIF NEW.category IS NULL OR TRIM(NEW.category) = '' THEN
+    v_cat_id := NULL;
+  ELSE
+    SELECT category_id INTO v_cat_id FROM public.products WHERE id = NEW.id;
+  END IF;
+
+  -- Only update photos if image_url actually changed
+  IF NEW.image_url IS DISTINCT FROM OLD.image_url THEN
+    IF NEW.image_url IS NOT NULL AND NEW.image_url <> '' THEN
+      v_photos := ARRAY[NEW.image_url];
+    ELSE
+      v_photos := ARRAY[]::TEXT[];
+    END IF;
+  ELSE
+    SELECT photos INTO v_photos FROM public.products WHERE id = NEW.id;
+    IF v_photos IS NULL THEN v_photos := ARRAY[]::TEXT[]; END IF;
+  END IF;
+
+  UPDATE public.products SET
+    barcode        = NEW.barcode,
+    name           = NEW.product_name,
+    stock          = COALESCE(NEW.quantity, 0),
+    purchase_price = COALESCE(NEW.purchase_price, 0),
+    price          = COALESCE(NEW.sale_price, 0),
+    expiry_date    = NEW.expiry_date,
+    photos         = v_photos,
+    category_id    = v_cat_id,
+    min_stock      = COALESCE(NEW.min_stock, 0),
+    supplier_id    = NEW.supplier_id,
+    details        = NEW.description,
+    variants       = NEW.variants,
+    section        = COALESCE(NEW.section, 'dental'),
+    checkbox_values= NEW.checkbox_values,
+    is_sold_out    = (COALESCE(NEW.quantity, 0) <= 0)
+  WHERE id = NEW.id;
+
+  RETURN NEW;
+END;
+$$
+`;
+
+const UPDATE_TRIGGER_SQL = `
+CREATE OR REPLACE TRIGGER products_instead_of_update
+INSTEAD OF UPDATE ON pos_data.products
+FOR EACH ROW EXECUTE FUNCTION pos_data.products_update_fn()
+`;
+
+// INSTEAD OF DELETE
+const DELETE_TRIGGER_FN_SQL = `
+CREATE OR REPLACE FUNCTION pos_data.products_delete_fn()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM public.products WHERE id = OLD.id;
+  RETURN OLD;
+END;
+$$
+`;
+
+const DELETE_TRIGGER_SQL = `
+CREATE OR REPLACE TRIGGER products_instead_of_delete
+INSTEAD OF DELETE ON pos_data.products
+FOR EACH ROW EXECUTE FUNCTION pos_data.products_delete_fn()
+`;
+
 const DEFAULT_SETTINGS = {
   store_name: 'اسم المحل',
   store_name_en: 'Store Name',
@@ -278,21 +458,53 @@ const DEFAULT_SETTINGS = {
 async function initDb() {
   const client = await posDb.connect();
   try {
+    // 1. Create pos_data schema
     await client.query(`CREATE SCHEMA IF NOT EXISTS ${POS_SCHEMA}`);
     await client.query(`SET search_path TO ${POS_SCHEMA}, public`);
+
+    // 2. Create POS-specific tables (products is a VIEW — not created here)
     const stmts = PG_SCHEMA_SQL.split(';').map(s => s.trim()).filter(Boolean);
     for (const stmt of stmts) {
       await client.query(stmt);
     }
+
+    // 3. Seed default settings
     for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
       await client.query(
         `INSERT INTO store_settings (key,value) VALUES ($1,$2) ON CONFLICT (key) DO NOTHING`,
         [k, String(v)]
       );
     }
+
+    // 4. Run POS migrations (sales, customers, etc. — products removed)
     for (const migration of MIGRATIONS) {
       try { await client.query(migration); } catch (_) {}
     }
+
+    // 5. Add POS-specific columns to public.products (barcode, min_stock, supplier_id)
+    for (const migration of PUBLIC_PRODUCTS_MIGRATIONS) {
+      try { await client.query(migration); } catch (_) {}
+    }
+
+    // 6. Create pos_data.products VIEW + INSTEAD OF triggers
+    //    These make the POS see public.products as if it were pos_data.products.
+    //    All existing server.js product queries work unchanged.
+    try { await client.query(PRODUCTS_VIEW_SQL); } catch (e) {
+      // If a real table named products exists in pos_data, rename it first
+      if (e.message && e.message.includes('already exists')) {
+        try {
+          await client.query('ALTER TABLE pos_data.products RENAME TO products_old_backup');
+          await client.query(PRODUCTS_VIEW_SQL);
+        } catch (_) {}
+      }
+    }
+    try { await client.query(INSERT_TRIGGER_FN_SQL); } catch (_) {}
+    try { await client.query(INSERT_TRIGGER_SQL);    } catch (_) {}
+    try { await client.query(UPDATE_TRIGGER_FN_SQL); } catch (_) {}
+    try { await client.query(UPDATE_TRIGGER_SQL);    } catch (_) {}
+    try { await client.query(DELETE_TRIGGER_FN_SQL); } catch (_) {}
+    try { await client.query(DELETE_TRIGGER_SQL);    } catch (_) {}
+
   } finally {
     client.release();
   }
