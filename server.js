@@ -287,10 +287,14 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
       address: sale.customer_address || '',
     } : null;
     let previousBalance = 0;
-    if (sale.payment_method === 'credit' && sale.customer_id) {
-      // previousBalance = current debt minus this sale's NET amount (after returns)
+    if (['credit','split'].includes(sale.payment_method) && sale.customer_id) {
+      // previousBalance = current debt minus this sale's NET credit portion (after returns)
       const { rows: [pb] } = await posDb.query('SELECT total_debt FROM customers WHERE id=$1', [sale.customer_id]);
-      previousBalance = pb ? Math.max(0, parseFloat(pb.total_debt || 0) - netTotal) : 0;
+      let saleDebtPortion = netTotal;
+      if (sale.payment_method === 'split') {
+        try { saleDebtPortion = parseFloat(JSON.parse(sale.payment_split || '{}').credit || 0); } catch (_) {}
+      }
+      previousBalance = pb ? Math.max(0, parseFloat(pb.total_debt || 0) - saleDebtPortion) : 0;
     }
     const st = await getSettings();
     res.render('invoice', { sale, items, customer, previousBalance, totalReturned, netTotal, st, base: BASE,
@@ -891,7 +895,14 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
         [saleId, item.product_id, item.product_name, item.quantity, item.unit_price, snapPp, parseFloat(item.unit_price),
          item.selected_option || item.selectedOption || item._checkbox || null]
       );
-      await client.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [item.quantity, item.product_id]);
+      const stockUpdate = await client.query(
+        'UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2 AND quantity >= $1 RETURNING id',
+        [item.quantity, item.product_id]
+      );
+      if (!stockUpdate.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `المنتج "${item.product_name}" نفد من المخزن أو الكمية غير كافية` });
+      }
       // Deduct per-variant qty from variants JSON if a specific size was sold
       const selSize = item._size || item.selected_size;
       if (selSize) {
@@ -953,7 +964,13 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
     syncProductsNow(items.map(i => i.product_id).filter(Boolean)).catch(() => {});
     if (customerId) {
       const splitParsed = splitJson ? JSON.parse(splitJson) : null;
-      syncSaleToSupabase(customerId, customerNameFree, saleId, total, method, splitParsed, items).catch(() => {});
+      syncSaleToSupabase(customerId, customerNameFree, saleId, total, method, splitParsed, items).catch(async (err) => {
+        // لو Supabase كان offline، نحفظ في sync_queue ونحاول تاني
+        await posDb.query(
+          `INSERT INTO sync_queue (type, payload, attempts) VALUES ('sale_to_supabase', $1, 0)`,
+          [JSON.stringify({ posCustomerId: customerId, posCustomerName: customerNameFree, saleId, totalAmount: total, paymentMethod: method, splitData: splitParsed, items })]
+        ).catch(() => {});
+      });
     }
     res.status(201).json({ ok: true, sale_id: saleId, low_stock: lowStock });
   } catch (err) {
@@ -1041,9 +1058,15 @@ app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
         } catch (_cbErr) {}
       }
     }
-    if (sale.payment_method === 'credit' && sale.customer_id) {
+    if (sale.customer_id && ['credit','split'].includes(sale.payment_method)) {
       const { rows: [rr] } = await posDb.query("SELECT COALESCE(SUM(total_refund),0) AS t FROM returns WHERE sale_id=$1", [sid]);
-      const netDebt = parseFloat(sale.total_amount) - parseFloat(rr?.t || 0);
+      let netDebt;
+      if (sale.payment_method === 'split') {
+        const sp = JSON.parse(sale.payment_split || '{}');
+        netDebt = Math.max(0, parseFloat(sp.credit || 0) - parseFloat(rr?.t || 0));
+      } else {
+        netDebt = Math.max(0, parseFloat(sale.total_amount) - parseFloat(sale.amount_received || 0) - parseFloat(rr?.t || 0));
+      }
       if (netDebt > 0) await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [netDebt, sale.customer_id]);
     }
     await posDb.query('DELETE FROM return_items WHERE return_id IN (SELECT id FROM returns WHERE sale_id=$1)', [sid]);
@@ -1571,11 +1594,20 @@ app.patch(`${BASE}/api/sales/:sid/item-prices`, async (req, res) => {
     const { rows: [disc] } = await client.query('SELECT discount_amount, delivery_amount FROM sales WHERE id=$1', [sid]);
     const newTotal = Math.max(0, parseFloat(tot.t) - parseFloat(disc?.discount_amount || 0) + parseFloat(disc?.delivery_amount || 0));
     await client.query('UPDATE sales SET total_amount=$1 WHERE id=$2', [newTotal, sid]);
-    if (oldSale && oldSale.payment_method === 'credit' && oldSale.customer_id) {
-      const amtReceived = parseFloat(oldSale.amount_received || 0);
-      const oldDebt = Math.max(0, parseFloat(oldSale.total_amount || 0) - amtReceived);
-      const newDebt = Math.max(0, newTotal - amtReceived);
-      const diff = newDebt - oldDebt;
+    if (oldSale?.customer_id && ['credit','split'].includes(oldSale.payment_method)) {
+      let oldDebt, newDebt;
+      if (oldSale.payment_method === 'split') {
+        const sp = JSON.parse(oldSale.payment_split || '{}');
+        oldDebt = parseFloat(sp.credit || 0);
+        // For split: credit portion changes proportionally with total change
+        const ratio = oldSale.total_amount > 0 ? (newTotal / parseFloat(oldSale.total_amount)) : 1;
+        newDebt = Math.max(0, oldDebt * ratio);
+      } else {
+        const amtReceived = parseFloat(oldSale.amount_received || 0);
+        oldDebt = Math.max(0, parseFloat(oldSale.total_amount || 0) - amtReceived);
+        newDebt = Math.max(0, newTotal - amtReceived);
+      }
+      const diff = Math.round((newDebt - oldDebt) * 100) / 100;
       if (diff !== 0) {
         await client.query(
           'UPDATE customers SET total_debt = GREATEST(0, total_debt + $1) WHERE id=$2',
@@ -1658,7 +1690,7 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
         } catch (_cbErr) {}
       }
     }
-    if (sale.payment_method === 'credit' && sale.customer_id) {
+    if (sale.customer_id && ['credit','split'].includes(sale.payment_method)) {
       await client.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [totalRefund, sale.customer_id]);
     }
     await client.query('INSERT INTO expenses (title, amount, date) VALUES ($1,$2,CURRENT_DATE::text)',
@@ -1708,7 +1740,7 @@ app.delete(`${BASE}/api/returns/:rid`, async (req, res) => {
         } catch (_cbUndoErr) {}
       }
     }
-    if (sale?.payment_method === 'credit' && sale.customer_id) {
+    if (sale?.customer_id && ['credit','split'].includes(sale?.payment_method)) {
       await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [ret.total_refund, sale.customer_id]);
     }
     // Delete matching expense — try new format (includes return id) then fall back to old format
@@ -2072,20 +2104,27 @@ async function syncProductsNow(productIds) {
           const varJson = p.variants
             ? (typeof p.variants === 'string' ? p.variants : JSON.stringify(p.variants))
             : null;
+          // جيب الصورة من الموقع عشان تتزبط في الـ POS
+          const { rows: [webProd] } = await client.query(
+            'SELECT photos FROM products WHERE id=$1', [p.dentrust_id]
+          ).catch(() => ({ rows: [null] }));
+          const firstPhoto = Array.isArray(webProd?.photos) && webProd.photos.length
+            ? webProd.photos[0] : null;
+
           if (cbJson) {
-            await client.query(
-              'UPDATE products SET stock=$1, is_sold_out=$2, checkbox_values=$3 WHERE id=$4',
-              [p.quantity, p.quantity <= 0, cbJson, p.dentrust_id]
+            await posDb.query(
+              'UPDATE products SET stock=$1, is_sold_out=$2, checkbox_values=$3, image_url=COALESCE(NULLIF($4,\'\'), image_url) WHERE dentrust_id=$5',
+              [p.quantity, p.quantity <= 0, cbJson, firstPhoto || '', p.dentrust_id]
             );
           } else if (varJson) {
-            await client.query(
-              'UPDATE products SET stock=$1, is_sold_out=$2, variants=$3 WHERE id=$4',
-              [p.quantity, p.quantity <= 0, varJson, p.dentrust_id]
+            await posDb.query(
+              'UPDATE products SET stock=$1, is_sold_out=$2, variants=$3, image_url=COALESCE(NULLIF($4,\'\'), image_url) WHERE dentrust_id=$5',
+              [p.quantity, p.quantity <= 0, varJson, firstPhoto || '', p.dentrust_id]
             );
           } else {
-            await client.query(
-              'UPDATE products SET stock=$1, is_sold_out=$2 WHERE id=$3',
-              [p.quantity, p.quantity <= 0, p.dentrust_id]
+            await posDb.query(
+              'UPDATE products SET stock=$1, is_sold_out=$2, image_url=COALESCE(NULLIF($3,\'\'), image_url) WHERE dentrust_id=$4',
+              [p.quantity, p.quantity <= 0, firstPhoto || '', p.dentrust_id]
             );
           }
         } catch (_) {}
@@ -2228,9 +2267,9 @@ async function syncSaleToSupabase(posCustomerId, posCustomerName, saleId, totalA
   const { rows: [cust] } = await posDb.query(
     'SELECT name, phone FROM customers WHERE id=$1', [posCustomerId]
   );
-  const phone = cust?.phone?.trim();
-  if (!phone) return;
-  const custName = cust?.name || posCustomerName || '';
+  // Fix: لو مفيش تليفون، نستخدم identifier بديل بدل ما نوقف الـ sync
+  const phone = cust?.phone?.trim() || `pos_customer_${posCustomerId}`;
+  const custName = cust?.name || posCustomerName || 'عميل نقدي';
   const client = await dentrustDb.connect();
   try {
     const instapayAmt = parseFloat(splitData?.instapay || 0);
@@ -3421,6 +3460,14 @@ async function callGemini(messages, { max_tokens = 800, stream = false } = {}) {
 async function pipeGeminiStream(geminiResp, res) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (!geminiResp.ok) {
+    const errBody = await geminiResp.json().catch(() => ({}));
+    const errMsg = errBody?.error?.message || `Gemini error ${geminiResp.status}`;
+    res.write(`data: ${JSON.stringify({ error: errMsg })}\r\n\r\n`);
+    res.write('data: [DONE]\r\n\r\n');
+    return res.end();
+  }
   const reader = geminiResp.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
@@ -3577,6 +3624,7 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('X-Accel-Buffering', 'no');
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       while (true) {
@@ -3622,11 +3670,13 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
       return res.json(data);
     }
     const hasImage = patchedMessages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'));
-    const modelList = hasImage ? FREE_VISION_MODELS : FREE_TEXT_MODELS;
+    const freeModels = await fetchFreeModels();
+    const modelList = hasImage ? freeModels.vision : freeModels.text;
     const { resp } = await callOpenRouterFree({ messages: patchedMessages, max_tokens, stream }, modelList);
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('X-Accel-Buffering', 'no');
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       while (true) {
@@ -4615,6 +4665,45 @@ async function main() {
     )`);
     await initPriceTracker();
     await seedManager();
+    // ── Sync Queue table — تسجّل الـ sales اللي فشل sync بتاعتها ──
+    await posDb.query(`
+      CREATE TABLE IF NOT EXISTS sync_queue (
+        id SERIAL PRIMARY KEY,
+        type TEXT NOT NULL,
+        payload JSONB NOT NULL,
+        attempts INTEGER DEFAULT 0,
+        last_error TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        next_retry_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `).catch(() => {});
+
+    // ── Retry cron: كل 5 دقايق يحاول يبعت اللي في القايمة ──
+    setInterval(async () => {
+      try {
+        const { rows } = await posDb.query(
+          `SELECT * FROM sync_queue WHERE next_retry_at <= NOW() AND attempts < 10 ORDER BY created_at LIMIT 10`
+        );
+        for (const row of rows) {
+          try {
+            const d = row.payload;
+            if (row.type === 'sale_to_supabase') {
+              await syncSaleToSupabase(d.posCustomerId, d.posCustomerName, d.saleId, d.totalAmount, d.paymentMethod, d.splitData, d.items);
+            }
+            // نجح — امسحه من القايمة
+            await posDb.query('DELETE FROM sync_queue WHERE id=$1', [row.id]).catch(() => {});
+          } catch (retryErr) {
+            // فشل تاني — زوّد المحاولات وأجّل الـ retry
+            const nextRetry = new Date(Date.now() + Math.min(300000 * (row.attempts + 1), 3600000));
+            await posDb.query(
+              'UPDATE sync_queue SET attempts=$1, last_error=$2, next_retry_at=$3 WHERE id=$4',
+              [row.attempts + 1, retryErr.message, nextRetry.toISOString(), row.id]
+            ).catch(() => {});
+          }
+        }
+      } catch (_) {}
+    }, 5 * 60 * 1000); // كل 5 دقايق
+
     app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     app.get('/api/healthz', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     // pre-warm AI model list so first user request is fast
