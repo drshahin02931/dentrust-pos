@@ -13,7 +13,7 @@ const POS_SCHEMA = 'pos_data';
 const sslConfig = process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false;
 
 // posDb: POS-specific tables under pos_data schema
-const posDb = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig, max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
+const posDb = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig, max: 5, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
 posDb.on('connect', client => {
   client.query(`SET search_path TO ${POS_SCHEMA}, public`);
 });
@@ -23,7 +23,7 @@ posDb.on('connect', client => {
 // but a separate pool with no search_path override → defaults to public schema.
 const WEBSITE_DB_URL = SUPABASE_DATABASE_URL || DATABASE_URL;
 const isSingleDb = !SUPABASE_DATABASE_URL || SUPABASE_DATABASE_URL === DATABASE_URL;
-const dentrustDb = new Pool({ connectionString: WEBSITE_DB_URL, ssl: sslConfig, max: 8, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
+const dentrustDb = new Pool({ connectionString: WEBSITE_DB_URL, ssl: sslConfig, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
 // No search_path override → defaults to public schema ✓
 
 const ALL_PERMS = {
