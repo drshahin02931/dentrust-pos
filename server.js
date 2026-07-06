@@ -1366,7 +1366,7 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
     );
     const sd = { r: sdR.r, c: sdC.c };
     const { rows: [et] } = await posDb.query(
-      `SELECT COALESCE(SUM(e.amount),0) as t FROM expenses e WHERE ${ef} AND e.title NOT LIKE 'مردود فاتورة%'`
+      `SELECT COALESCE(SUM(e.amount),0) as t FROM expenses e WHERE ${ef} AND e.title NOT LIKE 'مردود #%'`
     );
     const { rows: [rt] } = await posDb.query(
       `SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r WHERE ${rf}`
