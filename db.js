@@ -177,6 +177,9 @@ const PG_SCHEMA_SQL = `
     items_summary TEXT,
     promo_code TEXT,
     discount_amount NUMERIC,
+    delivery_amount NUMERIC,
+    status TEXT DEFAULT 'pending',
+    notes TEXT,
     seen BOOLEAN NOT NULL DEFAULT false,
     sale_item_id INTEGER,
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -230,7 +233,16 @@ const MIGRATIONS = [
   "ALTER TABLE return_items ADD COLUMN IF NOT EXISTS sale_item_id INTEGER",
   "ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS promo_code TEXT",
   "ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS discount_amount NUMERIC",
+  "ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC",
+  "ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'",
+  "ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS notes TEXT",
   "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS selected_option TEXT",
+];
+
+// Migrations that run on the PUBLIC schema (Supabase website DB) — customers table.
+// Adds the "token" column used by syncCustomerToSupabase() to create website-login accounts.
+const PUBLIC_CUSTOMERS_MIGRATIONS = [
+  "ALTER TABLE public.customers ADD COLUMN IF NOT EXISTS token TEXT",
 ];
 
 // Migrations that run on the PUBLIC schema (Supabase website DB).
@@ -239,6 +251,22 @@ const PUBLIC_PRODUCTS_MIGRATIONS = [
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS barcode TEXT",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS supplier_id INTEGER",
+  // The following are read/written by PRODUCTS_VIEW_SQL and the INSTEAD OF
+  // triggers below. In single-DB mode, public.products is the website's own
+  // table and may not already have these POS-specific columns — without them
+  // the VIEW/trigger creation fails silently and every sale throws "خطأ داخلي".
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS purchase_price NUMERIC DEFAULT 0",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS photos TEXT[]",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS details TEXT",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS variants JSONB",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS section TEXT DEFAULT 'dental'",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS checkbox_values JSONB",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_sold_out BOOLEAN DEFAULT false",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_offer BOOLEAN DEFAULT false",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS category_id INTEGER",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS stock INTEGER DEFAULT 0",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS price NUMERIC DEFAULT 0",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS expiry_date TEXT",
 ];
 
 // The VIEW that makes pos_data.products a transparent window into public.products.
@@ -486,6 +514,13 @@ async function initDb() {
       try { await client.query(migration); } catch (_) {}
     }
 
+    // 5b. Add "token" column to public.customers (needed by syncCustomerToSupabase
+    //     to create website-login accounts) — runs on the same physical DB as
+    //     products in single-DB mode.
+    for (const migration of PUBLIC_CUSTOMERS_MIGRATIONS) {
+      try { await client.query(migration); } catch (_) {}
+    }
+
     // 6. Create pos_data.products VIEW + INSTEAD OF triggers
     //    These make the POS see public.products as if it were pos_data.products.
     //    All existing server.js product queries work unchanged.
@@ -495,15 +530,24 @@ async function initDb() {
         try {
           await client.query('ALTER TABLE pos_data.products RENAME TO products_old_backup');
           await client.query(PRODUCTS_VIEW_SQL);
-        } catch (_) {}
+        } catch (e2) {
+          console.error('[initDb] Failed to create pos_data.products VIEW after rename:', e2.message);
+        }
+      } else {
+        // Any other failure (e.g. a missing column on public.products) must NOT
+        // be swallowed silently — without the VIEW, every "SELECT ... FROM products"
+        // in server.js falls back to public.products directly, whose column names
+        // (name/price/stock) don't match what POS queries expect (product_name/
+        // sale_price/quantity), so every sale then fails with "خطأ داخلي".
+        console.error('[initDb] FAILED to create pos_data.products VIEW — POS sales will break until this is fixed:', e.message);
       }
     }
-    try { await client.query(INSERT_TRIGGER_FN_SQL); } catch (_) {}
-    try { await client.query(INSERT_TRIGGER_SQL);    } catch (_) {}
-    try { await client.query(UPDATE_TRIGGER_FN_SQL); } catch (_) {}
-    try { await client.query(UPDATE_TRIGGER_SQL);    } catch (_) {}
-    try { await client.query(DELETE_TRIGGER_FN_SQL); } catch (_) {}
-    try { await client.query(DELETE_TRIGGER_SQL);    } catch (_) {}
+    try { await client.query(INSERT_TRIGGER_FN_SQL); } catch (e) { console.error('[initDb] Failed to create products_insert_fn:', e.message); }
+    try { await client.query(INSERT_TRIGGER_SQL);    } catch (e) { console.error('[initDb] Failed to create products_instead_of_insert trigger:', e.message); }
+    try { await client.query(UPDATE_TRIGGER_FN_SQL); } catch (e) { console.error('[initDb] Failed to create products_update_fn:', e.message); }
+    try { await client.query(UPDATE_TRIGGER_SQL);    } catch (e) { console.error('[initDb] Failed to create products_instead_of_update trigger:', e.message); }
+    try { await client.query(DELETE_TRIGGER_FN_SQL); } catch (e) { console.error('[initDb] Failed to create products_delete_fn:', e.message); }
+    try { await client.query(DELETE_TRIGGER_SQL);    } catch (e) { console.error('[initDb] Failed to create products_instead_of_delete trigger:', e.message); }
 
   } finally {
     client.release();
