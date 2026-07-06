@@ -1578,7 +1578,7 @@ app.patch(`${BASE}/api/sales/:sid/item-prices`, async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows: [oldSale] } = await client.query(
-      'SELECT total_amount, payment_method, customer_id, amount_received FROM sales WHERE id=$1', [sid]
+      'SELECT total_amount, payment_method, customer_id, amount_received, payment_split FROM sales WHERE id=$1', [sid]
     );
     for (const it of items) {
       const price = parseFloat(it.unit_price);
@@ -1711,7 +1711,7 @@ app.delete(`${BASE}/api/returns/:rid`, async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows: [ret] } = await client.query('SELECT * FROM returns WHERE id=$1', [rid]);
-    if (!ret) { await client.query('ROLLBACK'); client.release(); return res.status(404).json({ error: 'المردود غير موجود' }); }
+    if (!ret) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'المردود غير موجود' }); }
     const { rows: [sale] } = await client.query('SELECT * FROM sales WHERE id=$1', [ret.sale_id]);
     const { rows: returnItems } = await client.query('SELECT * FROM return_items WHERE return_id=$1', [rid]);
     const productIds = [];
