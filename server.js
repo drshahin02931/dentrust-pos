@@ -3415,7 +3415,7 @@ async function callGroq(messages, { max_tokens = 800, stream = false } = {}) {
   return resp.json();
 }
 
-// بيحول Groq SSE stream (OpenAI-compatible) مباشرة للـ client
+// بيقرأ Groq SSE ويعيد إرساله بنفس الـ format البسيط اللي الـ frontend بيتوقعه
 async function pipeGroqStream(groqResp, res) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -3429,11 +3429,28 @@ async function pipeGroqStream(groqResp, res) {
   }
   const reader = groqResp.body.getReader();
   const decoder = new TextDecoder();
+  let buf = '';
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    res.write(decoder.decode(value, { stream: true }).replace(/\r\n|\r|\n/g, '\r\n'));
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop(); // احتفظ بالسطر غير المكتمل
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const raw = trimmed.slice(5).trim();
+      if (raw === '[DONE]') { res.write('data: [DONE]\r\n\r\n'); continue; }
+      try {
+        const parsed = JSON.parse(raw);
+        const content = parsed.choices?.[0]?.delta?.content;
+        if (!content) continue;
+        const chunk = JSON.stringify({ choices: [{ delta: { content }, finish_reason: null }] });
+        res.write(`data: ${chunk}\r\n\r\n`);
+      } catch (_) {}
+    }
   }
+  res.write('data: [DONE]\r\n\r\n');
   res.end();
 }
 
