@@ -3125,9 +3125,9 @@ function r2(n) { return Math.round(parseFloat(n || 0) * 100) / 100; }
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
-const GEMINI_API_KEY  = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL    = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-const GEMINI_BASE     = 'https://generativelanguage.googleapis.com/v1beta/models';
+const GROQ_API_KEY   = process.env.GROQ_API_KEY || '';
+const GROQ_MODEL     = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const GROQ_BASE      = 'https://api.groq.com/openai/v1/chat/completions';
 const SUPABASE_BASE = 'https://ywfunodybcqakhweuxwn.supabase.co';
 const WEBSITE_ORIGINS = (process.env.WEBSITE_ORIGIN || 'https://dentrust.site,https://www.dentrust.site')
   .split(',').map(s => s.trim());
@@ -3367,164 +3367,98 @@ function extractRetryDelay(errMsg = '') {
   return 15000; // default 15 ثانية
 }
 
-async function callGemini(messages, { max_tokens = 800, stream = false } = {}) {
-  const key = GEMINI_API_KEY;
-  if (!key) throw new Error('GEMINI_API_KEY is not set');
+async function callGroq(messages, { max_tokens = 800, stream = false } = {}) {
+  const key = GROQ_API_KEY;
+  if (!key) throw new Error('GROQ_API_KEY is not set');
 
-  // فصل system message
-  const sysMsg = messages.find(m => m.role === 'system');
-  const chatMsgs = messages.filter(m => m.role !== 'system');
-
-  // حوّل لـ Gemini contents
-  const contents = chatMsgs.map(m => {
-    const role = m.role === 'assistant' ? 'model' : 'user';
+  // Groq لا يدعم صور في llama-3.3 — نحوّل array content لنص فقط
+  const normalizedMsgs = messages.map(m => {
     if (Array.isArray(m.content)) {
-      const parts = m.content.map(p => {
-        if (p.type === 'text') return { text: p.text };
-        if (p.type === 'image_url') {
-          const url = p.image_url?.url || '';
-          if (url.startsWith('data:')) {
-            const [meta, b64] = url.split(',');
-            const mimeType = meta.match(/:(.*?);/)?.[1] || 'image/jpeg';
-            return { inlineData: { mimeType, data: b64 } };
-          }
-          return { text: '[image]' };
-        }
-        return { text: String(p) };
-      });
-      return { role, parts };
+      const text = m.content
+        .filter(p => p.type === 'text')
+        .map(p => p.text)
+        .join('\n') || '[image]';
+      return { ...m, content: text };
     }
-    return { role, parts: [{ text: String(m.content || '') }] };
+    return m;
   });
 
   const body = {
-    contents,
-    generationConfig: { maxOutputTokens: max_tokens, temperature: 0.7 },
-    ...(sysMsg ? { systemInstruction: { parts: [{ text: sysMsg.content }] } } : {}),
+    model: GROQ_MODEL,
+    messages: normalizedMsgs,
+    max_tokens,
+    temperature: 0.7,
+    stream,
   };
 
-  // Stream: محدش بيعمل retry عليه لأن الـ response بدأت تتبعت — ارجعه مباشرة
-  if (stream) {
-    const url = `${GEMINI_BASE}/${GEMINI_MODEL}:streamGenerateContent?alt=sse&key=${key}`;
-    return fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30000),
-    });
+  const resp = await fetch(GROQ_BASE, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(stream ? 30000 : 20000),
+  });
+
+  if (stream) return resp;
+
+  if (!resp.ok) {
+    const rawBody = await resp.text().catch(() => '');
+    let errBody = {};
+    try { errBody = JSON.parse(rawBody); } catch (_) {}
+    const errMsg = errBody?.error?.message || rawBody.slice(0, 300) || `Groq ${resp.status}`;
+    console.error(`[Groq] HTTP ${resp.status} — body:`, rawBody.slice(0, 500));
+    throw new Error(errMsg);
   }
 
-  // Non-stream: retry تلقائي لو quota أو rate limit
-  const MAX_RETRIES = 3;
-  let lastErr;
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const url = `${GEMINI_BASE}/${GEMINI_MODEL}:generateContent?key=${key}`;
-    let r;
-    try {
-      r = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(20000),
-      });
-    } catch (fetchErr) {
-      lastErr = fetchErr;
-      if (attempt < MAX_RETRIES) await sleep(3000 * attempt);
-      continue;
-    }
-
-    if (!r.ok) {
-      const errBody = await r.json().catch(() => ({}));
-      const errMsg = errBody?.error?.message || `Gemini ${r.status}`;
-      lastErr = new Error(errMsg);
-
-      if (isQuotaError(r.status, errMsg) && attempt < MAX_RETRIES) {
-        const delay = extractRetryDelay(errMsg);
-        console.warn(`[Gemini] quota/rate-limit — retry ${attempt}/${MAX_RETRIES} بعد ${delay}ms`);
-        await sleep(delay);
-        continue;
-      }
-      throw lastErr;
-    }
-
-    const data = await r.json();
-    // حوّل response لـ OpenAI format عشان الكود القديم يفضل شغّال
-    const text = data.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
-    return { choices: [{ message: { role: 'assistant', content: text } }] };
-  }
-
-  throw lastErr || new Error('Gemini: فشل بعد عدة محاولات');
+  return resp.json();
 }
 
-// بيحول Gemini SSE stream لـ OpenAI SSE stream format
-async function pipeGeminiStream(geminiResp, res) {
+// بيحول Groq SSE stream (OpenAI-compatible) مباشرة للـ client
+async function pipeGroqStream(groqResp, res) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('X-Accel-Buffering', 'no');
-  if (!geminiResp.ok) {
-    const errBody = await geminiResp.json().catch(() => ({}));
-    const errMsg = errBody?.error?.message || `Gemini error ${geminiResp.status}`;
+  if (!groqResp.ok) {
+    const errBody = await groqResp.json().catch(() => ({}));
+    const errMsg = errBody?.error?.message || `Groq error ${groqResp.status}`;
     res.write(`data: ${JSON.stringify({ error: errMsg })}\r\n\r\n`);
     res.write('data: [DONE]\r\n\r\n');
     return res.end();
   }
-  const reader = geminiResp.body.getReader();
+  const reader = groqResp.body.getReader();
   const decoder = new TextDecoder();
-  let buf = '';
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const lines = buf.split('\n');
-    buf = lines.pop();
-    for (const line of lines) {
-      if (!line.startsWith('data:')) continue;
-      const raw = line.slice(5).trim();
-      if (raw === '[DONE]') { res.write('data: [DONE]\r\n\r\n'); continue; }
-      try {
-        const parsed = JSON.parse(raw);
-        const text = parsed.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
-        if (!text) continue;
-        // OpenAI SSE chunk format
-        const chunk = JSON.stringify({
-          choices: [{ delta: { content: text }, finish_reason: null }]
-        });
-        res.write(`data: ${chunk}\r\n\r\n`);
-      } catch (_) {}
-    }
+    res.write(decoder.decode(value, { stream: true }).replace(/\r\n|\r|\n/g, '\r\n'));
   }
-  res.write('data: [DONE]\r\n\r\n');
   res.end();
 }
 
-// GET /api/ai/test  — diagnostic endpoint, checks key presence only (no API call to avoid quota waste)
-// Add ?live=1 to force a real API call (use sparingly — counts against free tier quota)
+// GET /api/ai/test  — diagnostic endpoint
+// Add ?live=1 to force a real API call
 app.get('/api/ai/test', async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
-  if (GEMINI_API_KEY) {
-    // Only call Gemini if ?live=1 is explicitly passed
+  if (GROQ_API_KEY) {
     if (req.query.live === '1') {
       try {
-        const data = await callGemini([{ role: 'user', content: 'قل مرحبا باختصار' }], { max_tokens: 30 });
+        const data = await callGroq([{ role: 'user', content: 'قل مرحبا باختصار' }], { max_tokens: 30 });
         const reply = data.choices?.[0]?.message?.content || '(no content)';
-        return res.json({ ok: true, provider: 'gemini', model: GEMINI_MODEL, reply, live: true });
+        return res.json({ ok: true, provider: 'groq', model: GROQ_MODEL, reply, live: true });
       } catch (err) {
-        return res.json({ ok: false, provider: 'gemini', model: GEMINI_MODEL, error: err.message, live: true });
+        return res.json({ ok: false, provider: 'groq', model: GROQ_MODEL, error: err.message, live: true });
       }
     }
-    // Default: just confirm key is configured — no API call, no quota usage
-    return res.json({ ok: true, provider: 'gemini', model: GEMINI_MODEL, keyConfigured: true, note: 'Add ?live=1 to test a real API call' });
+    return res.json({ ok: true, provider: 'groq', model: GROQ_MODEL, keyConfigured: true, note: 'Add ?live=1 to test a real API call' });
   }
   const key = OPENROUTER_KEY;
-  if (!key) return res.json({ ok: false, step: 'key', error: 'Set GEMINI_API_KEY or OPENROUTER_API_KEY on Render' });
+  if (!key) return res.json({ ok: false, step: 'key', error: 'Set GROQ_API_KEY on Render' });
   try {
-    // step 1: fetch available free models
     const cache = await fetchFreeModels();
-    const firstText   = cache.text[0]   || null;
-    const firstVision = cache.vision[0] || null;
+    const firstText = cache.text[0] || null;
     if (!firstText) return res.json({ ok: false, step: 'models', error: 'No free text models found on OpenRouter', cache });
-
-    // step 2: try a quick chat with the first available model
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -3533,17 +3467,13 @@ app.get('/api/ai/test', async (req, res) => {
         'HTTP-Referer': 'https://dentrust.site',
         'X-Title': 'DenTrust DenBot',
       },
-      body: JSON.stringify({
-        model: firstText,
-        max_tokens: 20,
-        messages: [{ role: 'user', content: 'say hi in arabic' }],
-      }),
+      body: JSON.stringify({ model: firstText, max_tokens: 20, messages: [{ role: 'user', content: 'say hi in arabic' }] }),
       signal: AbortSignal.timeout(20000),
     });
     const data = await resp.json();
-    if (data.error) return res.json({ ok: false, step: 'chat', model: firstText, status: resp.status, error: data.error, availableText: cache.text.slice(0,5), availableVision: cache.vision.slice(0,5) });
+    if (data.error) return res.json({ ok: false, step: 'chat', model: firstText, error: data.error });
     const reply = data.choices?.[0]?.message?.content || '(no content)';
-    res.json({ ok: true, model: firstText, reply, keyPrefix: key.slice(0, 8) + '...', availableText: cache.text.length, availableVision: cache.vision.length });
+    res.json({ ok: true, model: firstText, reply, availableText: cache.text.length });
   } catch (err) {
     res.json({ ok: false, step: 'fetch', error: err.message });
   }
@@ -3551,14 +3481,14 @@ app.get('/api/ai/test', async (req, res) => {
 
 // POST /api/ai/fashion-chat  (text chat)
 app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
-  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'Set GEMINI_API_KEY on Render.' });
+  if (!GROQ_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'Set GROQ_API_KEY on Render.' });
   try {
     const { messages = [], system = '', max_tokens = 350 } = req.body;
     const knowledge = await getBotKnowledgeText();
     const fullSystem = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
     const allMsgs = [{ role: 'system', content: fullSystem }, ...messages];
-    if (GEMINI_API_KEY) {
-      const data = await callGemini(allMsgs, { max_tokens });
+    if (GROQ_API_KEY) {
+      const data = await callGroq(allMsgs, { max_tokens });
       return res.json(data);
     }
     const { resp } = await callOpenRouterFree({ max_tokens, messages: allMsgs });
@@ -3566,23 +3496,19 @@ app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
   } catch (err) { res.status(500).json({ error: `خطأ داخلي: ${err.message}` }); }
 });
 
-// POST /api/ai/fashion-tryon  (vision)
+// POST /api/ai/fashion-tryon  (vision — Groq يدعم النصوص فقط، الصورة تُتجاهل)
 app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
-  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'Set GEMINI_API_KEY on Render.' });
+  if (!GROQ_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'Set GROQ_API_KEY on Render.' });
   try {
-    const { image = '', prompt = '', system = '' } = req.body;
-    const imgUrl = image.startsWith('data:') ? image : `data:image/jpeg;base64,${image}`;
+    const { prompt = '', system = '' } = req.body;
     const knowledge = await getBotKnowledgeText();
     const sysContent = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
     const visionMsgs = [
       { role: 'system', content: sysContent },
-      { role: 'user', content: [
-        { type: 'image_url', image_url: { url: imgUrl } },
-        { type: 'text', text: prompt },
-      ]},
+      { role: 'user', content: prompt },
     ];
-    if (GEMINI_API_KEY) {
-      const data = await callGemini(visionMsgs, { max_tokens: 900 });
+    if (GROQ_API_KEY) {
+      const data = await callGroq(visionMsgs, { max_tokens: 900 });
       return res.json(data);
     }
     const visionModels = (await fetchFreeModels()).vision;
@@ -3596,9 +3522,9 @@ const DENTRUST_BOT_SYSTEM = `أنت DenBot — مساعد ذكي ومتخصص ل
 
 قاعدة مهمة جداً للمنتجات: لما تذكر أي منتج متوفر عندنا، اكتب الـ ID بتاعه بالشكل ده بالظبط: [[P:ID]] — استخدم الرقم اللي جنب [ID:] في قائمة المنتجات. ده بيخلي المنتج يظهر كـ card للعميل. مثال: لو المنتج عنده [ID:42] اكتب [[P:42]]. لو المنتج مش موجود في قائمتنا خالص، متكتبش الـ tag ده.`;
 
-// POST /api/ai/fashion-chat-stream  (DenBot – streaming chat proxy, Gemini-powered)
+// POST /api/ai/fashion-chat-stream  (DenBot – streaming chat proxy, Groq-powered)
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
-  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'Set GEMINI_API_KEY on Render.' });
+  if (!GROQ_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'Set GROQ_API_KEY on Render.' });
   try {
     const { messages = [], max_tokens = 800, stream = true } = req.body;
     const knowledge = await getBotKnowledgeText();
@@ -3612,12 +3538,12 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
         patchedMessages = [{ role: 'system', content: sysContent }, ...patchedMessages];
       }
     }
-    if (GEMINI_API_KEY) {
+    if (GROQ_API_KEY) {
       if (stream) {
-        const geminiResp = await callGemini(patchedMessages, { max_tokens, stream: true });
-        return await pipeGeminiStream(geminiResp, res);
+        const groqResp = await callGroq(patchedMessages, { max_tokens, stream: true });
+        return await pipeGroqStream(groqResp, res);
       }
-      const data = await callGemini(patchedMessages, { max_tokens });
+      const data = await callGroq(patchedMessages, { max_tokens });
       return res.json(data);
     }
     const { resp } = await callOpenRouterFree({ messages: patchedMessages, max_tokens, stream });
@@ -3642,12 +3568,11 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
   }
 });
 
-// POST /api/ai/stylebot  (StyleBot – vision + chat proxy)
+// POST /api/ai/stylebot  (StyleBot – vision + chat proxy, Groq-powered)
 app.post('/api/ai/stylebot', webCors, async (req, res) => {
-  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'Set GEMINI_API_KEY on Render.' });
+  if (!GROQ_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'Set GROQ_API_KEY on Render.' });
   try {
     const { messages = [], max_tokens = 800, stream = true } = req.body;
-    // Inject product knowledge from POS DB — same as DenBot
     const knowledge = await getBotKnowledgeText();
     let patchedMessages = [...messages];
     if (knowledge) {
@@ -3661,18 +3586,16 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
         patchedMessages = [{ role: 'system', content: knowledge }, ...patchedMessages];
       }
     }
-    if (GEMINI_API_KEY) {
+    if (GROQ_API_KEY) {
       if (stream) {
-        const geminiResp = await callGemini(patchedMessages, { max_tokens, stream: true });
-        return await pipeGeminiStream(geminiResp, res);
+        const groqResp = await callGroq(patchedMessages, { max_tokens, stream: true });
+        return await pipeGroqStream(groqResp, res);
       }
-      const data = await callGemini(patchedMessages, { max_tokens });
+      const data = await callGroq(patchedMessages, { max_tokens });
       return res.json(data);
     }
-    const hasImage = patchedMessages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'));
     const freeModels = await fetchFreeModels();
-    const modelList = hasImage ? freeModels.vision : freeModels.text;
-    const { resp } = await callOpenRouterFree({ messages: patchedMessages, max_tokens, stream }, modelList);
+    const { resp } = await callOpenRouterFree({ messages: patchedMessages, max_tokens, stream }, freeModels.text);
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -4708,7 +4631,7 @@ async function main() {
     app.get('/api/healthz', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     // pre-warm AI model list so first user request is fast
     if (OPENROUTER_KEY) fetchFreeModels().catch(() => {});
-    if (GEMINI_API_KEY) console.log(`[AI] Gemini enabled — model: ${GEMINI_MODEL}`);
+    if (GROQ_API_KEY) console.log(`[AI] Groq enabled — model: ${GROQ_MODEL}`);
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`POS server running on port ${PORT} at ${BASE}`);
       const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
