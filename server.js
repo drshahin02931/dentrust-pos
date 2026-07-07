@@ -2133,27 +2133,6 @@ async function syncProductsNow(productIds) {
   } catch (_) {}
 }
 
-async function doPushStockToSite() {
-  if (!HAS_WEBSITE_DB) return;
-  try {
-    const { rows: linked } = await posDb.query('SELECT id, dentrust_id, quantity, checkbox_values FROM products WHERE dentrust_id IS NOT NULL');
-    if (!linked.length) return;
-    const client = await dentrustDb.connect();
-    try {
-      for (const p of linked) {
-        try {
-          const cbJson = p.checkbox_values ? (typeof p.checkbox_values === 'string' ? p.checkbox_values : JSON.stringify(p.checkbox_values)) : null;
-          if (cbJson) {
-            await client.query('UPDATE products SET stock=$1, is_sold_out=$2, checkbox_values=$3 WHERE id=$4', [p.quantity, p.quantity <= 0, cbJson, p.dentrust_id]);
-          } else {
-            await client.query('UPDATE products SET stock=$1, is_sold_out=$2 WHERE id=$3', [p.quantity, p.quantity <= 0, p.dentrust_id]);
-          }
-        } catch (_) {}
-      }
-      cacheDel('site_products');
-    } finally { client.release(); }
-  } catch (_) {}
-}
 
 async function syncNewProductToDentrust(posId, d) {
   const client = await dentrustDb.connect();
@@ -2577,8 +2556,8 @@ app.post(`${BASE}/api/sync/import-customers`, async (req, res) => {
 app.get(`${BASE}/api/sync/status`, (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   res.json({
-    lastPull: syncStatus.lastPull,
-    lastPush: syncStatus.lastPush,
+    lastPull: null,
+    lastPush: null,
     intervalMinutes: 1,
   });
 });
@@ -3044,75 +3023,6 @@ app.post(`${BASE}/api/sync/delete-product`, async (req, res) => {
   res.json({ ok: true });
 });
 
-// ── Background Sync ───────────────────────────────────────────────────────────
-
-async function doProductSync(incremental = true) {
-  try {
-    const client = await dentrustDb.connect();
-    try {
-      let sql = 'SELECT p.*, c.name as cat_name FROM products p LEFT JOIN categories c ON c.id=p.category_id';
-      if (incremental) sql += " WHERE p.updated_at >= NOW() - INTERVAL '10 minutes'";
-      sql += ' ORDER BY p.id';
-      const { rows: dtProducts } = await client.query(sql);
-      for (const p of dtProducts) {
-        try {
-          // photos is a Supabase Storage URL array — use first photo as POS image_url.
-          // These URLs are persistent (survive Render restarts), unlike local disk files.
-          const photoUrl = Array.isArray(p.photos) && p.photos.length > 0
-            ? p.photos[0]
-            : (typeof p.photos === 'string' ? p.photos : null);
-
-          const { rows: [ex] } = await posDb.query('SELECT id FROM products WHERE dentrust_id=$1', [p.id]);
-          if (ex) {
-            const cbJsonSync = p.checkbox_values
-              ? (typeof p.checkbox_values === 'string' ? p.checkbox_values : JSON.stringify(p.checkbox_values))
-              : null;
-            await posDb.query(
-              `UPDATE products
-                  SET product_name=$1, sale_price=$2, quantity=$3,
-                      checkbox_values=COALESCE($5, checkbox_values),
-                      image_url=COALESCE($6, image_url)
-                WHERE dentrust_id=$4`,
-              [p.name, p.price || 0, p.stock || 0, p.id, cbJsonSync, photoUrl]);
-          } else {
-            await posDb.query(
-              `INSERT INTO products
-                 (product_name, sale_price, purchase_price, quantity, category, expiry_date, dentrust_id, image_url)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
-              [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0,
-               p.cat_name || '', p.expiry_date || null, p.id, photoUrl]
-            );
-          }
-        } catch (_) {}
-      }
-    } finally { client.release(); }
-  } catch (_) {}
-}
-
-// ── Sync status tracking ──────────────────────────────────────────────────────
-const syncStatus = {
-  lastPull: null,   // ISO string — when DenTrust → POS pull last ran
-  lastPush: null,   // ISO string — when POS → DenTrust push last ran
-  pullCount: 0,     // how many products were touched in last pull
-  pushCount: 0,     // how many products were pushed in last push
-};
-
-// Wrap doProductSync to record timing
-async function doProductSyncTracked(incremental = true) {
-  await doProductSync(incremental);
-  syncStatus.lastPull = new Date().toISOString();
-}
-
-// Wrap doPushStockToSite to record timing
-async function doPushStockTracked() {
-  await doPushStockToSite();
-  syncStatus.lastPush = new Date().toISOString();
-}
-
-// Pull: DenTrust → POS every 1 minute (incremental)
-cron.schedule('* * * * *', () => doProductSyncTracked(true).catch(() => {}));
-// Push: POS → DenTrust every 1 minute (was 3 min — tightened for real-time feel)
-cron.schedule('* * * * *', () => doPushStockTracked().catch(() => {}));
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
@@ -3157,7 +3067,7 @@ app.get('/api/products', webCors, async (req, res) => {
     try {
       const { rows } = await client.query(
         `SELECT p.id, p.name, p.price, p.purchase_price, p.stock,
-                p.image_url, p.expiry_date, p.description,
+                p.photos[1] AS image_url, p.expiry_date, p.description,
                 c.name AS category_name, p.category_id
          FROM products p
          LEFT JOIN categories c ON c.id = p.category_id
