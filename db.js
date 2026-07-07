@@ -233,6 +233,8 @@ const MIGRATIONS = [
   "ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'",
   "ALTER TABLE website_order_alerts ADD COLUMN IF NOT EXISTS notes TEXT",
   "ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS selected_option TEXT",
+  "ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0",
+  "ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC DEFAULT 0",
 ];
 
 // Migrations that run on the PUBLIC schema (Supabase website DB) — customers table.
