@@ -7,7 +7,6 @@ types.setTypeParser(1700, val => val === null ? null : parseFloat(val));
 types.setTypeParser(20, val => val === null ? null : parseInt(val, 10));
 
 const DATABASE_URL = process.env.DATABASE_URL;
-const SUPABASE_DATABASE_URL = process.env.SUPABASE_DATABASE_URL;
 const POS_SCHEMA = 'pos_data';
 
 const sslConfig = process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false;
@@ -18,12 +17,9 @@ posDb.on('connect', client => {
   client.query(`SET search_path TO ${POS_SCHEMA}, public`);
 });
 
-// dentrustDb: website public schema (products, orders, categories…)
-// In single-DB mode (DATABASE_URL = Supabase) this is the SAME database,
-// but a separate pool with no search_path override → defaults to public schema.
-const WEBSITE_DB_URL = SUPABASE_DATABASE_URL || DATABASE_URL;
-const isSingleDb = !SUPABASE_DATABASE_URL || SUPABASE_DATABASE_URL === DATABASE_URL;
-const dentrustDb = new Pool({ connectionString: WEBSITE_DB_URL, ssl: sslConfig, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
+// dentrustDb: public schema (products, orders, categories…)
+// نفس قاعدة البيانات — pool منفصل بدون search_path override
+const dentrustDb = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
 // No search_path override → defaults to public schema ✓
 
 const ALL_PERMS = {
@@ -38,7 +34,7 @@ const EMPLOYEE_DEFAULT_PERMS = {
 };
 
 // NOTE: products table is removed from pos_data schema.
-// pos_data.products is now a VIEW pointing to public.products (Supabase).
+// pos_data.products is now a VIEW pointing to public.products.
 // All POS product queries run unchanged — the VIEW + INSTEAD OF triggers handle translation.
 const PG_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS users (
@@ -627,7 +623,7 @@ async function getSettings() {
 }
 
 module.exports = {
-  posDb, dentrustDb, isSingleDb, WEBSITE_DB_URL,
+  posDb, dentrustDb,
   initDb, seedManager,
   verifyPassword, hashPassword,
   getSettings,
