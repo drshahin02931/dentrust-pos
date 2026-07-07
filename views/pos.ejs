@@ -881,11 +881,11 @@ function selectVPSize(key) {
     const info = document.getElementById("vp-stock-info");
     const lowS  = s.qty <= 2;
     if (lowS) {
-      info.innerHTML = `<span style="color:#c2410c;font-weight:700;">⚠️ تنبيه: متبقي ${s.qty} قطعة فقط من ${label} — كمية محدودة!</span>`;
+      info.innerHTML = `<span style="color:#c2410c;font-weight:700;">⚠️ تنبيه: متبقي ${s.qty} قطعة فقط من ${s.label} — كمية محدودة!</span>`;
       info.style.background = "#fff7ed";
       info.style.border     = "1px solid #fdba74";
     } else {
-      info.innerHTML = `<span style="color:#4b5563;">متبقي: <b>${s.qty}</b> قطعة من ${label}</span>`;
+      info.innerHTML = `<span style="color:#4b5563;">متبقي: <b>${s.qty}</b> قطعة من ${s.label}</span>`;
       info.style.background = "";
       info.style.border     = "";
     }
