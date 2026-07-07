@@ -13,12 +13,11 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const bwip = require('bwip-js');
 const webpush = require('web-push');
-const { posDb, dentrustDb, isSingleDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
+const { posDb, dentrustDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
 
 const BASE = (process.env.BASE_PATH || '/pos-system').replace(/\/$/, '');
 const PORT = parseInt(process.env.PORT || '5000', 10);
 const DATABASE_URL = process.env.DATABASE_URL;
-const SUPABASE_DATABASE_URL = process.env.SUPABASE_DATABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 
 // ── VAPID / Web Push ─────────────────────────────────────────────────────────
@@ -31,8 +30,8 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
 } else {
   console.warn('[Push] VAPID keys not set — push notifications disabled');
 }
-// HAS_WEBSITE_DB: true when connected to website DB (Supabase or single-DB mode)
-const HAS_WEBSITE_DB = !!(SUPABASE_DATABASE_URL || isSingleDb);
+// قاعدة بيانات موحدة — الموقع والـ POS على نفس الـ database
+const HAS_WEBSITE_DB = true;
 const UPLOAD_FOLDER = path.join(__dirname, 'static', 'uploads');
 const ALLOWED_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
 
@@ -349,7 +348,7 @@ app.get(`${BASE}/logout`, async (req, res) => {
   req.session.destroy(() => res.redirect(`${BASE}/login`));
 });
 
-app.get(`${BASE}/sw.js`, (req, res) => res.type('js').send(''));
+app.get(`${BASE}/sw.js`, (req, res) => { res.setHeader('Service-Worker-Allowed', BASE || '/'); res.type('js').send(''); });
 
 // ── API: Me / Password ───────────────────────────────────────────────────────
 
