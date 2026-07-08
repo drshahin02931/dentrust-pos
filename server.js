@@ -595,6 +595,7 @@ app.post(`${BASE}/api/products`, async (req, res) => {
     );
     res.status(201).json({ ok: true });
   } catch (err) {
+    console.error('[POST /api/products]', err.message, err.stack);
     if (err.code === '23505') return res.status(400).json({ error: 'الباركود مسجل مسبقاً' });
     res.status(500).json({ error: 'خطأ داخلي' });
   }
