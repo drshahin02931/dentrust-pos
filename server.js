@@ -3034,9 +3034,6 @@ function r2(n) { return Math.round(parseFloat(n || 0) * 100) / 100; }
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
-const GROQ_API_KEY   = process.env.GROQ_API_KEY || '';
-const GROQ_MODEL     = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
-const GROQ_BASE      = 'https://api.groq.com/openai/v1/chat/completions';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL   = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const SUPABASE_BASE = 'https://ywfunodybcqakhweuxwn.supabase.co';
@@ -3152,26 +3149,19 @@ async function getBotKnowledgeText() {
   } catch { return ''; }
 }
 
-// Hard safety cap on the combined system prompt sent to Groq.
-// Measured in production against llama-3.1-8b-instant's real TPM limit
-// (6000 TPM): a 16000-char Arabic-heavy prompt tokenized to ~5657 tokens
-// (≈2.83 chars/token — Arabic script is far less token-dense than the
-// ~4 chars/token rule of thumb, which only holds for English). Combined
-// with a requested max_tokens of 600 that alone hit 6257/6000 and got
-// rejected. 6000 chars (~2100 tokens with the same ratio) leaves solid
-// headroom for conversation history + a capped completion budget.
-// Applies no matter who built the prompt (server knowledge injection,
-// client-built catalog, or both concatenated).
-const MAX_SYSTEM_CHARS = 6000;
+// Hard safety cap on the combined system prompt sent to Gemini.
+// Gemini 2.0 Flash supports up to 1M tokens context — 20000 chars
+// gives ample room for full product catalogs, knowledge base entries,
+// and conversation history without hitting any limits.
+const MAX_SYSTEM_CHARS = 20000;
 function capSystemContent(content) {
   if (!content || content.length <= MAX_SYSTEM_CHARS) return content;
   return content.slice(0, MAX_SYSTEM_CHARS) + '\n(تم اختصار باقي القائمة لتوفير المساحة)';
 }
 
-// Belt-and-braces: also cap the completion budget itself, since the client
-// can request up to 900 max_tokens (vision route) which alone eats a large
-// slice of the 6000 TPM ceiling.
-const MAX_COMPLETION_TOKENS = 400;
+// Cap the completion budget. Gemini 2.0 Flash supports generous output —
+// 800 tokens gives detailed, helpful responses without waste.
+const MAX_COMPLETION_TOKENS = 800;
 function capMaxTokens(requested) {
   const n = Number(requested) || MAX_COMPLETION_TOKENS;
   return Math.min(n, MAX_COMPLETION_TOKENS);
@@ -3390,53 +3380,6 @@ async function callGemini(messages, { max_tokens = 400, stream = false } = {}) {
   return new Response(transformed, { status: 200 });
 }
 
-async function callGroq(messages, { max_tokens = 800, stream = false } = {}) {
-  const key = GROQ_API_KEY;
-  if (!key) throw new Error('GROQ_API_KEY is not set');
-
-  // Groq لا يدعم صور في llama-3.3 — نحوّل array content لنص فقط
-  const normalizedMsgs = messages.map(m => {
-    if (Array.isArray(m.content)) {
-      const text = m.content
-        .filter(p => p.type === 'text')
-        .map(p => p.text)
-        .join('\n') || '[image]';
-      return { ...m, content: text };
-    }
-    return m;
-  });
-
-  const body = {
-    model: GROQ_MODEL,
-    messages: normalizedMsgs,
-    max_tokens,
-    temperature: 0.7,
-    stream,
-  };
-
-  const resp = await fetch(GROQ_BASE, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(stream ? 30000 : 20000),
-  });
-
-  if (stream) return resp;
-
-  if (!resp.ok) {
-    const rawBody = await resp.text().catch(() => '');
-    let errBody = {};
-    try { errBody = JSON.parse(rawBody); } catch (_) {}
-    const errMsg = errBody?.error?.message || rawBody.slice(0, 300) || `Groq ${resp.status}`;
-    console.error(`[Groq] HTTP ${resp.status} — body:`, rawBody.slice(0, 500));
-    throw new Error(errMsg);
-  }
-
-  return resp.json();
-}
 
 // بيقرأ Groq SSE ويعيد إرساله بنفس الـ format البسيط اللي الـ frontend بيتوقعه
 // Parses and re-emits an OpenAI-compatible SSE stream (works for both Groq
@@ -3453,7 +3396,7 @@ async function pipeGroqStream(groqResp, res, providerLabel = 'Groq') {
     // {choices:[{delta:{content}}]} — a bare {error} chunk is silently
     // swallowed and the user sees nothing at all. Send both shapes so the
     // failure is always visible instead of a silent empty bubble.
-    const visibleMsg = 'عذرًا، حصل ضغط مؤقت على النظام. برجاء إعادة المحاولة بعد لحظات 🙏';
+    const visibleMsg = 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.';
     res.write(`data: ${JSON.stringify({ error: errMsg, choices: [{ delta: { content: visibleMsg }, finish_reason: 'stop' }] })}\r\n\r\n`);
     res.write('data: [DONE]\r\n\r\n');
     return res.end();
@@ -3489,217 +3432,221 @@ async function pipeGroqStream(groqResp, res, providerLabel = 'Groq') {
 // Add ?live=1 to force a real API call
 app.get('/api/ai/test', async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
-  if (GROQ_API_KEY) {
+  if (GEMINI_API_KEY) {
     if (req.query.live === '1') {
       try {
-        const data = await callGroq([{ role: 'user', content: 'قل مرحبا باختصار' }], { max_tokens: 30 });
+        const data = await callGemini([{ role: 'user', content: 'قل مرحبا باختصار' }], { max_tokens: 30 });
         const reply = data.choices?.[0]?.message?.content || '(no content)';
-        return res.json({ ok: true, provider: 'groq', model: GROQ_MODEL, reply, live: true });
+        return res.json({ ok: true, provider: 'gemini', model: GEMINI_MODEL, reply, live: true });
       } catch (err) {
-        return res.json({ ok: false, provider: 'groq', model: GROQ_MODEL, error: err.message, live: true });
+        return res.json({ ok: false, provider: 'gemini', model: GEMINI_MODEL, error: err.message, live: true });
       }
     }
-    return res.json({ ok: true, provider: 'groq', model: GROQ_MODEL, keyConfigured: true, note: 'Add ?live=1 to test a real API call' });
+    return res.json({ ok: true, provider: 'gemini', model: GEMINI_MODEL, keyConfigured: true, note: 'Add ?live=1 to test a real API call' });
   }
-  const key = OPENROUTER_KEY;
-  if (!key) return res.json({ ok: false, step: 'key', error: 'Set GROQ_API_KEY on Render' });
-  try {
-    const cache = await fetchFreeModels();
-    const firstText = cache.text[0] || null;
-    if (!firstText) return res.json({ ok: false, step: 'models', error: 'No free text models found on OpenRouter', cache });
-    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://dentrust.site',
-        'X-Title': 'DenTrust DenBot',
-      },
-      body: JSON.stringify({ model: firstText, max_tokens: 20, messages: [{ role: 'user', content: 'say hi in arabic' }] }),
-      signal: AbortSignal.timeout(20000),
-    });
-    const data = await resp.json();
-    if (data.error) return res.json({ ok: false, step: 'chat', model: firstText, error: data.error });
-    const reply = data.choices?.[0]?.message?.content || '(no content)';
-    res.json({ ok: true, model: firstText, reply, availableText: cache.text.length });
-  } catch (err) {
-    res.json({ ok: false, step: 'fetch', error: err.message });
+  if (OPENROUTER_KEY) {
+    try {
+      const cache = await fetchFreeModels();
+      const firstText = cache.text[0] || null;
+      if (!firstText) return res.json({ ok: false, step: 'models', error: 'No free text models found on OpenRouter', cache });
+      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
+        body: JSON.stringify({ model: firstText, max_tokens: 20, messages: [{ role: 'user', content: 'say hi in arabic' }] }),
+        signal: AbortSignal.timeout(20000),
+      });
+      const data = await resp.json();
+      if (data.error) return res.json({ ok: false, step: 'chat', model: firstText, error: data.error });
+      const reply = data.choices?.[0]?.message?.content || '(no content)';
+      return res.json({ ok: true, model: firstText, reply, availableText: cache.text.length });
+    } catch (err) {
+      return res.json({ ok: false, step: 'fetch', error: err.message });
+    }
   }
+  return res.json({ ok: false, error: 'Set GEMINI_API_KEY on Render' });
 });
+
 
 // POST /api/ai/fashion-chat  (text chat)
 app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
-  if (!GROQ_API_KEY && !OPENROUTER_KEY && !GEMINI_API_KEY) return res.status(503).json({ error: 'No AI provider configured — set GROQ_API_KEY, OPENROUTER_API_KEY or GEMINI_API_KEY on Render.' });
+  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured — set GEMINI_API_KEY or OPENROUTER_API_KEY on Render.' });
   try {
     const { messages = [], system = '', max_tokens = 350 } = req.body;
     const knowledge = await getBotKnowledgeText();
-    // Cap the *whole* combined system prompt (base + client-supplied system +
-    // knowledge), not just the knowledge portion — the client-supplied part
-    // alone can be arbitrarily large (e.g. a full product catalog).
-    const fullSystem = capSystemContent(DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge);
-    const cappedRequestTokens = capMaxTokens(max_tokens);
-    const allMsgs = [{ role: 'system', content: fullSystem }, ...messages];
-    // Provider chain, biggest/smartest free option first, cheapest/most
-    // reliable last: OpenRouter free 120B model → Gemini (huge free limits,
-    // no card) → Groq (small but always-on fallback). max_tokens is capped
-    // uniformly so no provider — including the big free ones — can be pushed
-    // over its own rate limit by an oversized completion request.
-    if (OPENROUTER_KEY) {
-      try {
-        const { resp } = await callOpenRouterFree({ max_tokens: cappedRequestTokens, messages: allMsgs });
-        return res.json(await resp.json());
-      } catch (e) { console.warn('[AI] OpenRouter failed, trying next provider:', e.message); }
-    }
-    if (GEMINI_API_KEY) {
-      try {
-        const data = await callGemini(allMsgs, { max_tokens: cappedRequestTokens });
-        return res.json(data);
-      } catch (e) { console.warn('[AI] Gemini failed, trying next provider:', e.message); }
-    }
-    if (!GROQ_API_KEY) throw new Error('No AI provider available');
-    const data = await callGroq(allMsgs, { max_tokens: capMaxTokens(max_tokens) });
-    res.json(data);
-  } catch (err) { res.status(500).json({ error: `خطأ داخلي: ${err.message}` }); }
-});
-
-// POST /api/ai/fashion-tryon  (vision — Groq يدعم النصوص فقط، الصورة تُتجاهل)
-app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
-  if (!GROQ_API_KEY && !OPENROUTER_KEY && !GEMINI_API_KEY) return res.status(503).json({ error: 'No AI provider configured — set GROQ_API_KEY, OPENROUTER_API_KEY or GEMINI_API_KEY on Render.' });
-  try {
-    const { prompt = '', system = '' } = req.body;
-    const knowledge = await getBotKnowledgeText();
-    const sysContent = DENTRUST_BOT_SYSTEM + (system ? '\n' + system : '') + knowledge;
-    const visionMsgs = [
-      { role: 'system', content: sysContent },
-      { role: 'user', content: prompt },
-    ];
-    if (GROQ_API_KEY) {
-      const data = await callGroq(visionMsgs, { max_tokens: 900 });
-      return res.json(data);
-    }
-    const visionModels = (await fetchFreeModels()).vision;
-    const { resp: visionResp } = await callOpenRouterFree({ max_tokens: 900, messages: visionMsgs }, visionModels);
-    const data = await visionResp.json();
-    res.json(data);
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
-});
-
-const DENTRUST_BOT_SYSTEM = `أنت DenBot — مساعد ذكي ومتخصص لمتجر Dentrust للمستلزمات الطبية والأسنان في مصر. شخصيتك ودودة وذكية وواثقة. تجاوب بالعامية المصرية أو بالفرانكو عربي حسب أسلوب السؤال. تساعد في: أسئلة المنتجات، الأسعار، الشحن والتوصيل، العروض، وطرق الدفع. لو مش عارف الإجابة قول بصراحة واقترح يتواصلوا على الواتساب أو بالإيميل. لا تتكلم في مواضيع سياسية أو دينية. كن مختصراً ومفيداً — لا تطول من غير داعي.
-
-قاعدة مهمة جداً للمنتجات: لما تذكر أي منتج متوفر عندنا، اكتب الـ ID بتاعه بالشكل ده بالظبط: [[P:ID]] — استخدم الرقم اللي جنب [ID:] في قائمة المنتجات. ده بيخلي المنتج يظهر كـ card للعميل. مثال: لو المنتج عنده [ID:42] اكتب [[P:42]]. لو المنتج مش موجود في قائمتنا خالص، متكتبش الـ tag ده.`;
-
-// POST /api/ai/fashion-chat-stream  (DenBot – streaming chat proxy, Groq-powered)
-app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
-  if (!GROQ_API_KEY && !OPENROUTER_KEY && !GEMINI_API_KEY) return res.status(503).json({ error: 'No AI provider configured — set GROQ_API_KEY, OPENROUTER_API_KEY or GEMINI_API_KEY on Render.' });
-  try {
-    const { messages = [], max_tokens = 800, stream = true } = req.body;
-    const knowledge = await getBotKnowledgeText();
-    const sysContent = DENTRUST_BOT_SYSTEM + knowledge;
-    let patchedMessages = [...messages];
-    const sysIdx = patchedMessages.findIndex(m => m.role === 'system');
-    if (sysIdx >= 0) {
-      // The client (denbot widget) sometimes builds its own system prompt with
-      // a full product catalog fetched straight from Supabase. If we naively
-      // concatenate our own knowledge on top, the combined prompt can exceed
-      // Groq's tokens-per-minute limit even though each half looks fine on its
-      // own — Groq then rejects the request and the widget silently shows
-      // nothing (its stream parser only understands {choices:[...]} chunks).
-      // Cap the *combined* system content so this can never happen again.
-      const combined = sysContent ? sysContent + '\n' + patchedMessages[sysIdx].content : patchedMessages[sysIdx].content;
-      patchedMessages[sysIdx] = { ...patchedMessages[sysIdx], content: capSystemContent(combined) };
-    } else if (sysContent) {
-      patchedMessages = [{ role: 'system', content: capSystemContent(sysContent) }, ...patchedMessages];
-    }
+    const combinedSystem = capSystemContent(system + knowledge);
     const cappedTokens = capMaxTokens(max_tokens);
-    // Provider chain, biggest/smartest free option first, cheapest/most
-    // reliable last: OpenRouter free 120B model → Gemini (huge free limits,
-    // no card) → Groq (small but always-on fallback, capped to stay under
-    // its 6000 TPM ceiling — the original cause of the silent-failure bug).
-    if (OPENROUTER_KEY) {
-      try {
-        const { resp } = await callOpenRouterFree({ messages: patchedMessages, max_tokens: cappedTokens, stream });
-        if (stream) return await pipeGroqStream(resp, res, 'OpenRouter');
-        return res.json(await resp.json());
-      } catch (e) { console.warn('[AI] OpenRouter failed, trying next provider:', e.message); }
-    }
+    const fullMessages = combinedSystem
+      ? [{ role: 'system', content: combinedSystem }, ...messages]
+      : messages;
+
+    // Gemini primary
     if (GEMINI_API_KEY) {
       try {
-        if (stream) {
-          const geminiResp = await callGemini(patchedMessages, { max_tokens: cappedTokens, stream: true });
-          return await pipeGroqStream(geminiResp, res, 'Gemini');
-        }
-        const data = await callGemini(patchedMessages, { max_tokens: cappedTokens });
+        const data = await callGemini(fullMessages, { max_tokens: cappedTokens });
         return res.json(data);
-      } catch (e) { console.warn('[AI] Gemini failed, trying next provider:', e.message); }
-    }
-    if (GROQ_API_KEY) {
-      if (stream) {
-        const groqResp = await callGroq(patchedMessages, { max_tokens: cappedTokens, stream: true });
-        return await pipeGroqStream(groqResp, res);
+      } catch (err) {
+        console.warn('[AI] Gemini failed, falling back to OpenRouter:', err.message);
       }
-      const data = await callGroq(patchedMessages, { max_tokens: cappedTokens });
+    }
+
+    // OpenRouter fallback
+    if (OPENROUTER_KEY) {
+      const { resp } = await callOpenRouterFree({ messages: fullMessages, max_tokens: cappedTokens });
+      const data = await resp.json();
       return res.json(data);
     }
-    return res.status(503).json({ error: 'No AI provider available' });
+
+    res.status(503).json({ error: 'No AI provider available' });
   } catch (err) {
-    if (!res.headersSent) res.status(500).json({ error: `خطأ داخلي: ${err.message}` });
-    else res.end();
+    console.error('[AI] fashion-chat error:', err.message);
+    res.status(503).json({ error: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' });
   }
 });
 
-// POST /api/ai/stylebot  (StyleBot – vision + chat proxy, Groq-powered)
-app.post('/api/ai/stylebot', webCors, async (req, res) => {
-  if (!GROQ_API_KEY && !OPENROUTER_KEY && !GEMINI_API_KEY) return res.status(503).json({ error: 'No AI provider configured — set GROQ_API_KEY, OPENROUTER_API_KEY or GEMINI_API_KEY on Render.' });
+
+// POST /api/ai/fashion-tryon  (vision)
+app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
+  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured.' });
   try {
-    const { messages = [], max_tokens = 800, stream = true } = req.body;
-    const knowledge = await getBotKnowledgeText();
-    let patchedMessages = [...messages];
-    const sbSysIdx = patchedMessages.findIndex(m => m.role === 'system');
-    if (sbSysIdx >= 0) {
-      const combined = knowledge ? patchedMessages[sbSysIdx].content + '\n' + knowledge : patchedMessages[sbSysIdx].content;
-      patchedMessages[sbSysIdx] = { ...patchedMessages[sbSysIdx], content: capSystemContent(combined) };
-    } else if (knowledge) {
-      patchedMessages = [{ role: 'system', content: capSystemContent(knowledge) }, ...patchedMessages];
-    }
-    const cappedTokens2 = capMaxTokens(max_tokens);
-    // Provider chain — same rationale as fashion-chat-stream: OpenRouter free
-    // 120B model → Gemini (huge free limits, no card) → Groq (fallback).
-    if (OPENROUTER_KEY) {
-      try {
-        const freeModels = await fetchFreeModels();
-        const { resp } = await callOpenRouterFree({ messages: patchedMessages, max_tokens: cappedTokens2, stream }, freeModels.text);
-        if (stream) return await pipeGroqStream(resp, res, 'OpenRouter');
-        return res.json(await resp.json());
-      } catch (e) { console.warn('[AI] OpenRouter failed, trying next provider:', e.message); }
-    }
+    const { messages = [], max_tokens = 500 } = req.body;
+    const cappedTokens = capMaxTokens(max_tokens);
+
+    // Gemini primary (supports vision natively)
     if (GEMINI_API_KEY) {
       try {
-        if (stream) {
-          const geminiResp = await callGemini(patchedMessages, { max_tokens: cappedTokens2, stream: true });
-          return await pipeGroqStream(geminiResp, res, 'Gemini');
-        }
-        const data = await callGemini(patchedMessages, { max_tokens: cappedTokens2 });
+        const data = await callGemini(messages, { max_tokens: cappedTokens });
         return res.json(data);
-      } catch (e) { console.warn('[AI] Gemini failed, trying next provider:', e.message); }
-    }
-    if (GROQ_API_KEY) {
-      if (stream) {
-        const groqResp = await callGroq(patchedMessages, { max_tokens: cappedTokens2, stream: true });
-        return await pipeGroqStream(groqResp, res);
+      } catch (err) {
+        console.warn('[AI] Gemini vision failed, falling back to OpenRouter:', err.message);
       }
-      const data = await callGroq(patchedMessages, { max_tokens: cappedTokens2 });
+    }
+
+    // OpenRouter fallback (vision models)
+    if (OPENROUTER_KEY) {
+      const cache = await fetchFreeModels();
+      const visionModels = cache.vision?.length ? cache.vision : cache.text;
+      const { resp } = await callOpenRouterFree({ messages, max_tokens: cappedTokens }, visionModels);
+      const data = await resp.json();
       return res.json(data);
     }
-    return res.status(503).json({ error: 'No AI provider available' });
+
+    res.status(503).json({ error: 'No AI provider available' });
   } catch (err) {
-    if (!res.headersSent) res.status(500).json({ error: `خطأ داخلي: ${err.message}` });
-    else res.end();
+    console.error('[AI] fashion-tryon error:', err.message);
+    res.status(503).json({ error: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' });
   }
 });
 
-// ── Bot Knowledge CRUD (POS admin) ────────────────────────────────────────────
 
-// GET all knowledge entries
+// POST /api/ai/fashion-chat-stream  (SSE streaming)
+app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
+  if (!GEMINI_API_KEY && !OPENROUTER_KEY) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.write('data: ' + JSON.stringify({ error: 'No AI provider configured', choices: [{ delta: { content: 'عذرًا، الذكاء الاصطناعي غير مهيّأ.' }, finish_reason: 'stop' }] }) + '\r\n\r\n');
+    return res.end();
+  }
+  try {
+    const { messages = [], system = '', max_tokens = 400 } = req.body;
+    const knowledge = await getBotKnowledgeText();
+    const combinedSystem = capSystemContent(system + knowledge);
+    const cappedTokens = capMaxTokens(max_tokens);
+    const fullMessages = combinedSystem
+      ? [{ role: 'system', content: combinedSystem }, ...messages]
+      : messages;
+
+    // Gemini primary (streaming)
+    if (GEMINI_API_KEY) {
+      try {
+        const geminiResp = await callGemini(fullMessages, { max_tokens: cappedTokens, stream: true });
+        return pipeGroqStream(geminiResp, res, 'Gemini');
+      } catch (err) {
+        console.warn('[AI] Gemini stream failed, falling back to OpenRouter:', err.message);
+      }
+    }
+
+    // OpenRouter streaming fallback
+    if (OPENROUTER_KEY) {
+      const cache = await fetchFreeModels();
+      const model = cache.text[0];
+      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
+        body: JSON.stringify({ model, messages: fullMessages, max_tokens: cappedTokens, stream: true }),
+        signal: AbortSignal.timeout(30000),
+      });
+      return pipeGroqStream(resp, res, 'OpenRouter');
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.write('data: [DONE]\r\n\r\n');
+    res.end();
+  } catch (err) {
+    console.error('[AI] stream error:', err.message);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.write('data: ' + JSON.stringify({ error: err.message, choices: [{ delta: { content: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' }, finish_reason: 'stop' }] }) + '\r\n\r\n');
+    res.write('data: [DONE]\r\n\r\n');
+    res.end();
+  }
+});
+
+
+// POST /api/ai/stylebot
+app.post('/api/ai/stylebot', webCors, async (req, res) => {
+  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured.' });
+  try {
+    const { messages = [], system = '', max_tokens = 400, stream = false } = req.body;
+    const knowledge = await getBotKnowledgeText();
+    const combinedSystem = capSystemContent(system + knowledge);
+    const cappedTokens = capMaxTokens(max_tokens);
+    const fullMessages = combinedSystem
+      ? [{ role: 'system', content: combinedSystem }, ...messages]
+      : messages;
+
+    if (stream) {
+      if (GEMINI_API_KEY) {
+        try {
+          const geminiResp = await callGemini(fullMessages, { max_tokens: cappedTokens, stream: true });
+          return pipeGroqStream(geminiResp, res, 'Gemini');
+        } catch (err) {
+          console.warn('[AI] Gemini stylebot stream failed, falling back:', err.message);
+        }
+      }
+      if (OPENROUTER_KEY) {
+        const cache = await fetchFreeModels();
+        const model = cache.text[0];
+        const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
+          body: JSON.stringify({ model, messages: fullMessages, max_tokens: cappedTokens, stream: true }),
+          signal: AbortSignal.timeout(30000),
+        });
+        return pipeGroqStream(resp, res, 'OpenRouter');
+      }
+    }
+
+    if (GEMINI_API_KEY) {
+      try {
+        const data = await callGemini(fullMessages, { max_tokens: cappedTokens });
+        return res.json(data);
+      } catch (err) {
+        console.warn('[AI] Gemini stylebot failed, falling back:', err.message);
+      }
+    }
+
+    if (OPENROUTER_KEY) {
+      const { resp } = await callOpenRouterFree({ messages: fullMessages, max_tokens: cappedTokens });
+      const data = await resp.json();
+      return res.json(data);
+    }
+
+    res.status(503).json({ error: 'No AI provider available' });
+  } catch (err) {
+    console.error('[AI] stylebot error:', err.message);
+    res.status(503).json({ error: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' });
+  }
+});
+
+
 app.get(`${BASE}/api/bot-knowledge`, async (req, res) => {
   if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
   try {
@@ -3937,8 +3884,8 @@ async function scrapePageProducts(siteUrl) {
     }
   }
 
-  // ── Step 4: OpenRouter AI extraction (key fallback) ───────────────────────
-  if (products.length < 3 && OPENROUTER_KEY) {
+    // ── Step 4: AI extraction (Gemini primary, OpenRouter fallback) ─────────────
+  if (products.length < 3 && (GEMINI_API_KEY || OPENROUTER_KEY)) {
     try {
       const visibleText = html
         .replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -3947,19 +3894,17 @@ async function scrapePageProducts(siteUrl) {
         .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
         .replace(/\s+/g, ' ').trim().slice(0, 7000);
 
-      const aiData = await callOpenRouter({
-        model: 'google/gemini-1.5-flash',
-        max_tokens: 1500,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a product price extractor for dental supply websites. Extract ALL product names and prices from the given text. Return ONLY a JSON array: [{"title":"product name","price":123.50}]. Prices must be numbers only (no currency). Return [] if nothing found.',
-          },
-          { role: 'user', content: `Extract products and prices:\n\n${visibleText}` },
-        ],
-      });
+      const prompt = 'You are a product price extractor for dental supply websites. Extract ALL product names and prices from the given text. Return ONLY a JSON array: [{"title":"product name","price":123.50}]. Prices must be numbers only (no currency). Return [] if nothing found.';
+      let raw = '[]';
 
-      const raw = aiData.choices?.[0]?.message?.content || '[]';
+      if (GEMINI_API_KEY) {
+        const aiData = await callGemini([{ role: 'user', content: prompt + '\n\nExtract products and prices:\n\n' + visibleText }], { max_tokens: 1500 });
+        raw = aiData.choices?.[0]?.message?.content || '[]';
+      } else {
+        const aiData = await callOpenRouter({ model: 'google/gemini-1.5-flash', max_tokens: 1500, messages: [{ role: 'system', content: prompt }, { role: 'user', content: `Extract products and prices:\n\n${visibleText}` }] });
+        raw = aiData.choices?.[0]?.message?.content || '[]';
+      }
+
       const jsonMatch = raw.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         const aiProducts = JSON.parse(jsonMatch[0]);
@@ -3971,6 +3916,7 @@ async function scrapePageProducts(siteUrl) {
       }
     } catch (e) { console.error('AI scraper error:', e.message); }
   }
+
 
   // ── Step 5: Regex fallback (last resort) ─────────────────────────────────
   if (products.length === 0) {
@@ -4711,7 +4657,7 @@ async function main() {
     app.get('/api/healthz', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     // pre-warm AI model list so first user request is fast
     if (OPENROUTER_KEY) fetchFreeModels().catch(() => {});
-    if (GROQ_API_KEY) console.log(`[AI] Groq enabled — model: ${GROQ_MODEL}`);
+    if (GEMINI_API_KEY) console.log(`[AI] Gemini enabled — model: ${GEMINI_MODEL}`);
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`POS server running on port ${PORT} at ${BASE}`);
       const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
