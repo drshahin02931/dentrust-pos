@@ -585,14 +585,13 @@ app.post(`${BASE}/api/products`, async (req, res) => {
     const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
     const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
     const { rows: [ins] } = await posDb.query(
-      `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values, details)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+      `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
       [d.barcode || null, d.product_name, d.quantity || 0,
        d.purchase_price || 0, d.sale_price || 0,
        d.expiry_date || null, d.image_url || null,
        d.category || null, parseInt(d.min_stock || 0, 10),
-       d.description || null, variantsJson, d.section || 'dental', cbJson,
-       d.details || '']
+       d.description || null, variantsJson, d.section || 'dental', cbJson]
     );
     res.status(201).json({ ok: true });
   } catch (err) {
@@ -4431,6 +4430,11 @@ async function main() {
   }
   try {
     await initDb();
+
+    // Fix: ensure 'details' column exists on posDb.products with a safe default
+    await posDb.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS details TEXT NOT NULL DEFAULT ''`).catch(() => {});
+    await posDb.query(`ALTER TABLE products ALTER COLUMN details SET DEFAULT ''`).catch(() => {});
+
     await posDb.query(`CREATE TABLE IF NOT EXISTS customer_manual_debts (
       id SERIAL PRIMARY KEY,
       customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
