@@ -3159,7 +3159,7 @@ function capSystemContent(content) {
 
 // Cap the completion budget. Gemini 2.0 Flash supports generous output —
 // 800 tokens gives detailed, helpful responses without waste.
-const MAX_COMPLETION_TOKENS = 800;
+const MAX_COMPLETION_TOKENS = 4096;
 function capMaxTokens(requested) {
   const n = Number(requested) || MAX_COMPLETION_TOKENS;
   return Math.min(n, MAX_COMPLETION_TOKENS);
