@@ -3035,7 +3035,7 @@ function r2(n) { return Math.round(parseFloat(n || 0) * 100) / 100; }
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 const GROQ_API_KEY   = process.env.GROQ_API_KEY || '';
-const GROQ_MODEL     = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const GROQ_MODEL     = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 const GROQ_BASE      = 'https://api.groq.com/openai/v1/chat/completions';
 const SUPABASE_BASE = 'https://ywfunodybcqakhweuxwn.supabase.co';
 const WEBSITE_ORIGINS = (process.env.WEBSITE_ORIGIN || 'https://dentrust.site,https://www.dentrust.site')
@@ -3124,14 +3124,24 @@ async function getBotKnowledgeText() {
     }
 
     if (productsResult.rows.length) {
-      const productLines = productsResult.rows.map(r => {
+      // Cap the number of products and the length of each line so the system
+      // prompt stays well under Groq's tokens-per-minute limit (12000 TPM on
+      // some models). Sending all products unbounded caused every chat
+      // request to be rejected with "Request too large" once the catalog
+      // grew past ~150 items.
+      const MAX_PRODUCTS = 120;
+      const MAX_DESC_LEN = 60;
+      const productLines = productsResult.rows.slice(0, MAX_PRODUCTS).map(r => {
         let line = `- [ID:${r.id}] ${r.product_name}`;
         if (r.category) line += ` (${r.category})`;
         if (r.sale_price) line += ` — السعر: ${r.sale_price} جنيه`;
-        if (r.description) line += ` — ${r.description}`;
+        if (r.description) line += ` — ${String(r.description).slice(0, MAX_DESC_LEN)}`;
         return line;
       }).join('\n');
-      text += `\n\n=== قائمة المنتجات المتوفرة حالياً في المخزون ===\n${productLines}\n===`;
+      const truncatedNote = productsResult.rows.length > MAX_PRODUCTS
+        ? `\n(+ ${productsResult.rows.length - MAX_PRODUCTS} منتج إضافي غير مذكور هنا)`
+        : '';
+      text += `\n\n=== قائمة المنتجات المتوفرة حالياً في المخزون ===\n${productLines}${truncatedNote}\n===`;
     }
 
     _knowledgeCache = text;
