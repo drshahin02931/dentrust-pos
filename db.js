@@ -262,6 +262,8 @@ const PUBLIC_PRODUCTS_MIGRATIONS = [
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS checkbox_values JSONB",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_sold_out BOOLEAN DEFAULT false",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_offer BOOLEAN DEFAULT false",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS original_price NUMERIC",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_best_seller BOOLEAN DEFAULT false",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS category_id INTEGER",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS stock INTEGER DEFAULT 0",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS price NUMERIC DEFAULT 0",
@@ -297,6 +299,9 @@ SELECT
   COALESCE(p.section, 'dental')                                   AS section,
   p.checkbox_values,
   p.is_sold_out,
+  COALESCE(p.is_offer, false)                                     AS is_offer,
+  p.original_price,
+  COALESCE(p.is_best_seller, false)                               AS is_best_seller,
   COALESCE(p.created_at::text, NOW()::text)                       AS created_at
 FROM public.products p
 LEFT JOIN public.categories c ON c.id = p.category_id
@@ -341,7 +346,8 @@ BEGIN
   INSERT INTO public.products (
     barcode, name, stock, purchase_price, price,
     expiry_date, photos, category_id, min_stock, supplier_id,
-    details, variants, section, checkbox_values, is_offer, is_sold_out
+    details, variants, section, checkbox_values, is_offer, is_sold_out,
+    original_price, is_best_seller
   ) VALUES (
     NEW.barcode,
     NEW.product_name,
@@ -357,8 +363,10 @@ BEGIN
     NEW.variants,
     COALESCE(NEW.section, 'dental'),
     NEW.checkbox_values,
-    false,
-    (COALESCE(NEW.quantity, 0) <= 0)
+    COALESCE(NEW.is_offer, false),
+    (COALESCE(NEW.quantity, 0) <= 0),
+    NEW.original_price,
+    COALESCE(NEW.is_best_seller, false)
   ) RETURNING id INTO v_new_id;
 
   NEW.id         := v_new_id;
@@ -434,7 +442,10 @@ BEGIN
     variants       = NEW.variants,
     section        = COALESCE(NEW.section, 'dental'),
     checkbox_values= NEW.checkbox_values,
-    is_sold_out    = (COALESCE(NEW.quantity, 0) <= 0)
+    is_sold_out    = (COALESCE(NEW.quantity, 0) <= 0),
+    is_offer       = COALESCE(NEW.is_offer, is_offer),
+    original_price = NEW.original_price,
+    is_best_seller = COALESCE(NEW.is_best_seller, is_best_seller)
   WHERE id = NEW.id;
 
   RETURN NEW;
