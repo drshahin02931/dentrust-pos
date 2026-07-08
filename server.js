@@ -3343,7 +3343,7 @@ const randomVisitors = () => Math.floor(Math.random() * 700) + 301;
 
 // Get best available free text model from live cache
 async function getBestFreeModel() {
-  return 'nvidia/nemotron-3-ultra:free';
+  return 'google/gemma-4-26b-a4b-it:free';
 }
 
 // GET /api/ai/test  — diagnostic endpoint
