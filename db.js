@@ -299,10 +299,10 @@ SELECT
   COALESCE(p.section, 'dental')                                   AS section,
   p.checkbox_values,
   p.is_sold_out,
+  COALESCE(p.created_at::text, NOW()::text)                       AS created_at,
   COALESCE(p.is_offer, false)                                     AS is_offer,
   p.original_price,
-  COALESCE(p.is_best_seller, false)                               AS is_best_seller,
-  COALESCE(p.created_at::text, NOW()::text)                       AS created_at
+  COALESCE(p.is_best_seller, false)                               AS is_best_seller
 FROM public.products p
 LEFT JOIN public.categories c ON c.id = p.category_id
 `;
