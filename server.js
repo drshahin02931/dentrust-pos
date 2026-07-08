@@ -3034,8 +3034,6 @@ function r2(n) { return Math.round(parseFloat(n || 0) * 100) / 100; }
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL   = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const SUPABASE_BASE = 'https://ywfunodybcqakhweuxwn.supabase.co';
 const WEBSITE_ORIGINS = (process.env.WEBSITE_ORIGIN || 'https://dentrust.site,https://www.dentrust.site')
   .split(',').map(s => s.trim());
@@ -3290,96 +3288,6 @@ async function callOpenRouterFree(payload, modelList) {
   throw new Error(`All free models failed: ${lastErr}`);
 }
 
-// ── Gemini Direct API helper ───────────────────────────────────────────────
-// يحوّل messages بتاعة OpenAI format لـ Gemini format ويرجع response بـ OpenAI format
-
-function geminiTextOf(content) {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) return content.filter(p => p.type === 'text').map(p => p.text).join('\n');
-  return String(content ?? '');
-}
-
-// Splits OpenAI-style messages into Gemini's { systemInstruction, contents } shape.
-function toGeminiPayload(messages) {
-  let systemText = '';
-  const contents = [];
-  for (const m of messages) {
-    if (m.role === 'system') { systemText += (systemText ? '\n' : '') + geminiTextOf(m.content); continue; }
-    contents.push({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: geminiTextOf(m.content) }] });
-  }
-  return { systemText, contents };
-}
-
-// Calls Gemini (Google AI Studio — free tier, no card required, far higher
-// rate limits than Groq's free tier). For streaming, returns a Response-like
-// object whose body is re-encoded into the same OpenAI SSE chunk shape
-// ({choices:[{delta:{content}}]}) that pipeGroqStream already knows how to
-// consume, so one stream parser works for all three providers.
-async function callGemini(messages, { max_tokens = 400, stream = false } = {}) {
-  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is not set');
-  const { systemText, contents } = toGeminiPayload(messages);
-  const body = {
-    contents,
-    generationConfig: { maxOutputTokens: max_tokens },
-    ...(systemText ? { systemInstruction: { parts: [{ text: systemText }] } } : {}),
-  };
-  const method = stream ? 'streamGenerateContent' : 'generateContent';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:${method}?key=${GEMINI_API_KEY}${stream ? '&alt=sse' : ''}`;
-
-  if (!stream) {
-    const resp = await fetch(url, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body), signal: AbortSignal.timeout(20000),
-    });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data?.error?.message || `Gemini error ${resp.status}`);
-    const text = data.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
-    return { choices: [{ message: { content: text } }] };
-  }
-
-  const resp = await fetch(url, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body), signal: AbortSignal.timeout(30000),
-  });
-  if (!resp.ok) {
-    const errBody = await resp.json().catch(() => ({}));
-    return new Response(JSON.stringify(errBody), { status: resp.status });
-  }
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  const transformed = new ReadableStream({
-    async start(controller) {
-      let buf = '';
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split('\n');
-          buf = lines.pop();
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith('data:')) continue;
-            const raw = trimmed.slice(5).trim();
-            if (!raw) continue;
-            try {
-              const parsed = JSON.parse(raw);
-              const text = parsed.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
-              if (text) {
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: text }, finish_reason: null }] })}\n\n`));
-              }
-            } catch (_) {}
-          }
-        }
-      } catch (_) { /* upstream ended */ }
-      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-      controller.close();
-    },
-  });
-  return new Response(transformed, { status: 200 });
-}
-
 
 // بيقرأ Groq SSE ويعيد إرساله بنفس الـ format البسيط اللي الـ frontend بيتوقعه
 // Parses and re-emits an OpenAI-compatible SSE stream (works for both Groq
@@ -3432,71 +3340,44 @@ async function pipeGroqStream(groqResp, res, providerLabel = 'Groq') {
 // Add ?live=1 to force a real API call
 app.get('/api/ai/test', async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
-  if (GEMINI_API_KEY) {
-    if (req.query.live === '1') {
-      try {
-        const data = await callGemini([{ role: 'user', content: 'قل مرحبا باختصار' }], { max_tokens: 30 });
-        const reply = data.choices?.[0]?.message?.content || '(no content)';
-        return res.json({ ok: true, provider: 'gemini', model: GEMINI_MODEL, reply, live: true });
-      } catch (err) {
-        return res.json({ ok: false, provider: 'gemini', model: GEMINI_MODEL, error: err.message, live: true });
-      }
-    }
-    return res.json({ ok: true, provider: 'gemini', model: GEMINI_MODEL, keyConfigured: true, note: 'Add ?live=1 to test a real API call' });
-  }
-  if (OPENROUTER_KEY) {
+  if (!OPENROUTER_KEY) return res.json({ ok: false, error: 'Set OPENROUTER_API_KEY on Render' });
+  if (req.query.live === '1') {
     try {
-      const cache = await fetchFreeModels();
-      const firstText = cache.text[0] || null;
-      if (!firstText) return res.json({ ok: false, step: 'models', error: 'No free text models found on OpenRouter', cache });
       const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
-        body: JSON.stringify({ model: firstText, max_tokens: 20, messages: [{ role: 'user', content: 'say hi in arabic' }] }),
+        body: JSON.stringify({ model: 'meta-llama/llama-3.1-8b-instruct:free', max_tokens: 20, messages: [{ role: 'user', content: 'قل مرحبا' }] }),
         signal: AbortSignal.timeout(20000),
       });
       const data = await resp.json();
-      if (data.error) return res.json({ ok: false, step: 'chat', model: firstText, error: data.error });
+      if (data.error) return res.json({ ok: false, model: 'meta-llama/llama-3.1-8b-instruct:free', error: data.error });
       const reply = data.choices?.[0]?.message?.content || '(no content)';
-      return res.json({ ok: true, model: firstText, reply, availableText: cache.text.length });
+      return res.json({ ok: true, provider: 'openrouter', model: 'meta-llama/llama-3.1-8b-instruct:free', reply, live: true });
     } catch (err) {
-      return res.json({ ok: false, step: 'fetch', error: err.message });
+      return res.json({ ok: false, error: err.message, live: true });
     }
   }
-  return res.json({ ok: false, error: 'Set GEMINI_API_KEY on Render' });
+  return res.json({ ok: true, provider: 'openrouter', model: 'meta-llama/llama-3.1-8b-instruct:free', keyConfigured: true, note: 'Add ?live=1 to test a real API call' });
 });
 
 
 // POST /api/ai/fashion-chat  (text chat)
 app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
-  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured — set GEMINI_API_KEY or OPENROUTER_API_KEY on Render.' });
+  if (!OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured.' });
   try {
     const { messages = [], system = '', max_tokens = 350 } = req.body;
     const knowledge = await getBotKnowledgeText();
     const combinedSystem = capSystemContent(system + knowledge);
     const cappedTokens = capMaxTokens(max_tokens);
-    const fullMessages = combinedSystem
-      ? [{ role: 'system', content: combinedSystem }, ...messages]
-      : messages;
-
-    // Gemini primary
-    if (GEMINI_API_KEY) {
-      try {
-        const data = await callGemini(fullMessages, { max_tokens: cappedTokens });
-        return res.json(data);
-      } catch (err) {
-        console.warn('[AI] Gemini failed, falling back to OpenRouter:', err.message);
-      }
-    }
-
-    // OpenRouter fallback
-    if (OPENROUTER_KEY) {
-      const { resp } = await callOpenRouterFree({ messages: fullMessages, max_tokens: cappedTokens });
-      const data = await resp.json();
-      return res.json(data);
-    }
-
-    res.status(503).json({ error: 'No AI provider available' });
+    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
+      body: JSON.stringify({ model: 'meta-llama/llama-3.1-8b-instruct:free', messages: fullMessages, max_tokens: cappedTokens }),
+      signal: AbortSignal.timeout(30000),
+    });
+    const data = await resp.json();
+    return res.json(data);
   } catch (err) {
     console.error('[AI] fashion-chat error:', err.message);
     res.status(503).json({ error: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' });
@@ -3506,31 +3387,20 @@ app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
 
 // POST /api/ai/fashion-tryon  (vision)
 app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
-  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured.' });
+  if (!OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured.' });
   try {
     const { messages = [], max_tokens = 500 } = req.body;
     const cappedTokens = capMaxTokens(max_tokens);
-
-    // Gemini primary (supports vision natively)
-    if (GEMINI_API_KEY) {
-      try {
-        const data = await callGemini(messages, { max_tokens: cappedTokens });
-        return res.json(data);
-      } catch (err) {
-        console.warn('[AI] Gemini vision failed, falling back to OpenRouter:', err.message);
-      }
-    }
-
-    // OpenRouter fallback (vision models)
-    if (OPENROUTER_KEY) {
-      const cache = await fetchFreeModels();
-      const visionModels = cache.vision?.length ? cache.vision : cache.text;
-      const { resp } = await callOpenRouterFree({ messages, max_tokens: cappedTokens }, visionModels);
-      const data = await resp.json();
-      return res.json(data);
-    }
-
-    res.status(503).json({ error: 'No AI provider available' });
+    const cache = await fetchFreeModels();
+    const visionModel = (cache.vision?.length ? cache.vision[0] : 'meta-llama/llama-3.1-8b-instruct:free');
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
+      body: JSON.stringify({ model: visionModel, messages, max_tokens: cappedTokens }),
+      signal: AbortSignal.timeout(30000),
+    });
+    const data = await resp.json();
+    return res.json(data);
   } catch (err) {
     console.error('[AI] fashion-tryon error:', err.message);
     res.status(503).json({ error: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' });
@@ -3540,9 +3410,9 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
 
 // POST /api/ai/fashion-chat-stream  (SSE streaming)
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
-  if (!GEMINI_API_KEY && !OPENROUTER_KEY) {
+  if (!OPENROUTER_KEY) {
     res.setHeader('Content-Type', 'text/event-stream');
-    res.write('data: ' + JSON.stringify({ error: 'No AI provider configured', choices: [{ delta: { content: 'عذرًا، الذكاء الاصطناعي غير مهيّأ.' }, finish_reason: 'stop' }] }) + '\r\n\r\n');
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'عذرًا، الذكاء الاصطناعي غير مهيّأ.' }, finish_reason: 'stop' }] }) + '\r\n\r\n');
     return res.end();
   }
   try {
@@ -3550,40 +3420,18 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
     const knowledge = await getBotKnowledgeText();
     const combinedSystem = capSystemContent(system + knowledge);
     const cappedTokens = capMaxTokens(max_tokens);
-    const fullMessages = combinedSystem
-      ? [{ role: 'system', content: combinedSystem }, ...messages]
-      : messages;
-
-    // Gemini primary (streaming)
-    if (GEMINI_API_KEY) {
-      try {
-        const geminiResp = await callGemini(fullMessages, { max_tokens: cappedTokens, stream: true });
-        return pipeGroqStream(geminiResp, res, 'Gemini');
-      } catch (err) {
-        console.warn('[AI] Gemini stream failed, falling back to OpenRouter:', err.message);
-      }
-    }
-
-    // OpenRouter streaming fallback
-    if (OPENROUTER_KEY) {
-      const cache = await fetchFreeModels();
-      const model = cache.text[0];
-      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
-        body: JSON.stringify({ model, messages: fullMessages, max_tokens: cappedTokens, stream: true }),
-        signal: AbortSignal.timeout(30000),
-      });
-      return pipeGroqStream(resp, res, 'OpenRouter');
-    }
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.write('data: [DONE]\r\n\r\n');
-    res.end();
+    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
+      body: JSON.stringify({ model: 'meta-llama/llama-3.1-8b-instruct:free', messages: fullMessages, max_tokens: cappedTokens, stream: true }),
+      signal: AbortSignal.timeout(30000),
+    });
+    return pipeGroqStream(resp, res, 'OpenRouter');
   } catch (err) {
     console.error('[AI] stream error:', err.message);
     res.setHeader('Content-Type', 'text/event-stream');
-    res.write('data: ' + JSON.stringify({ error: err.message, choices: [{ delta: { content: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' }, finish_reason: 'stop' }] }) + '\r\n\r\n');
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' }, finish_reason: 'stop' }] }) + '\r\n\r\n');
     res.write('data: [DONE]\r\n\r\n');
     res.end();
   }
@@ -3592,54 +3440,30 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
 
 // POST /api/ai/stylebot
 app.post('/api/ai/stylebot', webCors, async (req, res) => {
-  if (!GEMINI_API_KEY && !OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured.' });
+  if (!OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured.' });
   try {
     const { messages = [], system = '', max_tokens = 400, stream = false } = req.body;
     const knowledge = await getBotKnowledgeText();
     const combinedSystem = capSystemContent(system + knowledge);
     const cappedTokens = capMaxTokens(max_tokens);
-    const fullMessages = combinedSystem
-      ? [{ role: 'system', content: combinedSystem }, ...messages]
-      : messages;
-
+    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
     if (stream) {
-      if (GEMINI_API_KEY) {
-        try {
-          const geminiResp = await callGemini(fullMessages, { max_tokens: cappedTokens, stream: true });
-          return pipeGroqStream(geminiResp, res, 'Gemini');
-        } catch (err) {
-          console.warn('[AI] Gemini stylebot stream failed, falling back:', err.message);
-        }
-      }
-      if (OPENROUTER_KEY) {
-        const cache = await fetchFreeModels();
-        const model = cache.text[0];
-        const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
-          body: JSON.stringify({ model, messages: fullMessages, max_tokens: cappedTokens, stream: true }),
-          signal: AbortSignal.timeout(30000),
-        });
-        return pipeGroqStream(resp, res, 'OpenRouter');
-      }
+      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
+        body: JSON.stringify({ model: 'meta-llama/llama-3.1-8b-instruct:free', messages: fullMessages, max_tokens: cappedTokens, stream: true }),
+        signal: AbortSignal.timeout(30000),
+      });
+      return pipeGroqStream(resp, res, 'OpenRouter');
     }
-
-    if (GEMINI_API_KEY) {
-      try {
-        const data = await callGemini(fullMessages, { max_tokens: cappedTokens });
-        return res.json(data);
-      } catch (err) {
-        console.warn('[AI] Gemini stylebot failed, falling back:', err.message);
-      }
-    }
-
-    if (OPENROUTER_KEY) {
-      const { resp } = await callOpenRouterFree({ messages: fullMessages, max_tokens: cappedTokens });
-      const data = await resp.json();
-      return res.json(data);
-    }
-
-    res.status(503).json({ error: 'No AI provider available' });
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
+      body: JSON.stringify({ model: 'meta-llama/llama-3.1-8b-instruct:free', messages: fullMessages, max_tokens: cappedTokens }),
+      signal: AbortSignal.timeout(30000),
+    });
+    const data = await resp.json();
+    return res.json(data);
   } catch (err) {
     console.error('[AI] stylebot error:', err.message);
     res.status(503).json({ error: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' });
@@ -4656,8 +4480,7 @@ async function main() {
     app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     app.get('/api/healthz', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     // pre-warm AI model list so first user request is fast
-    if (OPENROUTER_KEY) fetchFreeModels().catch(() => {});
-    if (GEMINI_API_KEY) console.log(`[AI] Gemini enabled — model: ${GEMINI_MODEL}`);
+    if (OPENROUTER_KEY) { fetchFreeModels().catch(() => {}); console.log('[AI] OpenRouter enabled — model: meta-llama/llama-3.1-8b-instruct:free'); }
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`POS server running on port ${PORT} at ${BASE}`);
       const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
