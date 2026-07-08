@@ -593,12 +593,7 @@ app.post(`${BASE}/api/products`, async (req, res) => {
        d.category || null, parseInt(d.min_stock || 0, 10),
        d.description || null, variantsJson, d.section || 'dental', cbJson]
     );
-    const posId = ins.id;
-    let syncError = null;
-    try { await syncNewProductToDentrust(posId, d); } catch (e) { syncError = e.message; }
-    const resp = { ok: true };
-    if (syncError) resp.sync_warning = `تم الحفظ في POS لكن فشل الربط بـ DenTrust: ${syncError}`;
-    res.status(201).json(resp);
+    res.status(201).json({ ok: true });
   } catch (err) {
     if (err.code === '23505') return res.status(400).json({ error: 'الباركود مسجل مسبقاً' });
     res.status(500).json({ error: 'خطأ داخلي' });
