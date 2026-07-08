@@ -3147,6 +3147,9 @@ async function getBotKnowledgeText() {
   } catch { return ''; }
 }
 
+// Language restriction — always prepended to every system prompt
+const LANG_INSTRUCTION = 'IMPORTANT: You must respond ONLY in Arabic or English. If the user writes in Arabic, reply in Arabic. If the user writes in English, reply in English. Never use any other language under any circumstances.\n\n';
+
 // Hard safety cap on the combined system prompt sent to Gemini.
 // Gemini 2.0 Flash supports up to 1M tokens context — 20000 chars
 // gives ample room for full product catalogs, knowledge base entries,
@@ -3377,7 +3380,7 @@ app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
   try {
     const { messages = [], system = '', max_tokens = 350 } = req.body;
     const knowledge = await getBotKnowledgeText();
-    const combinedSystem = capSystemContent(system + knowledge);
+    const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledge);
     const cappedTokens = capMaxTokens(max_tokens);
     const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -3428,7 +3431,7 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
   try {
     const { messages = [], system = '', max_tokens = 400 } = req.body;
     const knowledge = await getBotKnowledgeText();
-    const combinedSystem = capSystemContent(system + knowledge);
+    const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledge);
     const cappedTokens = capMaxTokens(max_tokens);
     const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -3454,7 +3457,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
   try {
     const { messages = [], system = '', max_tokens = 400, stream = false } = req.body;
     const knowledge = await getBotKnowledgeText();
-    const combinedSystem = capSystemContent(system + knowledge);
+    const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledge);
     const cappedTokens = capMaxTokens(max_tokens);
     const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
     if (stream) {
