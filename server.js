@@ -3304,7 +3304,7 @@ async function pipeGroqStream(groqResp, res, providerLabel = 'Groq') {
     // {choices:[{delta:{content}}]} — a bare {error} chunk is silently
     // swallowed and the user sees nothing at all. Send both shapes so the
     // failure is always visible instead of a silent empty bubble.
-    const visibleMsg = 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.';
+    const visibleMsg = `عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من ${randomVisitors()} شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.`;
     res.write(`data: ${JSON.stringify({ error: errMsg, choices: [{ delta: { content: visibleMsg }, finish_reason: 'stop' }] })}\r\n\r\n`);
     res.write('data: [DONE]\r\n\r\n');
     return res.end();
@@ -3336,6 +3336,17 @@ async function pipeGroqStream(groqResp, res, providerLabel = 'Groq') {
   res.end();
 }
 
+// Random visitor count for error messages (>300, changes every call)
+const randomVisitors = () => Math.floor(Math.random() * 700) + 301;
+
+// Get best available free text model from live cache
+async function getBestFreeModel() {
+  try {
+    const cache = await fetchFreeModels();
+    return (cache.text && cache.text.length > 0) ? cache.text[0] : 'mistralai/mistral-7b-instruct:free';
+  } catch (_) { return 'mistralai/mistral-7b-instruct:free'; }
+}
+
 // GET /api/ai/test  — diagnostic endpoint
 // Add ?live=1 to force a real API call
 app.get('/api/ai/test', async (req, res) => {
@@ -3346,18 +3357,18 @@ app.get('/api/ai/test', async (req, res) => {
       const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
-        body: JSON.stringify({ model: 'meta-llama/llama-3.1-8b-instruct:free', max_tokens: 20, messages: [{ role: 'user', content: 'قل مرحبا' }] }),
+        body: JSON.stringify({ model: await getBestFreeModel(), max_tokens: 20, messages: [{ role: 'user', content: 'قل مرحبا' }] }),
         signal: AbortSignal.timeout(20000),
       });
       const data = await resp.json();
-      if (data.error) return res.json({ ok: false, model: 'meta-llama/llama-3.1-8b-instruct:free', error: data.error });
+      if (data.error) return res.json({ ok: false, model: await getBestFreeModel(), error: data.error });
       const reply = data.choices?.[0]?.message?.content || '(no content)';
-      return res.json({ ok: true, provider: 'openrouter', model: 'meta-llama/llama-3.1-8b-instruct:free', reply, live: true });
+      return res.json({ ok: true, provider: 'openrouter', model: await getBestFreeModel(), reply, live: true });
     } catch (err) {
       return res.json({ ok: false, error: err.message, live: true });
     }
   }
-  return res.json({ ok: true, provider: 'openrouter', model: 'meta-llama/llama-3.1-8b-instruct:free', keyConfigured: true, note: 'Add ?live=1 to test a real API call' });
+  return res.json({ ok: true, provider: 'openrouter', model: await getBestFreeModel(), keyConfigured: true, note: 'Add ?live=1 to test a real API call' });
 });
 
 
@@ -3373,14 +3384,14 @@ app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
-      body: JSON.stringify({ model: 'meta-llama/llama-3.1-8b-instruct:free', messages: fullMessages, max_tokens: cappedTokens }),
+      body: JSON.stringify({ model: await getBestFreeModel(), messages: fullMessages, max_tokens: cappedTokens }),
       signal: AbortSignal.timeout(30000),
     });
     const data = await resp.json();
     return res.json(data);
   } catch (err) {
     console.error('[AI] fashion-chat error:', err.message);
-    res.status(503).json({ error: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' });
+    res.status(503).json({ error: `عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من ${randomVisitors()} شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.` });
   }
 });
 
@@ -3392,7 +3403,7 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
     const { messages = [], max_tokens = 500 } = req.body;
     const cappedTokens = capMaxTokens(max_tokens);
     const cache = await fetchFreeModels();
-    const visionModel = (cache.vision?.length ? cache.vision[0] : 'meta-llama/llama-3.1-8b-instruct:free');
+    const visionModel = (cache.vision?.length ? cache.vision[0] : await getBestFreeModel());
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
@@ -3403,7 +3414,7 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
     return res.json(data);
   } catch (err) {
     console.error('[AI] fashion-tryon error:', err.message);
-    res.status(503).json({ error: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' });
+    res.status(503).json({ error: `عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من ${randomVisitors()} شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.` });
   }
 });
 
@@ -3424,14 +3435,14 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
-      body: JSON.stringify({ model: 'meta-llama/llama-3.1-8b-instruct:free', messages: fullMessages, max_tokens: cappedTokens, stream: true }),
+      body: JSON.stringify({ model: await getBestFreeModel(), messages: fullMessages, max_tokens: cappedTokens, stream: true }),
       signal: AbortSignal.timeout(30000),
     });
     return pipeGroqStream(resp, res, 'OpenRouter');
   } catch (err) {
     console.error('[AI] stream error:', err.message);
     res.setHeader('Content-Type', 'text/event-stream');
-    res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' }, finish_reason: 'stop' }] }) + '\r\n\r\n');
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: `عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من ${randomVisitors()} شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.` }, finish_reason: 'stop' }] }) + '\r\n\r\n');
     res.write('data: [DONE]\r\n\r\n');
     res.end();
   }
@@ -3451,7 +3462,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
       const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
-        body: JSON.stringify({ model: 'meta-llama/llama-3.1-8b-instruct:free', messages: fullMessages, max_tokens: cappedTokens, stream: true }),
+        body: JSON.stringify({ model: await getBestFreeModel(), messages: fullMessages, max_tokens: cappedTokens, stream: true }),
         signal: AbortSignal.timeout(30000),
       });
       return pipeGroqStream(resp, res, 'OpenRouter');
@@ -3459,14 +3470,14 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
-      body: JSON.stringify({ model: 'meta-llama/llama-3.1-8b-instruct:free', messages: fullMessages, max_tokens: cappedTokens }),
+      body: JSON.stringify({ model: await getBestFreeModel(), messages: fullMessages, max_tokens: cappedTokens }),
       signal: AbortSignal.timeout(30000),
     });
     const data = await resp.json();
     return res.json(data);
   } catch (err) {
     console.error('[AI] stylebot error:', err.message);
-    res.status(503).json({ error: 'عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من 1000 شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.' });
+    res.status(503).json({ error: `عذرًا، هناك تحميل كبير على الموقع 🙏 أكثر من ${randomVisitors()} شخص يتصفح الآن — يرجى المحاولة مرة أخرى بعد لحظات.` });
   }
 });
 
@@ -4480,7 +4491,7 @@ async function main() {
     app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     app.get('/api/healthz', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     // pre-warm AI model list so first user request is fast
-    if (OPENROUTER_KEY) { fetchFreeModels().catch(() => {}); console.log('[AI] OpenRouter enabled — model: meta-llama/llama-3.1-8b-instruct:free'); }
+    if (OPENROUTER_KEY) { fetchFreeModels().catch(() => {}); console.log('[AI] OpenRouter enabled — dynamic free model'); }
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`POS server running on port ${PORT} at ${BASE}`);
       const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
