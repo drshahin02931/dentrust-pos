@@ -1,4 +1,4 @@
-'use strict';
+سع'use strict';
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
@@ -543,6 +543,7 @@ app.get(`${BASE}/api/products/search`, async (req, res) => {
 // Columns for list endpoints — excludes heavy base64 image_url, adds has_image flag
 const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, sale_price,
   expiry_date, category, min_stock, description, variants, section, checkbox_values,
+  is_offer, original_price, is_best_seller,
   dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%')) AS has_image,
   CASE WHEN image_url LIKE 'http%' THEN image_url ELSE NULL END AS image_url`;
 
