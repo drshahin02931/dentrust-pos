@@ -3172,6 +3172,7 @@ let _freeModelCacheAt = 0;
 
 // Stable high-quality free models — always tried first
 const PREFERRED_FREE_MODELS = [
+  'nvidia/nemotron-3-ultra:free',
   'openai/gpt-oss-120b:free',
   'google/gemma-4-31b-it:free',
   'nvidia/nemotron-3-super-120b-a12b:free',
@@ -3213,6 +3214,7 @@ async function fetchFreeModels() {
     console.warn('[AI] fetchFreeModels failed:', e.message, '— using fallback list');
     return {
       text: [
+        'nvidia/nemotron-3-ultra:free',
         'openai/gpt-oss-120b:free',
         'google/gemma-4-31b-it:free',
         'nvidia/nemotron-3-super-120b-a12b:free',
