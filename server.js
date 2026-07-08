@@ -3150,6 +3150,17 @@ async function getBotKnowledgeText() {
   } catch { return ''; }
 }
 
+// Hard safety cap on the combined system prompt sent to Groq. ~4 chars/token,
+// so 16000 chars ≈ 4000 tokens — leaves headroom under the smallest TPM limit
+// we've hit in production (6000 TPM on llama-3.1-8b-instant) for conversation
+// history + the model's own response. Applies no matter who built the prompt
+// (server knowledge injection, client-built catalog, or both concatenated).
+const MAX_SYSTEM_CHARS = 16000;
+function capSystemContent(content) {
+  if (!content || content.length <= MAX_SYSTEM_CHARS) return content;
+  return content.slice(0, MAX_SYSTEM_CHARS) + '\n(تم اختصار باقي القائمة لتوفير المساحة)';
+}
+
 // ── AI – shared helper ────────────────────────────────────────────────────────
 // Dynamic free-model cache — refreshed from OpenRouter every hour
 let _freeModelCache = null;
@@ -3342,7 +3353,13 @@ async function pipeGroqStream(groqResp, res) {
   if (!groqResp.ok) {
     const errBody = await groqResp.json().catch(() => ({}));
     const errMsg = errBody?.error?.message || `Groq error ${groqResp.status}`;
-    res.write(`data: ${JSON.stringify({ error: errMsg })}\r\n\r\n`);
+    console.error(`[Groq] stream HTTP ${groqResp.status} — ${errMsg}`);
+    // Some frontends (denbot widget) only render chunks shaped like
+    // {choices:[{delta:{content}}]} — a bare {error} chunk is silently
+    // swallowed and the user sees nothing at all. Send both shapes so the
+    // failure is always visible instead of a silent empty bubble.
+    const visibleMsg = 'عذرًا، حصل ضغط مؤقت على النظام. برجاء إعادة المحاولة بعد لحظات 🙏';
+    res.write(`data: ${JSON.stringify({ error: errMsg, choices: [{ delta: { content: visibleMsg }, finish_reason: 'stop' }] })}\r\n\r\n`);
     res.write('data: [DONE]\r\n\r\n');
     return res.end();
   }
@@ -3466,13 +3483,19 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
     const knowledge = await getBotKnowledgeText();
     const sysContent = DENTRUST_BOT_SYSTEM + knowledge;
     let patchedMessages = [...messages];
-    if (sysContent) {
-      const sysIdx = patchedMessages.findIndex(m => m.role === 'system');
-      if (sysIdx >= 0) {
-        patchedMessages[sysIdx] = { ...patchedMessages[sysIdx], content: sysContent + '\n' + patchedMessages[sysIdx].content };
-      } else {
-        patchedMessages = [{ role: 'system', content: sysContent }, ...patchedMessages];
-      }
+    const sysIdx = patchedMessages.findIndex(m => m.role === 'system');
+    if (sysIdx >= 0) {
+      // The client (denbot widget) sometimes builds its own system prompt with
+      // a full product catalog fetched straight from Supabase. If we naively
+      // concatenate our own knowledge on top, the combined prompt can exceed
+      // Groq's tokens-per-minute limit even though each half looks fine on its
+      // own — Groq then rejects the request and the widget silently shows
+      // nothing (its stream parser only understands {choices:[...]} chunks).
+      // Cap the *combined* system content so this can never happen again.
+      const combined = sysContent ? sysContent + '\n' + patchedMessages[sysIdx].content : patchedMessages[sysIdx].content;
+      patchedMessages[sysIdx] = { ...patchedMessages[sysIdx], content: capSystemContent(combined) };
+    } else if (sysContent) {
+      patchedMessages = [{ role: 'system', content: capSystemContent(sysContent) }, ...patchedMessages];
     }
     if (GROQ_API_KEY) {
       if (stream) {
@@ -3511,16 +3534,12 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
     const { messages = [], max_tokens = 800, stream = true } = req.body;
     const knowledge = await getBotKnowledgeText();
     let patchedMessages = [...messages];
-    if (knowledge) {
-      const sysIdx = patchedMessages.findIndex(m => m.role === 'system');
-      if (sysIdx >= 0) {
-        patchedMessages[sysIdx] = {
-          ...patchedMessages[sysIdx],
-          content: patchedMessages[sysIdx].content + '\n' + knowledge,
-        };
-      } else {
-        patchedMessages = [{ role: 'system', content: knowledge }, ...patchedMessages];
-      }
+    const sbSysIdx = patchedMessages.findIndex(m => m.role === 'system');
+    if (sbSysIdx >= 0) {
+      const combined = knowledge ? patchedMessages[sbSysIdx].content + '\n' + knowledge : patchedMessages[sbSysIdx].content;
+      patchedMessages[sbSysIdx] = { ...patchedMessages[sbSysIdx], content: capSystemContent(combined) };
+    } else if (knowledge) {
+      patchedMessages = [{ role: 'system', content: capSystemContent(knowledge) }, ...patchedMessages];
     }
     if (GROQ_API_KEY) {
       if (stream) {
