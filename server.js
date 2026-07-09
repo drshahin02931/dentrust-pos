@@ -2250,7 +2250,7 @@ async function syncSaleToSupabase(posCustomerId, posCustomerName, saleId, totalA
     const instapayAmt = parseFloat(splitData?.instapay || 0);
     const { rows: [order] } = await client.query(
       `INSERT INTO orders (customer_name, phone, total_price, payment_method, status, shipping_fee, instapay_amount)
-       VALUES ($1,$2,$3,$4,'completed',0,$5) RETURNING id`,
+       VALUES ($1,$2,$3,$4,'delivered',0,$5) RETURNING id`,
       [custName, phone, totalAmount, paymentMethod, instapayAmt]
     );
     if (!order) return;
