@@ -2240,18 +2240,25 @@ async function syncCustomerToSupabase(posCustomer) {
 async function syncSaleToSupabase(posCustomerId, posCustomerName, saleId, totalAmount, paymentMethod, splitData, items) {
   if (!HAS_WEBSITE_DB || !posCustomerId) return;
   const { rows: [cust] } = await posDb.query(
-    'SELECT name, phone FROM customers WHERE id=$1', [posCustomerId]
+    'SELECT name, phone, city, region, street, building_number, landmark FROM customers WHERE id=$1', [posCustomerId]
   );
   // Fix: لو مفيش تليفون، نستخدم identifier بديل بدل ما نوقف الـ sync
   const phone = cust?.phone?.trim() || `pos_customer_${posCustomerId}`;
   const custName = cust?.name || posCustomerName || 'عميل نقدي';
+  // Fix: أوردرات البيع من الكاشير مفيهاش عنوان توصيل، لكن الجدول محتاج القيم دي موجودة
+  // (حتى لو فاضية) زي بالظبط ما بيحصل لما العميل يطلب من الموقع نفسه
+  const city = cust?.city || '';
+  const region = cust?.region || '';
+  const street = cust?.street || '';
+  const buildingNumber = cust?.building_number || '';
+  const landmark = cust?.landmark || '';
   const client = await dentrustDb.connect();
   try {
     const instapayAmt = parseFloat(splitData?.instapay || 0);
     const { rows: [order] } = await client.query(
-      `INSERT INTO orders (customer_name, phone, total_price, payment_method, status, shipping_fee, instapay_amount)
-       VALUES ($1,$2,$3,$4,'delivered',0,$5) RETURNING id`,
-      [custName, phone, totalAmount, paymentMethod, instapayAmt]
+      `INSERT INTO orders (customer_name, phone, total_price, payment_method, status, shipping_fee, instapay_amount, city, region, street, building_number, landmark)
+       VALUES ($1,$2,$3,$4,'delivered',0,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [custName, phone, totalAmount, paymentMethod, instapayAmt, city, region, street, buildingNumber, landmark]
     );
     if (!order) return;
     for (const item of items) {
