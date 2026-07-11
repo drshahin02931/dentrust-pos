@@ -272,7 +272,7 @@ function renderTable() {
   tbody.innerHTML = toShow.map(inv => {
     const fullyReturned = inv.return_status === 2;
     const payBadge = `<span class="text-xs font-medium px-2.5 py-1 rounded-full ${PAY_COLORS[inv.payment_method]||'bg-gray-100 text-gray-600'}">${PAY_LABELS[inv.payment_method]||inv.payment_method}</span>`;
-    const isOnline = inv.dentrust_order_id || inv.payment_method === 'online';
+    const isOnline = inv.payment_method === 'online';
     const onlineBadge = isOnline ? `<span class="mr-1 text-xs font-bold px-2 py-0.5 rounded-full bg-teal-100 text-teal-700">🌐 أونلاين</span>` : '';
     const canReturnThis = CAN_RETURN && inv.return_status < 2;
     const refundedStrike = inv.total_refunded > 0 ? ' <span class="text-xs text-red-400 font-normal line-through">' + inv.total_amount.toFixed(2) + '</span>' : '';
@@ -311,7 +311,7 @@ async function viewInvoice(id) {
   const data = await res.json();
   const inv = data.invoice; const items = data.items; const returns = data.returns || [];
 
-  const isOnlineInv = inv.dentrust_order_id || inv.payment_method === 'online';
+  const isOnlineInv = inv.payment_method === 'online';
   document.getElementById("modalTitle").innerHTML = `فاتورة رقم #${String(inv.id).padStart(5,'0')} ${isOnlineInv ? '<span class="text-sm font-bold px-2.5 py-1 rounded-full bg-teal-100 text-teal-700">🌐 أونلاين</span>' : ''}`;
   const payBadge = `<span class="text-xs font-medium px-2.5 py-1 rounded-full ${PAY_COLORS[inv.payment_method]||'bg-gray-100 text-gray-600'}">${PAY_LABELS[inv.payment_method]||inv.payment_method}</span>`;
 
