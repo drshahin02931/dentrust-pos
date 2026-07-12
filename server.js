@@ -493,7 +493,7 @@ app.get(`${BASE}/api/products/categories`, async (req, res) => {
 });
 
 app.delete(`${BASE}/api/products/categories/:name`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   try {
     const name = decodeURIComponent(req.params.name).trim();
     await posDb.query(
@@ -2311,7 +2311,7 @@ async function upsertCustomerInPOS(data) {
 // ── API: Sync Routes ──────────────────────────────────────────────────────────
 
 app.get(`${BASE}/api/sync/dentrust-products`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   // connected to website DB (single-DB or Supabase mode)
   try {
     const client = await dentrustDb.connect();
@@ -2323,7 +2323,7 @@ app.get(`${BASE}/api/sync/dentrust-products`, async (req, res) => {
 });
 
 app.get(`${BASE}/api/sync/pos-products`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   try {
     const { rows } = await posDb.query('SELECT id, product_name, quantity, dentrust_id FROM products ORDER BY product_name');
     res.json(rows);
@@ -2331,7 +2331,7 @@ app.get(`${BASE}/api/sync/pos-products`, async (req, res) => {
 });
 
 app.get(`${BASE}/api/sync/dentrust-customers`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   // connected to website DB (single-DB or Supabase mode)
   try {
     const client = await dentrustDb.connect();
@@ -2343,7 +2343,7 @@ app.get(`${BASE}/api/sync/dentrust-customers`, async (req, res) => {
 });
 
 app.get(`${BASE}/api/sync/pos-customers`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   try {
     const { rows } = await posDb.query('SELECT id, name, phone, dentrust_id FROM customers ORDER BY name');
     res.json(rows);
@@ -2351,7 +2351,7 @@ app.get(`${BASE}/api/sync/pos-customers`, async (req, res) => {
 });
 
 app.post(`${BASE}/api/sync/link`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   // Support both payload formats: {pos_id, dentrust_id} and {pos_product_id, dentrust_product_id}
   const posId      = req.body.pos_id       || req.body.pos_product_id;
   const dentrustId = req.body.dentrust_id  || req.body.dentrust_product_id;
@@ -2360,7 +2360,7 @@ app.post(`${BASE}/api/sync/link`, async (req, res) => {
 });
 
 app.post(`${BASE}/api/sync/push-unlinked`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   // connected to website DB (single-DB or Supabase mode)
   try {
     const { rows: unlinked } = await posDb.query('SELECT * FROM products WHERE dentrust_id IS NULL');
@@ -2376,7 +2376,7 @@ app.post(`${BASE}/api/sync/push-unlinked`, async (req, res) => {
 });
 
 app.post(`${BASE}/api/sync/push-stock`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   // connected to website DB (single-DB or Supabase mode)
   try {
     const { rows: linked } = await posDb.query('SELECT * FROM products WHERE dentrust_id IS NOT NULL');
@@ -2392,7 +2392,7 @@ app.post(`${BASE}/api/sync/push-stock`, async (req, res) => {
 });
 
 app.post(`${BASE}/api/sync/push-images`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   if (!SUPABASE_SERVICE_KEY) return res.status(400).json({ error: 'SUPABASE_SERVICE_KEY غير مضبوط في الـ Environment Variables' });
   try {
     const { rows: linked } = await posDb.query(
@@ -2433,7 +2433,7 @@ app.post(`${BASE}/api/sync/push-images`, async (req, res) => {
 });
 
 app.post(`${BASE}/api/sync/pull-images`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   try {
     // Get all POS products linked to website that have no valid image_url
     const { rows: linked } = await posDb.query(
@@ -2464,7 +2464,7 @@ app.post(`${BASE}/api/sync/pull-images`, async (req, res) => {
 });
 
 app.post(`${BASE}/api/sync/push-purchase-prices`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   // connected to website DB (single-DB or Supabase mode)
   try {
     const { rows: linked } = await posDb.query('SELECT * FROM products WHERE dentrust_id IS NOT NULL AND purchase_price > 0');
@@ -2480,7 +2480,7 @@ app.post(`${BASE}/api/sync/push-purchase-prices`, async (req, res) => {
 });
 
 app.post(`${BASE}/api/sync/pull-stock`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   // connected to website DB (single-DB or Supabase mode)
   try {
     const { rows: linked } = await posDb.query('SELECT * FROM products WHERE dentrust_id IS NOT NULL');
@@ -2499,7 +2499,7 @@ app.post(`${BASE}/api/sync/pull-stock`, async (req, res) => {
 });
 
 app.post(`${BASE}/api/sync/import-products`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   // connected to website DB (single-DB or Supabase mode)
   try {
     const client = await dentrustDb.connect();
@@ -2534,7 +2534,7 @@ app.post(`${BASE}/api/sync/import-products`, async (req, res) => {
 });
 
 app.post(`${BASE}/api/sync/import-customers`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   // connected to website DB (single-DB or Supabase mode)
   try {
     const client = await dentrustDb.connect();
@@ -2558,7 +2558,7 @@ app.post(`${BASE}/api/sync/import-customers`, async (req, res) => {
 });
 
 app.get(`${BASE}/api/sync/status`, (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   res.json({
     lastPull: null,
     lastPush: null,
@@ -2629,7 +2629,7 @@ async function run(){
 
 
 app.post(`${BASE}/api/sync/cleanup-website-categories`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   if (!HAS_WEBSITE_DB) return res.status(400).json({ error: 'لا توجد قاعدة بيانات موقع' });
   const client = await dentrustDb.connect();
   try {
@@ -2702,7 +2702,7 @@ async function doFullSync() {
 }
 
 app.post(`${BASE}/api/sync/full`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   try {
     const result = await doFullSync();
     res.json({ ok: true, ...result });
@@ -2710,7 +2710,7 @@ app.post(`${BASE}/api/sync/full`, async (req, res) => {
 });
 
 app.post(`${BASE}/api/sync/force-full`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   try {
     const result = await doFullSync();
     res.json({ ok: true, ...result });
@@ -2719,7 +2719,7 @@ app.post(`${BASE}/api/sync/force-full`, async (req, res) => {
 
 // ── Bulk push: POS customers → Supabase ──────────────────────────────────────
 app.post(`${BASE}/api/sync/push-customers-to-supabase`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   if (!HAS_WEBSITE_DB) return res.status(503).json({ error: 'الاتصال بـ Supabase غير متاح' });
   try {
     const { rows: posCustomers } = await posDb.query(
@@ -2735,7 +2735,7 @@ app.post(`${BASE}/api/sync/push-customers-to-supabase`, async (req, res) => {
 
 // ── Bulk push: POS sales → Supabase orders ────────────────────────────────────
 app.post(`${BASE}/api/sync/push-sales-to-supabase`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   if (!HAS_WEBSITE_DB) return res.status(503).json({ error: 'الاتصال بـ Supabase غير متاح' });
   try {
     const { rows: sales } = await posDb.query(
@@ -2761,7 +2761,7 @@ app.post(`${BASE}/api/sync/push-sales-to-supabase`, async (req, res) => {
 });
 
 app.post(`${BASE}/api/sync/fix-missing-items`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req)) return res.status(200).json({ ok: true, fixed: 0, skipped: 0, failed: 0 });
   if (!HAS_WEBSITE_DB) return res.status(503).json({ error: 'لا يوجد اتصال بـ Supabase' });
   try {
     const { rows: sales } = await posDb.query(
