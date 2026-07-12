@@ -2760,6 +2760,44 @@ app.post(`${BASE}/api/sync/push-sales-to-supabase`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+app.post(`${BASE}/api/sync/fix-missing-items`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!HAS_WEBSITE_DB) return res.status(503).json({ error: 'لا يوجد اتصال بـ Supabase' });
+  try {
+    const { rows: sales } = await posDb.query(
+      `SELECT s.id, s.dentrust_order_id FROM sales s
+       WHERE s.dentrust_order_id IS NOT NULL
+       ORDER BY s.id`
+    );
+    let fixed = 0, skipped = 0, failed = 0;
+    for (const sale of sales) {
+      try {
+        const dtId = parseInt(sale.dentrust_order_id);
+        if (!dtId) { skipped++; continue; }
+        const client = await dentrustDb.connect();
+        try {
+          const { rows: existing } = await client.query(
+            'SELECT id FROM order_items WHERE order_id=$1 LIMIT 1', [dtId]
+          );
+          if (existing.length > 0) { skipped++; continue; }
+          const { rows: items } = await posDb.query(
+            'SELECT product_name, quantity, unit_price FROM sale_items WHERE sale_id=$1', [sale.id]
+          );
+          if (!items.length) { skipped++; continue; }
+          for (const item of items) {
+            await client.query(
+              'INSERT INTO order_items (order_id, product_name, quantity, unit_price) VALUES ($1,$2,$3,$4)',
+              [dtId, item.product_name || 'منتج', item.quantity || 1, item.unit_price || 0]
+            );
+          }
+          fixed++;
+        } finally { client.release(); }
+      } catch (_) { failed++; }
+    }
+    res.json({ ok: true, fixed, skipped, failed });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
 app.post(`${BASE}/api/sync/upsert-customer`, async (req, res) => {
   const d = req.body;
   try {
