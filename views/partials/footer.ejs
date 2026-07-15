@@ -159,13 +159,28 @@
   })();
   </script>
 
-  <!-- لما التاب/التطبيق يتقفل فعليًا (مش مجرد Minimize)، نبلّغ السيرفر يقفل الجلسة فورًا (ويبعت إشعار للمدير لو موظف) -->
+  <!-- لما التطبيق يتقفل فعليًا، نبلّغ السيرفر يقفل الجلسة -->
   <% if (typeof currentUser !== 'undefined' && currentUser) { %>
   <script>
   (function () {
-    // pagehide بيتفعل لما الصفحة/التطبيق يتقفل خالص أو ينتقل بعيد نهائيًا —
-    // عمدًا مش بنستخدم visibilitychange عشان مجرد تصغير التطبيق (Minimize) مايسجّلش خروج
+    // نتابع لو المستخدم بيضغط على لينك داخلي
+    // عشان مانبعتش session/close عند الانتقال بين الصفحات
+    var _goingInternal = false;
+
+    document.addEventListener('click', function (e) {
+      var a = e.target.closest('a[href]');
+      if (!a) return;
+      var href = a.getAttribute('href');
+      // لو اللينك داخلي (يبدأ بـ / أو بنفس الـ origin)
+      if (href && (href.startsWith('/') || href.startsWith(location.origin))) {
+        _goingInternal = true;
+      }
+    });
+
+    // pagehide بيتفعل لما الصفحة تتقفل —
+    // لو كان انتقال داخلي: تجاهل — لو التطبيق اتقفل فعلاً: ابعت session/close
     window.addEventListener('pagehide', function () {
+      if (_goingInternal) { _goingInternal = false; return; }
       try { navigator.sendBeacon('<%= base %>/api/session/close'); } catch (e) {}
     });
   })();
