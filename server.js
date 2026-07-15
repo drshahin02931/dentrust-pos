@@ -13,7 +13,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const bwip = require('bwip-js');
 const webpush = require('web-push');
-const { posDb, dentrustDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
+const { posDb, dentrustDb, sessionDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
 
 const BASE = (process.env.BASE_PATH || '/pos-system').replace(/\/$/, '');
 const PORT = parseInt(process.env.PORT || '5000', 10);
@@ -53,7 +53,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(`${BASE}/static`, express.static(path.join(__dirname, 'static')));
 
 const sessionStore = new PgSession({
-  pool: posDb,
+  pool: sessionDb,
   schemaName: 'pos_data',
   tableName: 'session',
   createTableIfMissing: true,
@@ -395,7 +395,16 @@ app.post(`${BASE}/api/session/close`, async (req, res) => {
   res.status(204).end();
 });
 
-app.get(`${BASE}/sw.js`, (req, res) => { res.setHeader('Service-Worker-Allowed', BASE || '/'); res.type('js').send(''); });
+// كان هنا سيرفر بيرجّع ملف Service Worker فاضي (بدون أي محتوى حقيقي) من مسار الجذر،
+// في حين إن الـ Service Worker الحقيقي (اللي فيه كاش وإشعارات) متسجّل من مسار
+// /static/sw.js في footer.ejs بـ scope='/'. الملفات الثابتة (static) متسجّلة
+// بحد أقصى نطاق (scope) هو المجلد بتاعها ('/static/')، فمحاولة تسجيله بنطاق '/'
+// كانت بترفض من المتصفح (SecurityError). الحل: نخدم نفس ملف sw.js الحقيقي من مسار
+// الجذر مع الهيدر الصحيح، ونغيّر مسار التسجيل في footer.ejs يشاور على هنا.
+app.get(`${BASE}/sw.js`, (req, res) => {
+  res.setHeader('Service-Worker-Allowed', BASE || '/');
+  res.sendFile(path.join(__dirname, 'static', 'sw.js'));
+});
 
 // ── API: Me / Password ───────────────────────────────────────────────────────
 
