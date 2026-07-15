@@ -11,11 +11,19 @@ const POS_SCHEMA = 'pos_data';
 
 const sslConfig = process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false;
 
+// ── Supabase / PgBouncer fix ──────────────────────────────────────────────────
+// Supabase بيستخدم PgBouncer في transaction mode، وده بيمسح أي SET command
+// (زي SET search_path) بين كل query وتانية. الحل الصح هو نحط search_path في
+// الـ connection string نفسه عن طريق options=-csearch_path=...، وده بيتطبق
+// على مستوى الـ connection ومش بيتأثر بـ PgBouncer.
+function withSearchPath(url, schema) {
+  if (!url) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}options=-csearch_path%3D${schema}%2Cpublic`;
+}
+
 // posDb: POS-specific tables under pos_data schema
-const posDb = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig, max: 5, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
-posDb.on('connect', client => {
-  client.query(`SET search_path TO ${POS_SCHEMA}, public`);
-});
+const posDb = new Pool({ connectionString: withSearchPath(DATABASE_URL, POS_SCHEMA), ssl: sslConfig, max: 5, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
 
 // dentrustDb: public schema (products, orders, categories…)
 // نفس قاعدة البيانات — pool منفصل بدون search_path override
@@ -23,16 +31,8 @@ const dentrustDb = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig, ma
 // No search_path override → defaults to public schema ✓
 
 // sessionDb: pool مخصّص لجلسات المستخدمين (تسجيل الدخول) بس، منفصل عن posDb.
-// السبب: أي صفحة بتفتح بتبعت 4-5 طلبات API مرة واحدة، وكل طلب لازم "يقرأ" الجلسة
-// من قاعدة البيانات قبل ما يكمل شغله. لما ده كان بيشارك نفس الـ 5 اتصالات بتاعة
-// posDb مع باقي الاستعلامات التانية، في لحظات الازدحام كانت قراءة الجلسة تفشل
-// (مانفيش اتصال فاضي)، والنظام كان يتعامل مع الفشل ده كـ"مفيش جلسة" فيرجّع 401
-// حتى لو المستخدم مسجّل دخول فعليًا. عزل الجلسات في pool صغير مخصّص ليها يمنع
-// المشكلة دي تمامًا.
-const sessionDb = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
-sessionDb.on('connect', client => {
-  client.query(`SET search_path TO ${POS_SCHEMA}, public`);
-});
+// نفس fix الـ search_path عشان الجلسة تتحفظ وتتقرأ صح في pos_data schema.
+const sessionDb = new Pool({ connectionString: withSearchPath(DATABASE_URL, POS_SCHEMA), ssl: sslConfig, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
 
 const ALL_PERMS = {
   pos: true, inventory: true, expiry: true,
