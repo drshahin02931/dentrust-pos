@@ -118,9 +118,7 @@ function authGuard(req, res, next) {
   }
   // احفظ الصفحة المطلوبة عشان بعد الـ login نرجع ليها
   const dest = req.originalUrl;
-  if (!dest.includes('/login') && !dest.includes('/logout')) {
-    req.session.returnTo = dest;
-  }
+  if (!dest.includes("/login") && !dest.includes("/logout")) { req.session.returnTo = dest; }
   return res.redirect(`${BASE}/login`);
 }
 app.post(`${BASE}/login`, loginLimiter);
@@ -170,8 +168,6 @@ const upload = multer({
 
 app.get([`${BASE}`, `${BASE}/`], (req, res) => {
   if (!hasPerm(req, 'pos')) {
-    // المستخدم مسجل دخول بس مالوش pos permission
-    // روح لأول صفحة متاحة بدل ما تعمل redirect loop لـ /login
     const fallbacks = [
       ['inventory',  `${BASE}/inventory`],
       ['customers',  `${BASE}/customers`],
@@ -182,7 +178,6 @@ app.get([`${BASE}`, `${BASE}/`], (req, res) => {
     for (const [perm, url] of fallbacks) {
       if (hasPerm(req, perm)) return res.redirect(url);
     }
-    // مفيش أي صفحة متاحة — اعمل logout
     return res.redirect(`${BASE}/logout`);
   }
   return renderPage(req, res, 'pos');
@@ -362,7 +357,6 @@ app.post(`${BASE}/login`, async (req, res) => {
     let perms = {};
     try { perms = typeof user.permissions === 'string' ? JSON.parse(user.permissions) : (user.permissions || {}); } catch (_) {}
     if (user.role === 'manager') perms = { ...ALL_PERMS };
-    // احفظ returnTo قبل ما نمسح الـ session القديمة
     const returnTo = req.session.returnTo || null;
     req.session.user_id = user.id;
     req.session.username = user.username;
@@ -383,7 +377,6 @@ app.post(`${BASE}/login`, async (req, res) => {
       if (user.role !== 'manager') {
         sendPushToManagers('🔓 دخول موظف', `${user.username} سجّل دخول للتطبيق`, `${BASE}/`, 'employee-login').catch(() => {});
       }
-      // ارجع للصفحة اللي كان المستخدم رايحلها، وإلا روح للـ homepage
       res.redirect(returnTo || `${BASE}/`);
     });
   } catch (err) {
