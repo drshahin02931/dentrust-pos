@@ -149,7 +149,7 @@
   <script>
   (function () {
     if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('<%= base %>/static/sw.js', { scope: '/pos-system/' })
+    navigator.serviceWorker.register('<%= base %>/static/sw.js', { scope: (base || '') + '/' })
       .then(function (reg) {
         if ('Notification' in window && Notification.permission === 'default') {
           setTimeout(function () { Notification.requestPermission(); }, 3000);
