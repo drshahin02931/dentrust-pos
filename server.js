@@ -4428,7 +4428,7 @@ async function sendPushToAll(title, body, url = null, tag = 'dentrust-notif') {
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
   try {
     const { rows: subs } = await posDb.query('SELECT * FROM push_subscriptions');
-    const payload = JSON.stringify({ title, body, icon: '/pos-system/static/icon-192.png', badge: '/pos-system/static/icon-192.png', tag, url });
+    const payload = JSON.stringify({ title, body, icon: `${BASE}/static/icon-192.png`, badge: `${BASE}/static/icon-192.png`, tag, url });
     const results = await Promise.allSettled(
       subs.map(sub => {
         const subscription = { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } };
@@ -4454,7 +4454,7 @@ async function sendLowStockPush(lowStockItems) {
   const names = lowStockItems.map(i => `${i.name} (${i.qty}/${i.min})`).join('، ');
   const title = `⚠️ مخزون منخفض — ${lowStockItems.length} منتج`;
   const body = names.length > 120 ? names.slice(0, 117) + '...' : names;
-  await sendPushToAll(title, body, '/pos-system/inventory', 'low-stock');
+  await sendPushToAll(title, body, `${BASE}/inventory`, 'low-stock');
 }
 
 // GET /api/push/vapid-public-key  — returns public VAPID key to client (open, no auth needed)
@@ -4496,7 +4496,7 @@ app.post(`${BASE}/api/push/test`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
   if (!VAPID_PUBLIC_KEY) return res.status(503).json({ error: 'Push notifications غير مفعّلة' });
   try {
-    await sendPushToAll('🔔 اختبار الإشعارات', 'إشعارات الـ Push تعمل بنجاح! ✅', '/pos-system/', 'test-notif');
+    await sendPushToAll('🔔 اختبار الإشعارات', 'إشعارات الـ Push تعمل بنجاح! ✅', `${BASE}/`, 'test-notif');
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
