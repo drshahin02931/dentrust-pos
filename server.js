@@ -2255,19 +2255,36 @@ async function syncSaleToSupabase(posCustomerId, posCustomerName, saleId, totalA
   const client = await dentrustDb.connect();
   try {
     const instapayAmt = parseFloat(splitData?.instapay || 0);
+    await client.query('BEGIN');
     const { rows: [order] } = await client.query(
       `INSERT INTO orders (customer_name, phone, total_price, payment_method, status, shipping_fee, instapay_amount, city, region, street, building_number, landmark)
        VALUES ($1,$2,$3,$4,'delivered',0,$5,$6,$7,$8,$9,$10) RETURNING id`,
       [custName, phone, totalAmount, paymentMethod, instapayAmt, city, region, street, buildingNumber, landmark]
     );
-    if (!order) return;
+    if (!order) { await client.query('ROLLBACK'); return; }
+    // Fix: كانت أخطاء إدراج المنتجات هنا بتُبلَع بصمت (catch فاضي)، فكان
+    // ينشأ الطلب بسعره الصحيح لكن بدون منتجات بشكل نهائي بدون أي تنبيه.
+    // دلوقتي: أي خطأ في إدراج أي منتج يفشّل العملية كاملة (rollback) ويترفع
+    // الخطأ لفوق، عشان الطلب يتحفظ في sync_queue ويُعاد المحاولة تلقائيًا
+    // بدل ما يفضل طلب ناقص المنتجات للأبد.
     for (const item of items) {
       await client.query(
-        'INSERT INTO order_items (order_id, product_name, quantity, unit_price) VALUES ($1,$2,$3,$4)',
-        [order.id, item.product_name || item.product_name, item.quantity, item.unit_price]
-      ).catch(() => {});
+        'INSERT INTO order_items (order_id, product_name, quantity, unit_price, selected_option) VALUES ($1,$2,$3,$4,$5)',
+        [
+          order.id,
+          item.product_name || 'منتج',
+          item.quantity || 1,
+          item.unit_price || 0,
+          item.selected_option || item.selectedOption || item._checkbox || null,
+        ]
+      );
     }
+    await client.query('COMMIT');
     await posDb.query('UPDATE sales SET dentrust_order_id=$1 WHERE id=$2', [String(order.id), saleId]).catch(() => {});
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[syncSaleToSupabase] failed, will retry via sync_queue:', err.message);
+    throw err;
   } finally {
     client.release();
   }
@@ -2817,6 +2834,45 @@ app.post(`${BASE}/api/sync/upsert-customer`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+// ── Safety net: guarantee order_items are saved on the website DB ───────────
+// The website (Hostinger/React) writes the order itself directly to Supabase
+// on checkout, then calls this endpoint with the same items as a courtesy
+// notification for the POS. If the website's own order_items insert silently
+// failed (e.g. blocked by a Supabase RLS policy, a dropped request, etc.) the
+// order would otherwise be left with a price but no items — exactly the "my
+// orders" bug. This function re-checks and backfills order_items using the
+// POS server's direct (RLS-bypassing) Postgres connection, so the order is
+// always complete regardless of what happened on the frontend.
+async function ensureOrderItemsSaved(dentrustOrderId, items) {
+  if (!HAS_WEBSITE_DB || !dentrustOrderId || !items || !items.length) return;
+  const orderId = parseInt(dentrustOrderId, 10);
+  if (!orderId) return;
+  const client = await dentrustDb.connect();
+  try {
+    const { rows: existing } = await client.query(
+      'SELECT id FROM order_items WHERE order_id=$1 LIMIT 1', [orderId]
+    );
+    if (existing.length > 0) return; // already saved correctly, nothing to do
+    for (const item of items) {
+      await client.query(
+        'INSERT INTO order_items (order_id, product_id, product_name, quantity, unit_price, selected_option) VALUES ($1,$2,$3,$4,$5,$6)',
+        [
+          orderId,
+          item.product_id || item.productId || null,
+          item.product_name || item.name || 'منتج',
+          item.quantity || 1,
+          item.unit_price || 0,
+          item.selected_option || item.selectedOption || null,
+        ]
+      );
+    }
+  } catch (err) {
+    console.error('[ensureOrderItemsSaved] failed to backfill order_items for order', dentrustOrderId, err.message);
+  } finally {
+    client.release();
+  }
+}
+
 app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
   const d = req.body;
   try {
@@ -2856,6 +2912,9 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
       dentrust_id: d.dentrust_customer_id,
     });
     const items = d.items || [];
+    // Safety net — make sure the order actually has its items saved on the
+    // website DB, regardless of what happened on the frontend checkout call.
+    await ensureOrderItemsSaved(d.dentrust_order_id, items);
     let total = parseFloat(d.total_amount || d.total || 0);
     if (!total && items.length) total = items.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
     const onlineDiscount = d.discount_amount != null && d.discount_amount !== '' ? parseFloat(d.discount_amount) : 0;
