@@ -346,14 +346,23 @@ app.post(`${BASE}/login`, async (req, res) => {
     req.session.username = user.username;
     req.session.role = user.role;
     req.session.permissions = perms;
-    await posDb.query(
-      'INSERT INTO user_sessions (user_id, ip_address) VALUES ($1, $2)',
-      [user.id, req.ip]
-    ).catch(() => {});
-    if (user.role !== 'manager') {
-      sendPushToManagers('🔓 دخول موظف', `${user.username} سجّل دخول للتطبيق`, `${BASE}/`, 'employee-login').catch(() => {});
-    }
-    res.redirect(`${BASE}/`);
+    // لازم نستنى الجلسة تتحفظ في قاعدة البيانات الأول، وبعدين نعمل redirect —
+    // لو عملنا redirect على طول، الصفحة الجديدة بتفتح قبل ما الجلسة تتسجل،
+    // فبتلاقي "مفيش جلسة" وبتحوّل المستخدم لصفحة تسجيل الدخول تاني.
+    req.session.save(async (saveErr) => {
+      if (saveErr) {
+        console.error('[login] session save error:', saveErr);
+        return res.render('login', { base: BASE, error: 'خطأ في حفظ الجلسة، حاول مرة أخرى' });
+      }
+      await posDb.query(
+        'INSERT INTO user_sessions (user_id, ip_address) VALUES ($1, $2)',
+        [user.id, req.ip]
+      ).catch(() => {});
+      if (user.role !== 'manager') {
+        sendPushToManagers('🔓 دخول موظف', `${user.username} سجّل دخول للتطبيق`, `${BASE}/`, 'employee-login').catch(() => {});
+      }
+      res.redirect(`${BASE}/`);
+    });
   } catch (err) {
     console.error(err);
     res.render('login', { base: BASE, error: 'خطأ في الخادم' });
