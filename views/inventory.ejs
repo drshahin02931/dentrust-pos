@@ -1,7 +1,7 @@
 <%- include('partials/header', Object.assign({pageTitle: 'إدارة المخزون'}, locals)) %>
 <div class="space-y-6">
   <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-bold text-gray-800" data-ar="📦 إدارة المخزون" data-en="📦 Inventory">📦 إدارة المخزون</h1>
+    <h1 class="text-2xl font-bold text-gray-800" data-ar="📦 إدارة المخزون" data-en="📦 Inventory">📦 إدارة المخزون</h1>ِِِ
     <button onclick="openModal()" class="bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-blue-800 shadow" data-ar="+ إضافة منتج" data-en="+ Add Product">+ إضافة منتج</button>
   </div>
 
@@ -74,7 +74,8 @@
     <table class="w-full text-sm">
       <thead class="bg-gray-50 border-b">
         <tr class="text-right text-gray-600 font-semibold">
-          <th class="px-4 py-3">المنتج</th>
+          <th class="px-4 py-3">الصورة</th>
+        <th class="px-4 py-3">المنتج</th>
           <th class="px-4 py-3">الفئة</th>
           <th class="px-4 py-3">الباركود</th>
           <th class="px-4 py-3">الكمية</th>
@@ -338,7 +339,12 @@ function renderTable(products) {
     const minStockCell = minStock > 0
       ? `<span class="text-xs font-semibold ${isLow ? 'text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full' : 'text-gray-500'}">${minStock}</span>`
       : `<span class="text-gray-300">—</span>`;
+    const thumbSrc = p.image_url ? p.image_url : (p.has_image ? `<%= base %>/api/products/${p.id}/image` : null);
+    const thumbCell = thumbSrc
+      ? `<img src="${thumbSrc}" style="width:2.75rem;height:2.75rem;object-fit:cover;border-radius:0.5rem;" onerror="this.style.display='none'"/>`
+      : `<div style="width:2.75rem;height:2.75rem;border-radius:0.5rem;" class="bg-gray-100 flex items-center justify-center text-gray-300 text-xs">—</div>`;
     return `<tr class="hover:bg-gray-50 ${rowBg}">
+      <td class="px-4 py-3">${thumbCell}</td>
       <td class="px-4 py-3 font-medium text-gray-800">${p.product_name}${p.dentrust_id ? ' <span class="text-xs text-blue-400" title="مرتبط بـ DenTrust">🔗</span>' : ''}${isLow && !isOut ? ' <span class="text-xs text-orange-500">⚠️</span>' : ''}${isOut ? ' <span class="text-xs text-red-500">🚫</span>' : ''}</td>
       <td class="px-4 py-3"><span class="text-xs ${p.category ? 'bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium' : 'text-gray-300'}">${p.category || '—'}</span></td>
       <td class="px-4 py-3 font-mono text-gray-500 text-xs">${p.barcode || '—'}</td>
