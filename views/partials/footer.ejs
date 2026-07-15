@@ -159,5 +159,18 @@
   })();
   </script>
 
+  <!-- لما التاب/التطبيق يتقفل فعليًا (مش مجرد Minimize)، نبلّغ السيرفر يقفل الجلسة فورًا (ويبعت إشعار للمدير لو موظف) -->
+  <% if (typeof currentUser !== 'undefined' && currentUser) { %>
+  <script>
+  (function () {
+    // pagehide بيتفعل لما الصفحة/التطبيق يتقفل خالص أو ينتقل بعيد نهائيًا —
+    // عمدًا مش بنستخدم visibilitychange عشان مجرد تصغير التطبيق (Minimize) مايسجّلش خروج
+    window.addEventListener('pagehide', function () {
+      try { navigator.sendBeacon('<%= base %>/api/session/close'); } catch (e) {}
+    });
+  })();
+  </script>
+  <% } %>
+
 </body>
 </html>
