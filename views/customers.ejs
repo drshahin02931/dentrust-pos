@@ -206,8 +206,13 @@ let currentTab = 'orders';
 let _debtorsOnly = false;
 
 // ── Load customers ────────────────────────────────────────────────────────────
+// لو الجلسة انتهت أو مش موجودة، السيرفر بيرجع 401 (JSON) — هنا بنتعامل معاه
+// بإعادة تحويل نظيفة لصفحة تسجيل الدخول، بدل ما نحاول نعمل res.json() على
+// رد غير متوقع ونكسر الصفحة كلها.
 async function loadCustomers() {
   const res = await fetch(`${BASE}/api/customers`);
+  if (res.status === 401) { window.location.href = `${BASE}/login`; return; }
+  if (!res.ok) { console.error('فشل تحميل العملاء:', res.status); return; }
   allCustomers = await res.json();
   renderCustomers(allCustomers);
 }
