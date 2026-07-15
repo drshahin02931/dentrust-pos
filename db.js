@@ -22,6 +22,18 @@ posDb.on('connect', client => {
 const dentrustDb = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
 // No search_path override → defaults to public schema ✓
 
+// sessionDb: pool مخصّص لجلسات المستخدمين (تسجيل الدخول) بس، منفصل عن posDb.
+// السبب: أي صفحة بتفتح بتبعت 4-5 طلبات API مرة واحدة، وكل طلب لازم "يقرأ" الجلسة
+// من قاعدة البيانات قبل ما يكمل شغله. لما ده كان بيشارك نفس الـ 5 اتصالات بتاعة
+// posDb مع باقي الاستعلامات التانية، في لحظات الازدحام كانت قراءة الجلسة تفشل
+// (مانفيش اتصال فاضي)، والنظام كان يتعامل مع الفشل ده كـ"مفيش جلسة" فيرجّع 401
+// حتى لو المستخدم مسجّل دخول فعليًا. عزل الجلسات في pool صغير مخصّص ليها يمنع
+// المشكلة دي تمامًا.
+const sessionDb = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
+sessionDb.on('connect', client => {
+  client.query(`SET search_path TO ${POS_SCHEMA}, public`);
+});
+
 const ALL_PERMS = {
   pos: true, inventory: true, expiry: true,
   customers: true, accounting: true, invoices: true,
@@ -637,7 +649,7 @@ async function getSettings() {
 }
 
 module.exports = {
-  posDb, dentrustDb,
+  posDb, dentrustDb, sessionDb,
   initDb, seedManager,
   verifyPassword, hashPassword,
   getSettings,
