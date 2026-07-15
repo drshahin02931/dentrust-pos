@@ -65,7 +65,13 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   // لا يوجد maxAge عمدًا — الكوكي بيبقى "session cookie" فبيتمسح لما المتصفح/التطبيق يتقفل خالص
-  cookie: { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' },
+  // secure: 'auto' (بدل ما يكون ثابت على NODE_ENV==='production') يخلي express-session
+  // يقرر لكل طلب لوحده بالاعتماد على req.secure (اللي بيتحدد صح لو trust proxy مضبوط،
+  // وهو مضبوط تحت). القيمة الثابتة (true دايمًا في production) كانت بتخلي الكوكي "Secure"
+  // حتى لو الطلب الحقيقي اتقرا كـ http من جوه التطبيق (مثلاً لو فيه Proxy/CDN قدام الموقع
+  // مش بيبعت X-Forwarded-Proto صحيح) — والمتصفح ساعتها يرفض يخزّن أو يبعت الكوكي خالص،
+  // فالجلسة تضيع فورًا وتحتاج تسجيل دخول مع كل رفرش.
+  cookie: { httpOnly: true, sameSite: 'lax', secure: 'auto' },
 }));
 
 // ── Rate Limiters ─────────────────────────────────────────────────────────────
@@ -96,7 +102,14 @@ function authGuard(req, res, next) {
   if (OPEN_PATHS.has(req.originalUrl.split('?')[0])) return next();
   if (OPEN_API.some(a => p.endsWith(a) || p.includes(a))) return next();
   if (p.startsWith(`${BASE}/static/`) || p.includes('/static/')) return next();
-  if (req.xhr || req.headers.accept?.includes('application/json')) {
+  // أي طلب لمسار /api يعتبر طلب بيانات (fetch) مش صفحة — لازم يرجع JSON 401
+  // وليس ريدايركت لصفحة الـ HTML بتاعة /login. قبل كذا كان بيعتمد على
+  // req.xhr / Accept header اللي fetch() العادي مبيبعتهاش، فكان أي انقطاع
+  // بسيط في الجلسة يرجّع صفحة /login (HTML) كرد على fetch، والكود اللي في
+  // الواجهة كان بيحاول يعمل res.json() عليها فيكسر الصفحة بالكامل (مثال:
+  // صفحة العملاء).
+  const isApiPath = p.startsWith(`${BASE}/api`) || p.startsWith('/api');
+  if (isApiPath || req.xhr || req.headers.accept?.includes('application/json')) {
     return res.status(401).json({ error: 'غير مصرح' });
   }
   return res.redirect(`${BASE}/login`);
@@ -156,6 +169,7 @@ app.get(`${BASE}/inventory`, (req, res) => {
 });
 app.get(`${BASE}/customers`, (req, res) => {
   if (!hasPerm(req, 'customers')) return res.redirect(`${BASE}/`);
+  res.set('Cache-Control', 'no-store');
   return renderPage(req, res, 'customers');
 });
 app.get(`${BASE}/accounting`, (req, res) => {
