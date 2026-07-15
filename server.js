@@ -64,7 +64,8 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'pos-dev-secret-key-2024',
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 30 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' },
+  // لا يوجد maxAge عمدًا — الكوكي بيبقى "session cookie" فبيتمسح لما المتصفح/التطبيق يتقفل خالص
+  cookie: { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' },
 }));
 
 // ── Rate Limiters ─────────────────────────────────────────────────────────────
@@ -331,6 +332,9 @@ app.post(`${BASE}/login`, async (req, res) => {
       'INSERT INTO user_sessions (user_id, ip_address) VALUES ($1, $2)',
       [user.id, req.ip]
     ).catch(() => {});
+    if (user.role !== 'manager') {
+      sendPushToManagers('🔓 دخول موظف', `${user.username} سجّل دخول للتطبيق`, `${BASE}/`, 'employee-login').catch(() => {});
+    }
     res.redirect(`${BASE}/`);
   } catch (err) {
     console.error(err);
@@ -340,12 +344,37 @@ app.post(`${BASE}/login`, async (req, res) => {
 
 app.get(`${BASE}/logout`, async (req, res) => {
   if (req.session?.user_id) {
+    const wasManager = req.session.role === 'manager';
+    const uname = req.session.username;
     await posDb.query(
       "UPDATE user_sessions SET logout_at=NOW()::text WHERE user_id=$1 AND logout_at IS NULL",
       [req.session.user_id]
     ).catch(() => {});
+    if (!wasManager) {
+      sendPushToManagers('🔒 خروج موظف', `${uname} سجّل خروج من التطبيق`, `${BASE}/`, 'employee-logout').catch(() => {});
+    }
   }
   req.session.destroy(() => res.redirect(`${BASE}/login`));
+});
+
+// POST — بيتبعت تلقائيًا من المتصفح لما الموظف يقفل التاب أو التطبيق (حتى لو مضغطش زر خروج)
+// بيقفل الجلسة فورًا من السيرفر، وبيبلّغ المدير لو اللي قفل مش مدير
+app.post(`${BASE}/api/session/close`, async (req, res) => {
+  try {
+    if (req.session?.user_id) {
+      const wasManager = req.session.role === 'manager';
+      const uname = req.session.username;
+      await posDb.query(
+        "UPDATE user_sessions SET logout_at=NOW()::text WHERE user_id=$1 AND logout_at IS NULL",
+        [req.session.user_id]
+      ).catch(() => {});
+      if (!wasManager) {
+        sendPushToManagers('🔒 خروج موظف', `${uname} قفل التطبيق`, `${BASE}/`, 'employee-close').catch(() => {});
+      }
+      req.session.destroy(() => {});
+    }
+  } catch (_) {}
+  res.status(204).end();
 });
 
 app.get(`${BASE}/sw.js`, (req, res) => { res.setHeader('Service-Worker-Allowed', BASE || '/'); res.type('js').send(''); });
@@ -593,6 +622,10 @@ app.post(`${BASE}/api/products`, async (req, res) => {
        d.category || null, parseInt(d.min_stock || 0, 10),
        d.description || null, variantsJson, d.section || 'dental', cbJson]
     );
+    // بيرفع صورة المنتج الجديد (لو موجودة) وبينشئه على الموقع تلقائيًا
+    if (HAS_WEBSITE_DB) {
+      syncNewProductToDentrust(ins.id, d).catch(err => console.error('[sync new product]', err.message));
+    }
     res.status(201).json({ ok: true });
   } catch (err) {
     console.error('[POST /api/products]', err.message, err.stack);
@@ -4457,6 +4490,53 @@ async function sendLowStockPush(lowStockItems) {
   await sendPushToAll(title, body, `${BASE}/inventory`, 'low-stock');
 }
 
+// Helper: send push only to devices belonging to managers
+async function sendPushToManagers(title, body, url = null, tag = 'dentrust-notif') {
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  try {
+    const { rows: subs } = await posDb.query(
+      `SELECT ps.* FROM push_subscriptions ps
+       JOIN users u ON u.id = ps.user_id
+       WHERE u.role = 'manager'`
+    );
+    if (!subs.length) return;
+    const payload = JSON.stringify({ title, body, icon: `${BASE}/static/icon-192.png`, badge: `${BASE}/static/icon-192.png`, tag, url });
+    const results = await Promise.allSettled(
+      subs.map(sub => {
+        const subscription = { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } };
+        return webpush.sendNotification(subscription, payload).catch(async err => {
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            await posDb.query('DELETE FROM push_subscriptions WHERE endpoint=$1', [sub.endpoint]).catch(() => {});
+          }
+          throw err;
+        });
+      })
+    );
+    const ok = results.filter(r => r.status === 'fulfilled').length;
+    console.log(`[Push] Sent to ${ok}/${subs.length} manager devices`);
+  } catch (err) {
+    console.error('[Push] sendPushToManagers error:', err.message);
+  }
+}
+
+// Helper: check products nearing expiry (خلال 3 شهور) and push-notify everيone (مثل تنبيه المخزون المنخفض)
+async function checkExpiryAndNotify() {
+  try {
+    const { rows } = await posDb.query(
+      `SELECT product_name, expiry_date FROM products
+       WHERE expiry_date IS NOT NULL AND expiry_date::date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '3 months'
+       ORDER BY expiry_date`
+    );
+    if (!rows.length) return;
+    const names = rows.map(r => `${r.product_name} (${String(r.expiry_date).substring(0, 10)})`).join('، ');
+    const title = `⏳ منتجات هتنتهي خلال 3 شهور — ${rows.length} منتج`;
+    const body = names.length > 120 ? names.slice(0, 117) + '...' : names;
+    await sendPushToAll(title, body, `${BASE}/expiry`, 'expiry-alert');
+  } catch (err) {
+    console.error('[Expiry Push] error:', err.message);
+  }
+}
+
 // GET /api/push/vapid-public-key  — returns public VAPID key to client (open, no auth needed)
 app.get(`${BASE}/api/push/vapid-public-key`, (req, res) => {
   if (!VAPID_PUBLIC_KEY) return res.status(503).json({ error: 'Push notifications not configured on server' });
@@ -4595,6 +4675,9 @@ async function main() {
         }
       } catch (_) {}
     }, 5 * 60 * 1000); // كل 5 دقايق
+
+    // ── تنبيه انتهاء الصلاحية: يشتغل يوميًا الساعة 8 الصبح (توقيت السيرفر) ──
+    cron.schedule('0 8 * * *', () => { checkExpiryAndNotify().catch(() => {}); });
 
     app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     app.get('/api/healthz', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
