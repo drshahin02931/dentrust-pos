@@ -51,6 +51,7 @@ app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(`${BASE}/static`, express.static(path.join(__dirname, 'static')));
+app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'static', 'apple-touch-icon.png')));
 
 const sessionStore = new PgSession({
   pool: sessionDb,
