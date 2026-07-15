@@ -5,12 +5,12 @@
    • Push notifications
 ═══════════════════════════════════════════════ */
 
-const CACHE = 'dentrust-pos-v6';
+const CACHE = 'dentrust-pos-v7';
 const STATIC_ASSETS = [
-  '/pos-system/',
-  '/pos-system/static/manifest.json',
-  '/pos-system/static/icon-192.png',
-  '/pos-system/static/icon-512.png',
+  '/',
+  '/static/manifest.json',
+  '/static/icon-192.png',
+  '/static/icon-512.png',
 ];
 
 /* ── Install ── */
@@ -68,7 +68,7 @@ self.addEventListener('fetch', e => {
 
 /* ── Push Notifications ── */
 self.addEventListener('push', e => {
-  let data = { title: 'DenTrust POS', body: 'إشعار جديد', icon: '/pos-system/static/icon-192.png', badge: '/pos-system/static/icon-192.png', tag: 'dentrust-notif' };
+  let data = { title: 'DenTrust POS', body: 'إشعار جديد', icon: '/static/icon-192.png', badge: '/static/icon-192.png', tag: 'dentrust-notif' };
   try {
     const d = e.data ? e.data.json() : {};
     data = Object.assign(data, d);
@@ -77,8 +77,8 @@ self.addEventListener('push', e => {
   e.waitUntil(
     self.registration.showNotification(data.title, {
       body:    data.body,
-      icon:    data.icon    || '/pos-system/static/icon-192.png',
-      badge:   data.badge   || '/pos-system/static/icon-192.png',
+      icon:    data.icon    || '/static/icon-192.png',
+      badge:   data.badge   || '/static/icon-192.png',
       tag:     data.tag     || 'dentrust-notif',
       data:    data.url ? { url: data.url } : {},
       vibrate: [200, 100, 200],
@@ -90,11 +90,11 @@ self.addEventListener('push', e => {
 /* ── Notification click → open URL ── */
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  const url = (e.notification.data && e.notification.data.url) || '/pos-system/';
+  const url = (e.notification.data && e.notification.data.url) || '/';
   e.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
       for (const c of list) {
-        if (c.url.includes('/pos-system') && 'focus' in c) return c.focus();
+        if (c.url.startsWith(self.location.origin) && 'focus' in c) return c.focus();
       }
       return clients.openWindow(url);
     })
