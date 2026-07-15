@@ -2,8 +2,8 @@
   "name": "DenTrust POS",
   "short_name": "DenTrust",
   "description": "نظام نقطة البيع الخاص بـ DenTrust",
-  "start_url": "/pos-system/",
-  "scope": "/pos-system/",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#1d4ed8",
@@ -12,13 +12,13 @@
   "dir": "rtl",
   "icons": [
     {
-      "src": "/pos-system/static/icon-192.png",
+      "src": "/static/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/pos-system/static/icon-512.png",
+      "src": "/static/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
@@ -27,12 +27,12 @@
   "shortcuts": [
     {
       "name": "البيع",
-      "url": "/pos-system/",
+      "url": "/",
       "description": "فتح نقطة البيع"
     },
     {
       "name": "المخزون",
-      "url": "/pos-system/inventory",
+      "url": "/inventory",
       "description": "إدارة المخزون"
     }
   ]
