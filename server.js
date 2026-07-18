@@ -625,10 +625,11 @@ app.get(`${BASE}/api/products/search`, async (req, res) => {
 const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, sale_price,
   expiry_date, category, min_stock, description, variants, section, checkbox_values,
   is_offer, original_price, is_best_seller,
-  dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%')) AS has_image,
+  dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image,
   CASE
     WHEN image_url LIKE 'http%' THEN image_url
     WHEN image_url LIKE '/objects/%' THEN 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public' || image_url
+    WHEN image_url LIKE 'objects/%'  THEN 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/' || image_url
     ELSE NULL
   END AS image_url`;
 
@@ -654,6 +655,13 @@ app.get(`${BASE}/api/products/:pid/image`, async (req, res) => {
     const { rows: [p] } = await posDb.query('SELECT image_url FROM products WHERE id=$1', [req.params.pid]);
     if (!p?.image_url) return res.status(404).end();
     if (p.image_url.startsWith('http')) return res.redirect(p.image_url);
+    // Convert relative Supabase storage paths to full public URLs
+    if (p.image_url.startsWith('/objects/')) {
+      return res.redirect('https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public' + p.image_url);
+    }
+    if (p.image_url.startsWith('objects/')) {
+      return res.redirect('https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/' + p.image_url);
+    }
     // Parse base64 data URL: data:<mime>;base64,<data>
     const m = p.image_url.match(/^data:([^;]+);base64,(.+)$/);
     if (!m) return res.status(404).end();
@@ -701,6 +709,12 @@ app.get(`${BASE}/api/products/:pid`, async (req, res) => {
   try {
     const { rows: [p] } = await posDb.query('SELECT * FROM products WHERE id=$1', [req.params.pid]);
     if (!p) return res.status(404).json({ error: 'المنتج غير موجود' });
+    // Convert relative Supabase storage paths to full public URLs
+    if (p.image_url && p.image_url.startsWith('/objects/')) {
+      p.image_url = 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public' + p.image_url;
+    } else if (p.image_url && p.image_url.startsWith('objects/')) {
+      p.image_url = 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/' + p.image_url;
+    }
     res.json(p);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
@@ -3299,6 +3313,14 @@ app.get('/api/products', webCors, async (req, res) => {
          LEFT JOIN categories c ON c.id = p.category_id
          ORDER BY p.name`
       );
+      // Convert relative Supabase storage paths to full public URLs
+      for (const row of rows) {
+        if (row.image_url && row.image_url.startsWith('/objects/')) {
+          row.image_url = 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public' + row.image_url;
+        } else if (row.image_url && row.image_url.startsWith('objects/')) {
+          row.image_url = 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/' + row.image_url;
+        }
+      }
       cacheSet('site_products', rows, 30000);
       res.json(rows);
     } finally { client.release(); }
