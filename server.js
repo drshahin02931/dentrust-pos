@@ -626,7 +626,11 @@ const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, 
   expiry_date, category, min_stock, description, variants, section, checkbox_values,
   is_offer, original_price, is_best_seller,
   dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%')) AS has_image,
-  CASE WHEN image_url LIKE 'http%' THEN image_url ELSE NULL END AS image_url`;
+  CASE
+    WHEN image_url LIKE 'http%' THEN image_url
+    WHEN image_url LIKE '/objects/%' THEN 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public' || image_url
+    ELSE NULL
+  END AS image_url`;
 
 app.get(`${BASE}/api/products`, async (req, res) => {
   try {
