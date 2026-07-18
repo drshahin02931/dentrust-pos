@@ -539,9 +539,8 @@ app.post(`${BASE}/api/upload-image`, upload.single('file'), async (req, res) => 
       }
     } catch (_) {}
   }
-  // Fallback: base64 data-URL (no Supabase key configured)
-  const dataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
-  res.json({ ok: true, url: dataUrl });
+  // No Supabase key → refuse (no base64 fallback)
+  res.status(500).json({ ok: false, error: 'رفع الصور غير متاح — تحقق من إعداد Supabase' });
 });
 
 // ── API: Products ─────────────────────────────────────────────────────────────
@@ -666,20 +665,27 @@ app.post(`${BASE}/api/products`, async (req, res) => {
   try {
     const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
     const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
+    const mainPhoto = (d.photos && d.photos[0]) || d.image_url || null;
     const { rows: [ins] } = await posDb.query(
       `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
       [d.barcode || null, d.product_name, d.quantity || 0,
        d.purchase_price || 0, d.sale_price || 0,
-       d.expiry_date || null, d.image_url || null,
+       d.expiry_date || null, mainPhoto,
        d.category || null, parseInt(d.min_stock || 0, 10),
        d.description || null, variantsJson, d.section || 'dental', cbJson]
     );
+    // حفظ كل الصور (حتى 5) مباشرة في public.products.photos
+    if (d.photos && d.photos.length > 0) {
+      posDb.query('UPDATE public.products SET photos=$1 WHERE id=$2',
+        [d.photos.slice(0, 5), ins.id]).catch(() => {});
+    }
     // بيرفع صورة المنتج الجديد (لو موجودة) وبينشئه على الموقع تلقائيًا
     if (HAS_WEBSITE_DB) {
-      syncNewProductToDentrust(ins.id, d).catch(err => console.error('[sync new product]', err.message));
+      syncNewProductToDentrust(ins.id, { ...d, image_url: mainPhoto })
+        .catch(err => console.error('[sync new product]', err.message));
     }
-    res.status(201).json({ ok: true });
+    res.status(201).json({ ok: true, id: ins.id });
   } catch (err) {
     console.error('[POST /api/products]', err.message, err.stack);
     if (err.code === '23505') return res.status(400).json({ error: 'الباركود مسجل مسبقاً' });
@@ -693,6 +699,38 @@ app.get(`${BASE}/api/products/:pid`, async (req, res) => {
     if (!p) return res.status(404).json({ error: 'المنتج غير موجود' });
     res.json(p);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── صور المنتج (حتى 5) ────────────────────────────────────────────────────────
+app.get(`${BASE}/api/products/:pid/photos`, async (req, res) => {
+  try {
+    const { rows: [p] } = await posDb.query(
+      'SELECT photos FROM public.products WHERE id=$1', [req.params.pid]
+    );
+    res.json({ photos: p?.photos || [] });
+  } catch (err) { res.json({ photos: [] }); }
+});
+
+app.put(`${BASE}/api/products/:pid/photos`, async (req, res) => {
+  const pid = parseInt(req.params.pid, 10);
+  const photos = (req.body.photos || []).filter(Boolean).slice(0, 5);
+  try {
+    await posDb.query('UPDATE public.products SET photos=$1 WHERE id=$2', [photos, pid]);
+    // زامن مع الموقع لو مرتبط
+    if (HAS_WEBSITE_DB) {
+      posDb.query('SELECT dentrust_id FROM products WHERE id=$1', [pid])
+        .then(({ rows: [r] }) => {
+          if (r?.dentrust_id) {
+            dentrustDb.query('UPDATE products SET photos=$1 WHERE id=$2', [photos, r.dentrust_id])
+              .catch(() => {});
+          }
+        }).catch(() => {});
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[PUT /api/products/:pid/photos]', err.message);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
 });
 
 app.put(`${BASE}/api/products/:pid`, async (req, res) => {
