@@ -725,7 +725,14 @@ app.get(`${BASE}/api/products/:pid/photos`, async (req, res) => {
     const { rows: [p] } = await posDb.query(
       'SELECT photos FROM public.products WHERE id=$1', [req.params.pid]
     );
-    res.json({ photos: p?.photos || [] });
+    // Convert relative Supabase storage paths to full public URLs
+    const photos = (p?.photos || []).map(url => {
+      if (!url) return url;
+      if (url.startsWith('/objects/')) return 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public' + url;
+      if (url.startsWith('objects/'))  return 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/' + url;
+      return url;
+    });
+    res.json({ photos });
   } catch (err) { res.json({ photos: [] }); }
 });
 
