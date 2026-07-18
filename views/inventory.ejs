@@ -103,28 +103,12 @@
       <input type="hidden" id="editId"/>
       <input type="hidden" id="f-image-url"/>
 
-      <!-- Product Image -->
+      <!-- Product Images (up to 5) -->
       <div>
-        <label class="text-xs font-medium text-gray-600 block mb-1" data-ar="صورة المنتج" data-en="Product Image">صورة المنتج</label>
-        <div class="flex items-center gap-3">
-          <div id="imagePreview" class="w-20 h-20 rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center bg-gray-50 overflow-hidden flex-shrink-0">
-            <span id="imagePlaceholder" class="text-2xl">📷</span>
-            <img id="imagePreviewImg" src="" alt="" class="hidden w-full h-full object-cover"/>
-          </div>
-          <div class="flex-1">
-            <input type="file" id="f-image-file" accept="image/*" onchange="handleImageSelect(this)"
-              class="hidden"/>
-            <button type="button" onclick="document.getElementById('f-image-file').click()"
-              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 text-right">
-              📁 اختر صورة
-            </button>
-            <button type="button" onclick="clearImage()"
-              class="w-full mt-1 border border-red-200 rounded-xl px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 text-right">
-              ✕ إزالة الصورة
-            </button>
-            <div id="uploadProgress" class="hidden mt-1 text-xs text-blue-600">جاري الرفع...</div>
-          </div>
-        </div>
+        <label class="text-xs font-medium text-gray-600 block mb-2" data-ar="صور المنتج (حتى 5 صور)" data-en="Product Images (up to 5)">صور المنتج (حتى 5 صور)</label>
+        <div id="photosGrid" class="flex gap-2 flex-wrap"></div>
+        <input type="file" id="photoFileInput" accept="image/*" class="hidden"/>
+        <div id="uploadProgress" class="hidden mt-1 text-xs text-blue-600 text-center">⏳ جاري رفع الصورة...</div>
       </div>
 
       <div class="grid grid-cols-2 gap-4">
@@ -409,65 +393,88 @@ async function generateBarcode() {
   document.getElementById("f-barcode").value = data.barcode;
 }
 
-function setImagePreview(url) {
-  const img = document.getElementById("imagePreviewImg");
-  const placeholder = document.getElementById("imagePlaceholder");
-  if (url) {
-    img.src = url;
-    img.classList.remove("hidden");
-    placeholder.classList.add("hidden");
-  } else {
-    img.src = "";
-    img.classList.add("hidden");
-    placeholder.classList.remove("hidden");
+// ── Multi-photo support (up to 5) ────────────────────────────────────────────
+const MAX_PHOTOS = 5;
+let productPhotos = Array(MAX_PHOTOS).fill('');
+
+function renderPhotosGrid() {
+  const grid = document.getElementById('photosGrid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  const filled = productPhotos.filter(Boolean).length;
+  for (let i = 0; i < MAX_PHOTOS; i++) {
+    const url = productPhotos[i] || '';
+    const slot = document.createElement('div');
+    slot.style.cssText = 'position:relative;width:4rem;height:4rem;border-radius:0.75rem;border:2px dashed;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;';
+    if (url) {
+      slot.style.borderColor = '#93c5fd';
+      slot.style.background = '#eff6ff';
+      slot.innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover;" onerror="this.parentElement.innerHTML='<span style=color:#d1d5db;font-size:1.2rem>📷</span>'"/>
+        <button type="button" onclick="removePhoto(${i})" style="position:absolute;top:-4px;right:-4px;background:#ef4444;color:#fff;border:none;border-radius:50%;width:1.1rem;height:1.1rem;font-size:0.65rem;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:bold;">×</button>`;
+    } else if (i === filled) {
+      slot.style.borderColor = '#d1d5db';
+      slot.style.background = '#f9fafb';
+      slot.style.cursor = 'pointer';
+      slot.title = 'اضغط لإضافة صورة';
+      slot.innerHTML = `<span style="color:#9ca3af;font-size:1.4rem;pointer-events:none;">+</span>`;
+      slot.onclick = () => openPhotoUpload(i);
+    } else {
+      slot.style.borderColor = '#e5e7eb';
+      slot.style.background = '#f3f4f6';
+      slot.innerHTML = `<span style="color:#d1d5db;font-size:1rem;">📷</span>`;
+    }
+    grid.appendChild(slot);
   }
-  document.getElementById("f-image-url").value = url || "";
 }
 
-function clearImage() {
-  document.getElementById("f-image-file").value = "";
-  setImagePreview("");
+function openPhotoUpload(index) {
+  const inp = document.getElementById('photoFileInput');
+  inp._idx = index;
+  inp.value = '';
+  inp.onchange = () => handlePhotoSelect(inp, inp._idx);
+  inp.click();
 }
 
-async function handleImageSelect(input) {
+async function handlePhotoSelect(input, index) {
   const file = input.files[0];
   if (!file) return;
-  // Show local preview immediately — only update the <img> visually, NOT f-image-url.
-  // reader.onload fires async and can race with the fetch response; if we let it call
-  // setImagePreview() it would overwrite f-image-url with the base64 data URL AFTER the
-  // server URL has already been stored, causing the product to save the raw base64 blob.
+  // Local preview
   const reader = new FileReader();
-  reader.onload = e => {
-    const img = document.getElementById("imagePreviewImg");
-    const placeholder = document.getElementById("imagePlaceholder");
-    img.src = e.target.result;
-    img.classList.remove("hidden");
-    placeholder.classList.add("hidden");
-  };
+  reader.onload = e => { productPhotos[index] = e.target.result; renderPhotosGrid(); };
   reader.readAsDataURL(file);
-  // Upload to server
-  document.getElementById("uploadProgress").classList.remove("hidden");
-  document.getElementById("submitBtn").disabled = true;
-  const formData = new FormData();
-  formData.append("file", file);
+  // Upload
+  document.getElementById('uploadProgress').classList.remove('hidden');
+  document.getElementById('submitBtn').disabled = true;
+  const fd = new FormData();
+  fd.append('file', file);
   try {
-    const res = await fetch(`${BASE}/api/upload-image`, { method: "POST", body: formData });
+    const res = await fetch(`${BASE}/api/upload-image`, { method: 'POST', body: fd });
     const data = await res.json();
-    if (data.ok) {
-      // setImagePreview sets BOTH the <img> src AND f-image-url to the server URL.
-      // This is the authoritative final state regardless of when reader.onload fires.
-      setImagePreview(data.url);
-    } else {
-      alert("فشل رفع الصورة: " + (data.error || "خطأ غير معروف"));
-      clearImage();
-    }
+    if (data.ok) { productPhotos[index] = data.url; renderPhotosGrid(); }
+    else { alert('فشل رفع الصورة: ' + (data.error || 'خطأ')); productPhotos[index] = ''; renderPhotosGrid(); }
   } catch(e) {
-    alert("فشل رفع الصورة");
-    clearImage();
+    alert('فشل رفع الصورة'); productPhotos[index] = ''; renderPhotosGrid();
   } finally {
-    document.getElementById("uploadProgress").classList.add("hidden");
-    document.getElementById("submitBtn").disabled = false;
+    document.getElementById('uploadProgress').classList.add('hidden');
+    document.getElementById('submitBtn').disabled = false;
   }
+}
+
+function removePhoto(index) {
+  productPhotos.splice(index, 1);
+  productPhotos.push('');
+  renderPhotosGrid();
+}
+
+function resetPhotos() {
+  productPhotos = Array(MAX_PHOTOS).fill('');
+  renderPhotosGrid();
+}
+
+function loadPhotos(arr) {
+  productPhotos = Array(MAX_PHOTOS).fill('');
+  if (Array.isArray(arr)) arr.slice(0, MAX_PHOTOS).forEach((u, i) => { if (u) productPhotos[i] = u; });
+  renderPhotosGrid();
 }
 
 function onSectionChange() {
@@ -489,7 +496,7 @@ function openModal() {
   document.getElementById("productForm").reset();
   document.getElementById("f-image-url").value = "";
   document.getElementById("modalError").classList.add("hidden");
-  setImagePreview("");
+  resetPhotos();
   resetVariants();
   cbReset();
   setSection('dental');
@@ -515,18 +522,17 @@ function editProduct(id) {
   document.getElementById("f-min-stock").value = p.min_stock || 0;
   document.getElementById("f-description").value = p.description || "";
   document.getElementById("modalError").classList.add("hidden");
-  // Show existing image for display only — don't set f-image-url so it won't overwrite on save
-  const _httpImg = p.image_url && p.image_url.startsWith('http') ? p.image_url : null;
-  const _displayUrl = _httpImg || (p.has_image ? `${BASE}/api/products/${p.id}/image` : "");
-  // Only set f-image-url if we have a real http URL to preserve; otherwise leave empty (= no change)
-  const img = document.getElementById("imagePreviewImg");
-  const placeholder = document.getElementById("imagePlaceholder");
-  if (_displayUrl) {
-    img.src = _displayUrl; img.classList.remove("hidden"); placeholder.classList.add("hidden");
-  } else {
-    img.src = ""; img.classList.add("hidden"); placeholder.classList.remove("hidden");
-  }
-  document.getElementById("f-image-url").value = _httpImg || "";
+  document.getElementById("f-image-url").value = "";
+  // جيب الصور من السيرفر وعرّضها
+  resetPhotos();
+  fetch(`${BASE}/api/products/${p.id}/photos`)
+    .then(r => r.json())
+    .then(d => loadPhotos(d.photos || []))
+    .catch(() => {
+      // fallback: لو في صورة واحدة من اللست، عرّضها
+      const img = p.image_url || (p.has_image ? `${BASE}/api/products/${p.id}/image` : '');
+      if (img) loadPhotos([img]);
+    });
   loadVariants(p);
   setSection(p.section || 'dental');
   cbLoad(p.checkbox_values);
@@ -555,7 +561,8 @@ async function saveProduct(e) {
       purchase_price: parseFloat(document.getElementById("f-purchase").value) || 0,
       sale_price: parseFloat(document.getElementById("f-sale").value) || 0,
       expiry_date: document.getElementById("f-expiry").value || null,
-      image_url: document.getElementById("f-image-url").value || null,
+      image_url: productPhotos.find(Boolean) || null,
+      photos: productPhotos.filter(Boolean),
       category: document.getElementById("f-category").value.trim() || null,
       min_stock: parseInt(document.getElementById("f-min-stock").value) || 0,
       description: document.getElementById("f-description").value.trim() || null,
@@ -571,6 +578,16 @@ async function saveProduct(e) {
       errDiv.textContent = data.error || "حدث خطأ";
       errDiv.classList.remove("hidden");
       return;
+    }
+    // حفظ الصور (حتى 5)
+    const savedId = id || data.id;
+    const photosToSave = productPhotos.filter(u => u && u.startsWith('http'));
+    if (savedId && photosToSave.length > 0) {
+      await fetch(`${BASE}/api/products/${savedId}/photos`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photos: photosToSave })
+      }).catch(() => {});
     }
     closeModal();
     await loadProducts();
