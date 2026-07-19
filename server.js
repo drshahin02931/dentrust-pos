@@ -1483,6 +1483,33 @@ app.delete(`${BASE}/api/expenses/:eid`, async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── API: Extra Profits ────────────────────────────────────────────────────────
+
+app.get(`${BASE}/api/extra-profits`, async (req, res) => {
+  try {
+    const period = req.query.period || 'all';
+    const pf = periodFilter(period, 'date');
+    const { rows } = await posDb.query(`SELECT * FROM extra_profits WHERE ${pf} ORDER BY date DESC`);
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/extra-profits`, async (req, res) => {
+  const d = req.body;
+  try {
+    await posDb.query(
+      'INSERT INTO extra_profits (title, amount, date) VALUES ($1,$2,$3)',
+      [d.title, parseFloat(d.amount), d.date || new Date().toISOString().substring(0, 10)]
+    );
+    res.status(201).json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.delete(`${BASE}/api/extra-profits/:eid`, async (req, res) => {
+  await posDb.query('DELETE FROM extra_profits WHERE id=$1', [parseInt(req.params.eid, 10)]);
+  res.json({ ok: true });
+});
+
 // ── API: Reports ──────────────────────────────────────────────────────────────
 
 app.get(`${BASE}/api/reports/summary`, async (req, res) => {
@@ -1516,11 +1543,16 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
     const { rows: [rt] } = await posDb.query(
       `SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r WHERE ${rf}`
     );
+    const xf = periodFilter(period, 'date');
+    const { rows: [xt] } = await posDb.query(
+      `SELECT COALESCE(SUM(amount),0) as t FROM extra_profits WHERE ${xf}`
+    );
     const { rows: [sc] } = await posDb.query(`SELECT COUNT(*) as cnt FROM sales s WHERE ${df}`);
     const rev = parseFloat(sd.r || 0), cost = parseFloat(sd.c || 0), exp = parseFloat(et.t || 0), refunds = parseFloat(rt.t || 0);
+    const extraProfit = parseFloat(xt.t || 0);
     const netRev = Math.max(0, rev - refunds);
     const gross = netRev - cost;
-    const netProfit = gross - exp;
+    const netProfit = gross - exp + extraProfit;
     const { rows: payRows } = await posDb.query(
       `SELECT payment_method, COUNT(*) as cnt, SUM(total_amount) as total FROM sales s WHERE ${df} GROUP BY payment_method`
     );
@@ -1539,7 +1571,8 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
     }
     res.json({
       revenue: r2(rev), refunds: r2(refunds), net_revenue: r2(netRev),
-      cost: r2(cost), gross_profit: r2(gross), expenses: r2(exp), net_profit: r2(netProfit),
+      cost: r2(cost), gross_profit: r2(gross), expenses: r2(exp),
+      extra_profit: r2(extraProfit), net_profit: r2(netProfit),
       sales_count: parseInt(sc.cnt, 10),
       payment_breakdown: payRows.map(r => ({ ...r, cnt: parseInt(r.cnt, 10), total: parseFloat(r.total || 0) })),
       cash_revenue: r2(cashRev), instapay_revenue: r2(instaRev),
