@@ -1484,29 +1484,33 @@ app.delete(`${BASE}/api/expenses/:eid`, async (req, res) => {
 });
 
 // ── API: Extra Profits ────────────────────────────────────────────────────────
-
 app.get(`${BASE}/api/extra-profits`, async (req, res) => {
   try {
     const period = req.query.period || 'all';
-    const pf = periodFilter(period, 'date');
-    const { rows } = await posDb.query(`SELECT * FROM extra_profits WHERE ${pf} ORDER BY date DESC`);
+    let where = '';
+    if (period === 'today') where = `WHERE date = CURRENT_DATE::text`;
+    else if (period === 'week') where = `WHERE date >= (CURRENT_DATE - INTERVAL '7 days')::text`;
+    else if (period === 'month') where = `WHERE date >= (CURRENT_DATE - INTERVAL '30 days')::text`;
+    const { rows } = await posDb.query(`SELECT * FROM extra_profits ${where} ORDER BY id DESC`);
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) { console.error(err); res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 app.post(`${BASE}/api/extra-profits`, async (req, res) => {
-  const d = req.body;
   try {
-    await posDb.query(
-      'INSERT INTO extra_profits (title, amount, date) VALUES ($1,$2,$3)',
-      [d.title, parseFloat(d.amount), d.date || new Date().toISOString().substring(0, 10)]
+    const { title, amount, date } = req.body;
+    if (!title || !amount) return res.status(400).json({ error: 'البيان والمبلغ مطلوبان' });
+    const d = date || new Date().toISOString().substring(0, 10);
+    const { rows: [row] } = await posDb.query(
+      'INSERT INTO extra_profits (title, amount, date) VALUES ($1, $2, $3) RETURNING *',
+      [title, parseFloat(amount), d]
     );
-    res.status(201).json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+    res.json(row);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
-app.delete(`${BASE}/api/extra-profits/:eid`, async (req, res) => {
-  await posDb.query('DELETE FROM extra_profits WHERE id=$1', [parseInt(req.params.eid, 10)]);
+app.delete(`${BASE}/api/extra-profits/:id`, async (req, res) => {
+  await posDb.query('DELETE FROM extra_profits WHERE id=$1', [parseInt(req.params.id, 10)]);
   res.json({ ok: true });
 });
 
@@ -1543,13 +1547,16 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
     const { rows: [rt] } = await posDb.query(
       `SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r WHERE ${rf}`
     );
-    const xf = periodFilter(period, 'date');
-    const { rows: [xt] } = await posDb.query(
-      `SELECT COALESCE(SUM(amount),0) as t FROM extra_profits WHERE ${xf}`
-    );
     const { rows: [sc] } = await posDb.query(`SELECT COUNT(*) as cnt FROM sales s WHERE ${df}`);
+    const pf = period === 'today' ? `WHERE date = CURRENT_DATE::text`
+             : period === 'week'  ? `WHERE date >= (CURRENT_DATE - INTERVAL '7 days')::text`
+             : period === 'month' ? `WHERE date >= (CURRENT_DATE - INTERVAL '30 days')::text`
+             : '';
+    const { rows: [epR] } = await posDb.query(
+      `SELECT COALESCE(SUM(amount),0) as t FROM extra_profits ${pf}`
+    );
     const rev = parseFloat(sd.r || 0), cost = parseFloat(sd.c || 0), exp = parseFloat(et.t || 0), refunds = parseFloat(rt.t || 0);
-    const extraProfit = parseFloat(xt.t || 0);
+    const extraProfit = parseFloat(epR.t || 0);
     const netRev = Math.max(0, rev - refunds);
     const gross = netRev - cost;
     const netProfit = gross - exp + extraProfit;
@@ -1571,8 +1578,7 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
     }
     res.json({
       revenue: r2(rev), refunds: r2(refunds), net_revenue: r2(netRev),
-      cost: r2(cost), gross_profit: r2(gross), expenses: r2(exp),
-      extra_profit: r2(extraProfit), net_profit: r2(netProfit),
+      cost: r2(cost), gross_profit: r2(gross), expenses: r2(exp), extra_profit: r2(extraProfit), net_profit: r2(netProfit),
       sales_count: parseInt(sc.cnt, 10),
       payment_breakdown: payRows.map(r => ({ ...r, cnt: parseInt(r.cnt, 10), total: parseFloat(r.total || 0) })),
       cash_revenue: r2(cashRev), instapay_revenue: r2(instaRev),
@@ -4772,10 +4778,14 @@ async function main() {
   try {
     await initDb();
 
+    // Fix: ensure 'reason' column exists on customer_manual_debts
+    await posDb.query(`ALTER TABLE customer_manual_debts ADD COLUMN IF NOT EXISTS reason TEXT DEFAULT ''`).catch(() => {});
+    // Fix: ensure extra_profits table exists (fallback if initDb ran before this migration)
+    await posDb.query(`CREATE TABLE IF NOT EXISTS extra_profits (id SERIAL PRIMARY KEY, title TEXT NOT NULL, amount NUMERIC NOT NULL, date TEXT DEFAULT (CURRENT_DATE::text))`).catch(() => {});
+
     // Fix: ensure 'details' column exists on posDb.products with a safe default
     await posDb.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS details TEXT NOT NULL DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE products ALTER COLUMN details SET DEFAULT ''`).catch(() => {});
-    await posDb.query(`ALTER TABLE customer_manual_debts ADD COLUMN IF NOT EXISTS reason TEXT DEFAULT ''`).catch(() => {});
 
     await posDb.query(`CREATE TABLE IF NOT EXISTS customer_manual_debts (
       id SERIAL PRIMARY KEY,
