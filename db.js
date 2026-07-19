@@ -122,12 +122,6 @@ const PG_SCHEMA_SQL = `
     amount NUMERIC NOT NULL,
     date TEXT DEFAULT (CURRENT_DATE::text)
   );
-  CREATE TABLE IF NOT EXISTS extra_profits (
-    id SERIAL PRIMARY KEY,
-    title TEXT NOT NULL,
-    amount NUMERIC NOT NULL,
-    date TEXT DEFAULT (CURRENT_DATE::text)
-  );
   CREATE TABLE IF NOT EXISTS returns (
     id SERIAL PRIMARY KEY,
     sale_id INTEGER NOT NULL REFERENCES sales(id),
@@ -223,6 +217,12 @@ const PG_SCHEMA_SQL = `
     instapay_closing NUMERIC,
     instapay_discrepancy NUMERIC,
     opening_instapay NUMERIC DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS extra_profits (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    amount NUMERIC NOT NULL,
+    date TEXT DEFAULT (CURRENT_DATE::text)
   );
 `;
 
