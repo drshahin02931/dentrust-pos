@@ -4775,6 +4775,7 @@ async function main() {
     // Fix: ensure 'details' column exists on posDb.products with a safe default
     await posDb.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS details TEXT NOT NULL DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE products ALTER COLUMN details SET DEFAULT ''`).catch(() => {});
+    await posDb.query(`ALTER TABLE customer_manual_debts ADD COLUMN IF NOT EXISTS reason TEXT DEFAULT ''`).catch(() => {});
 
     await posDb.query(`CREATE TABLE IF NOT EXISTS customer_manual_debts (
       id SERIAL PRIMARY KEY,
