@@ -421,19 +421,38 @@ loadStats();
 // ── Category filter bar ───────────────────────────────────────────────────────
 let _posCatProducts = null;
 
+const POS_CACHE_KEY = 'dentrust_pos_products';
+
+function _applyProducts(products) {
+  _posCatProducts = products;
+  const cats = [...new Set(products.map(p => p.category).filter(Boolean))].sort();
+  const bar = document.getElementById("posCatBar");
+  if (!bar) return;
+  if (cats.length === 0) return;
+  bar.innerHTML = `<button data-cat="all" onclick="setPosCategory(null)"
+    class="pos-cat-btn text-xs px-2.5 py-1 rounded-full border font-medium bg-blue-700 text-white border-blue-700">🏷️ الكل</button>` +
+    cats.map(c => `<button data-cat="${c.replace(/"/g,'&quot;')}" onclick="setPosCategory(this.dataset.cat)"
+      class="pos-cat-btn text-xs px-2.5 py-1 rounded-full border font-medium bg-white text-gray-600 border-gray-200 hover:border-blue-300">${c}</button>`).join("");
+  bar.style.display = "flex";
+  bar.classList.remove("hidden");
+}
+
 async function loadPosCategories() {
+  // عرض من الكاش فوراً لو موجود
+  try {
+    const cached = localStorage.getItem(POS_CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length) _applyProducts(parsed);
+    }
+  } catch(e) {}
+
+  // جيب أحدث نسخة من السيرفر في الخلفية
   try {
     const res = await fetch(`${BASE}/api/products`);
-    _posCatProducts = await res.json();
-    const cats = [...new Set(_posCatProducts.map(p => p.category).filter(Boolean))].sort();
-    const bar = document.getElementById("posCatBar");
-    if (!bar || cats.length === 0) return;
-    bar.innerHTML = `<button data-cat="all" onclick="setPosCategory(null)"
-      class="pos-cat-btn text-xs px-2.5 py-1 rounded-full border font-medium bg-blue-700 text-white border-blue-700">🏷️ الكل</button>` +
-      cats.map(c => `<button data-cat="${c.replace(/"/g,'&quot;')}" onclick="setPosCategory(this.dataset.cat)"
-        class="pos-cat-btn text-xs px-2.5 py-1 rounded-full border font-medium bg-white text-gray-600 border-gray-200 hover:border-blue-300">${c}</button>`).join("");
-    bar.style.display = "flex";
-    bar.classList.remove("hidden");
+    const fresh = await res.json();
+    _applyProducts(fresh);
+    try { localStorage.setItem(POS_CACHE_KEY, JSON.stringify(fresh)); } catch(e) {}
   } catch(e) {}
 }
 function setPosCategory(cat) {
