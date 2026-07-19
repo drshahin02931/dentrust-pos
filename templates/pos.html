@@ -390,6 +390,64 @@ let searchTimeout = null;
 let suggCache   = {};        // id → product object, avoids JSON escaping in onclick
 let posSelectedCategory = null;
 
+// ── Draft persistence (localStorage) ─────────────────────────────────────────
+const DRAFT_KEY = "pos_draft_v1";
+
+function saveCartState() {
+  try {
+    const state = {
+      cart,
+      heldCarts,
+      heldCounter,
+      paymentType,
+      paymentSub,
+      discount:     document.getElementById("discountInput")?.value  || "0",
+      discountType: document.getElementById("discountType")?.value   || "amount",
+      delivery:     document.getElementById("deliveryInput")?.value  || "0",
+      customerId:   document.getElementById("customerSelect")?.value || "",
+    };
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(state));
+  } catch(e) {}
+}
+
+function loadCartState() {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return;
+    const state = JSON.parse(raw);
+
+    // Restore cart
+    if (Array.isArray(state.cart) && state.cart.length > 0) {
+      cart = state.cart;
+    }
+    // Restore held invoices
+    if (Array.isArray(state.heldCarts)) {
+      heldCarts = state.heldCarts;
+    }
+    if (typeof state.heldCounter === "number") {
+      heldCounter = state.heldCounter;
+    }
+    // Restore discount / delivery
+    if (state.discount    !== undefined) document.getElementById("discountInput").value  = state.discount;
+    if (state.discountType!== undefined) document.getElementById("discountType").value   = state.discountType;
+    if (state.delivery    !== undefined) document.getElementById("deliveryInput").value  = state.delivery;
+
+    // Restore payment type & sub
+    if (state.paymentType) setPaymentType(state.paymentType);
+    if (state.paymentSub)  setPaymentSub(state.paymentSub);
+
+    // Customer will be restored after the customers list loads (see fetch below)
+    if (state.customerId) window._pendingCustomerId = state.customerId;
+
+    renderCart();
+    renderHeld();
+  } catch(e) {}
+}
+
+function clearCartState() {
+  try { localStorage.removeItem(DRAFT_KEY); } catch(e) {}
+}
+
 // ── Load customers ───────────────────────────────────────────────────────────
 fetch(`${BASE}/api/customers`).then(r=>r.json()).then(data => {
   customers = data;
@@ -400,6 +458,11 @@ fetch(`${BASE}/api/customers`).then(r=>r.json()).then(data => {
     opt.textContent = `${c.name}${c.total_debt > 0 ? ' (دين: '+c.total_debt.toFixed(2)+' ج)' : ''}`;
     sel.appendChild(opt);
   });
+  // Restore saved customer selection after list is populated
+  if (window._pendingCustomerId) {
+    sel.value = window._pendingCustomerId;
+    window._pendingCustomerId = null;
+  }
 });
 
 // ── Stats ────────────────────────────────────────────────────────────────────
@@ -683,6 +746,7 @@ function addToCart(product) {
 
 // ── Cart Rendering ────────────────────────────────────────────────────────────
 function renderCart() {
+  saveCartState();
   const body = document.getElementById("cartBody");
   if (cart.length === 0) {
     body.innerHTML = '<div id="emptyMsg" class="text-center text-gray-400 py-10 text-sm">لا توجد منتجات — امسح الباركود أو ابحث</div>';
@@ -840,6 +904,7 @@ function setPaymentType(type) {
   } else {
     firstOpt.textContent = "-- اختر عميل (اختياري) --";
   }
+  saveCartState();
 }
 
 function setPaymentSub(sub) {
@@ -848,6 +913,7 @@ function setPaymentSub(sub) {
     (sub==="naqdi"   ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-200 text-gray-500 hover:border-purple-400");
   document.getElementById("psub-instapay").className= `psub-btn border-2 rounded-xl py-2.5 text-sm font-bold transition-all ` +
     (sub==="instapay"? "border-purple-500 bg-purple-50 text-purple-700" : "border-gray-200 text-gray-500 hover:border-purple-400");
+  saveCartState();
 }
 
 // Split payment helpers
@@ -962,6 +1028,7 @@ async function checkout() {
   document.getElementById("shortBox").classList.add("hidden");
   document.getElementById("credit-cash").value    = "0";
   document.getElementById("credit-instapay").value = "0";
+  clearCartState();   // ← امسح الـ draft بعد البيع الناجح
   renderCart();
   loadStats();
 }
@@ -1019,7 +1086,7 @@ function resumeHeld(id) {
 function renderHeld() {
   const panel = document.getElementById("heldPanel");
   const list  = document.getElementById("heldList");
-  if (heldCarts.length === 0) { panel.classList.add("hidden"); return; }
+  if (heldCarts.length === 0) { panel.classList.add("hidden"); saveCartState(); return; }
   panel.classList.remove("hidden");
   list.innerHTML = heldCarts.map(h => `
     <button onclick="resumeHeld(${h.id})"
@@ -1027,6 +1094,7 @@ function renderHeld() {
       📌 ${h.label}
     </button>
   `).join("");
+  saveCartState();
 }
 
 function newInvoice() {
@@ -1034,6 +1102,7 @@ function newInvoice() {
   cart = [];
   document.getElementById("discountInput").value = "0";
   document.getElementById("deliveryInput").value  = "0";
+  document.getElementById("customerSelect").value = "";
   setPaymentType("cash");
   setPaymentSub("naqdi");
   renderCart();
@@ -1099,6 +1168,15 @@ async function submitQuickAddCustomer(e) {
     btn.textContent = btn.getAttribute("data-ar") || "إضافة وتحديد";
   }
 }
+
+// ── Save state when user changes discount / delivery / customer ───────────────
+document.getElementById("discountInput").addEventListener("input",  saveCartState);
+document.getElementById("discountType").addEventListener("change",  saveCartState);
+document.getElementById("deliveryInput").addEventListener("input",  saveCartState);
+document.getElementById("customerSelect").addEventListener("change", saveCartState);
+
+// ── Restore draft on page load ────────────────────────────────────────────────
+loadCartState();
 
 </script>
 {% endblock %}
