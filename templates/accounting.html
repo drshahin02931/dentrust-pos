@@ -37,10 +37,9 @@
       <div class="text-xs text-red-500 font-medium mb-1">المصروفات</div>
       <div id="c-expenses" class="text-2xl font-black text-red-600">—</div>
     </div>
-    <div class="bg-amber-50 border border-amber-100 rounded-2xl p-4 text-center">
-      <div class="text-xs text-amber-600 font-medium mb-1">💰 مكسب إضافي</div>
-      <div id="c-extra" class="text-2xl font-black text-amber-600">—</div>
-      <div class="text-xs text-amber-400 mt-1">من سيستم خارجي</div>
+    <div class="bg-yellow-50 border border-yellow-100 rounded-2xl p-4 text-center">
+      <div class="text-xs text-yellow-600 font-medium mb-1">💰 أرباح إضافية</div>
+      <div id="c-extra" class="text-2xl font-black text-yellow-700">—</div>
     </div>
     <div class="bg-purple-50 border border-purple-100 rounded-2xl p-4 text-center">
       <div class="text-xs text-purple-600 font-medium mb-1">صافي الربح</div>
@@ -94,50 +93,6 @@
     </div>
   </div>
 
-  <!-- Extra Profit Section -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-    <div class="bg-white rounded-2xl border border-amber-200 shadow-sm p-5">
-      <h3 class="font-bold text-gray-700 mb-4">💰 إضافة مكسب إضافي</h3>
-      <form onsubmit="addExtraProfit(event)" class="space-y-3">
-        <div>
-          <label class="text-xs font-medium text-gray-600">البيان *</label>
-          <input id="x-title" required placeholder="مثال: أرباح السيستم التاني"
-            class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-amber-200"/>
-        </div>
-        <div>
-          <label class="text-xs font-medium text-gray-600">المبلغ (جنيه) *</label>
-          <input id="x-amount" type="number" step="0.01" min="0.01" required placeholder="0.00"
-            class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-amber-200"/>
-        </div>
-        <div>
-          <label class="text-xs font-medium text-gray-600">التاريخ</label>
-          <input id="x-date" type="date"
-            class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-amber-200"/>
-        </div>
-        <button type="submit" class="w-full bg-amber-500 text-white font-semibold py-2.5 rounded-xl hover:bg-amber-600 transition-colors">تسجيل المكسب</button>
-      </form>
-    </div>
-
-    <div class="lg:col-span-2 bg-white rounded-2xl border border-amber-100 shadow-sm overflow-hidden">
-      <div class="p-4 border-b font-bold text-gray-700">سجل المكاسب الإضافية</div>
-      <div class="overflow-y-auto max-h-96">
-        <table class="w-full text-sm">
-          <thead class="bg-amber-50 border-b sticky top-0">
-            <tr class="text-right text-gray-600 font-semibold">
-              <th class="px-4 py-2.5">البيان</th>
-              <th class="px-4 py-2.5">المبلغ</th>
-              <th class="px-4 py-2.5">التاريخ</th>
-              <th class="px-4 py-2.5"></th>
-            </tr>
-          </thead>
-          <tbody id="extraProfitTable" class="divide-y"></tbody>
-        </table>
-        <div id="noExtraProfits" class="hidden text-center text-gray-400 py-8 text-sm">لا توجد مكاسب إضافية مسجلة</div>
-      </div>
-      <div id="extraProfitsTotal" class="p-3 bg-amber-50 border-t text-sm font-bold text-amber-600 text-left hidden"></div>
-    </div>
-  </div>
-
   <!-- Expense Section -->
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
     <div class="bg-white rounded-2xl border shadow-sm p-5">
@@ -181,6 +136,50 @@
       <div id="expensesTotal" class="p-3 bg-red-50 border-t text-sm font-bold text-red-600 text-left hidden"></div>
     </div>
   </div>
+
+  <!-- Extra Profits Section -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="bg-white rounded-2xl border border-yellow-200 shadow-sm p-5">
+      <h3 class="font-bold text-gray-700 mb-4">💰 إضافة ربح إضافي</h3>
+      <form onsubmit="addExtraProfit(event)" class="space-y-3">
+        <div>
+          <label class="text-xs font-medium text-gray-600">البيان *</label>
+          <input id="ep-title" required placeholder="مثال: عمولة، بيع قديم..."
+            class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-yellow-200"/>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-600">المبلغ (جنيه) *</label>
+          <input id="ep-amount" type="number" step="0.01" min="0.01" required placeholder="0.00"
+            class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-yellow-200"/>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-600">التاريخ</label>
+          <input id="ep-date" type="date"
+            class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-yellow-200"/>
+        </div>
+        <button type="submit" class="w-full bg-yellow-500 text-white font-semibold py-2.5 rounded-xl hover:bg-yellow-600 transition-colors">تسجيل الربح الإضافي</button>
+      </form>
+    </div>
+
+    <div class="lg:col-span-2 bg-white rounded-2xl border border-yellow-100 shadow-sm overflow-hidden">
+      <div class="p-4 border-b font-bold text-gray-700">💰 سجل الأرباح الإضافية</div>
+      <div class="overflow-y-auto max-h-96">
+        <table class="w-full text-sm">
+          <thead class="bg-yellow-50 border-b sticky top-0">
+            <tr class="text-right text-gray-600 font-semibold">
+              <th class="px-4 py-2.5">البيان</th>
+              <th class="px-4 py-2.5">المبلغ</th>
+              <th class="px-4 py-2.5">التاريخ</th>
+              <th class="px-4 py-2.5"></th>
+            </tr>
+          </thead>
+          <tbody id="extraProfitTable" class="divide-y"></tbody>
+        </table>
+        <div id="noExtraProfit" class="hidden text-center text-gray-400 py-8 text-sm">لا توجد أرباح إضافية مسجلة</div>
+      </div>
+      <div id="extraProfitTotal" class="p-3 bg-yellow-50 border-t text-sm font-bold text-yellow-700 text-left hidden"></div>
+    </div>
+  </div>
 </div>
 
 <style>
@@ -202,6 +201,8 @@ function setPeriod(p) {
   document.querySelectorAll(".period-btn").forEach(b => b.classList.remove("active"));
   document.getElementById(`p-${p}`).classList.add("active");
   loadSummary();
+  loadExpenses();
+  loadExtraProfit();
   loadDetailTab(currentDetailTab);
 }
 
@@ -326,50 +327,6 @@ async function loadDetailTab(tab) {
   }
 }
 
-// ── Extra Profits ──────────────────────────────────────────────────────────
-async function loadExtraProfits() {
-  const res  = await fetch(`${BASE}/api/extra-profits`);
-  const data = await res.json();
-  const tbody   = document.getElementById("extraProfitTable");
-  const noMsg   = document.getElementById("noExtraProfits");
-  const totalEl = document.getElementById("extraProfitsTotal");
-  if (!data.length) { tbody.innerHTML=""; noMsg.classList.remove("hidden"); totalEl.classList.add("hidden"); return; }
-  noMsg.classList.add("hidden");
-  const total = data.reduce((s,e) => s+parseFloat(e.amount), 0);
-  totalEl.textContent = `الإجمالي: ${total.toFixed(2)} جنيه`;
-  totalEl.classList.remove("hidden");
-  tbody.innerHTML = data.map(e => `
-    <tr class="hover:bg-amber-50">
-      <td class="px-4 py-2.5 text-gray-800">${e.title}</td>
-      <td class="px-4 py-2.5 font-bold text-amber-600">${parseFloat(e.amount).toFixed(2)} جنيه</td>
-      <td class="px-4 py-2.5 text-gray-500 text-xs">${e.date}</td>
-      <td class="px-4 py-2.5">
-        <button onclick="deleteExtraProfit(${e.id})" class="text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50">حذف</button>
-      </td>
-    </tr>`).join("");
-}
-
-async function addExtraProfit(ev) {
-  ev.preventDefault();
-  await fetch(`${BASE}/api/extra-profits`, {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({
-      title:  document.getElementById("x-title").value,
-      amount: parseFloat(document.getElementById("x-amount").value),
-      date:   document.getElementById("x-date").value || new Date().toISOString().split("T")[0]
-    })
-  });
-  document.getElementById("x-title").value  = "";
-  document.getElementById("x-amount").value = "";
-  loadExtraProfits(); loadSummary();
-}
-
-async function deleteExtraProfit(id) {
-  if (!confirm("حذف هذا المكسب؟")) return;
-  await fetch(`${BASE}/api/extra-profits/${id}`, { method:"DELETE" });
-  loadExtraProfits(); loadSummary();
-}
-
 // ── Expenses ───────────────────────────────────────────────────────────────
 async function loadExpenses() {
   const res  = await fetch(`${BASE}/api/expenses`);
@@ -414,18 +371,61 @@ async function deleteExpense(id) {
   loadExpenses(); loadSummary();
 }
 
+// ── Extra Profits ──────────────────────────────────────────────────────────
+async function loadExtraProfit() {
+  const res  = await fetch(`${BASE}/api/extra-profits?period=${currentPeriod}`);
+  const data = await res.json();
+  const tbody   = document.getElementById("extraProfitTable");
+  const noMsg   = document.getElementById("noExtraProfit");
+  const totalEl = document.getElementById("extraProfitTotal");
+  if (!data.length) { tbody.innerHTML=""; noMsg.classList.remove("hidden"); totalEl.classList.add("hidden"); return; }
+  noMsg.classList.add("hidden");
+  const total = data.reduce((s,e) => s + parseFloat(e.amount), 0);
+  totalEl.textContent = `الإجمالي: ${total.toFixed(2)} جنيه`;
+  totalEl.classList.remove("hidden");
+  tbody.innerHTML = data.map(e => `
+    <tr class="hover:bg-yellow-50">
+      <td class="px-4 py-2.5 text-gray-800">${e.title}</td>
+      <td class="px-4 py-2.5 font-bold text-yellow-700">${parseFloat(e.amount).toFixed(2)} جنيه</td>
+      <td class="px-4 py-2.5 text-gray-500 text-xs">${e.date}</td>
+      <td class="px-4 py-2.5">
+        <button onclick="deleteExtraProfit(${e.id})" class="text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50">حذف</button>
+      </td>
+    </tr>`).join("");
+}
+
+async function addExtraProfit(ev) {
+  ev.preventDefault();
+  await fetch(`${BASE}/api/extra-profits`, {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      title:  document.getElementById("ep-title").value,
+      amount: parseFloat(document.getElementById("ep-amount").value),
+      date:   document.getElementById("ep-date").value || new Date().toISOString().split("T")[0]
+    })
+  });
+  document.getElementById("ep-title").value  = "";
+  document.getElementById("ep-amount").value = "";
+  loadExtraProfit(); loadSummary();
+}
+
+async function deleteExtraProfit(id) {
+  if (!confirm("حذف هذا الربح الإضافي؟")) return;
+  await fetch(`${BASE}/api/extra-profits/${id}`, { method:"DELETE" });
+  loadExtraProfit(); loadSummary();
+}
+
 // ── CSV Export ─────────────────────────────────────────────────────────────
 function exportCSV(type) {
   window.location.href = `${BASE}/api/export/csv?type=${type}&period=${currentPeriod}`;
 }
 
-const _today = new Date().toISOString().split("T")[0];
-document.getElementById("e-date").value = _today;
-document.getElementById("x-date").value = _today;
+document.getElementById("e-date").value  = new Date().toISOString().split("T")[0];
+document.getElementById("ep-date").value = new Date().toISOString().split("T")[0];
 document.getElementById("p-today").classList.add("active");
 loadSummary();
 loadExpenses();
-loadExtraProfits();
+loadExtraProfit();
 loadDetailTab("top-products");
 </script>
 {% endblock %}
