@@ -2859,11 +2859,12 @@ async function doFullSync() {
             [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.details || '', p.id, photoUrl, cbJson]
           );
         } else {
+          // السعر محمي — لا يُعدَّل إلا من POS
           await posDb.query(
-            `UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, category=$4,
-             image_url=COALESCE($5, image_url), checkbox_values=COALESCE($6, checkbox_values),
-             purchase_price=COALESCE(NULLIF($7,0), purchase_price), expiry_date=COALESCE($8, expiry_date) WHERE id=$9`,
-            [p.name, p.price || 0, p.stock || 0, p.cat_name || '', photoUrl, cbJson, p.purchase_price ?? null, p.expiry_date || null, ex.id]);
+            `UPDATE products SET product_name=$1, quantity=$2, category=$3,
+             image_url=COALESCE($4, image_url), checkbox_values=COALESCE($5, checkbox_values),
+             purchase_price=COALESCE(NULLIF($6,0), purchase_price), expiry_date=COALESCE($7, expiry_date) WHERE id=$8`,
+            [p.name, p.stock || 0, p.cat_name || '', photoUrl, cbJson, p.purchase_price ?? null, p.expiry_date || null, ex.id]);
         }
         synced_products++;
       } catch (_) {}
@@ -3266,9 +3267,10 @@ app.post(`${BASE}/api/sync/upsert-product`, async (req, res) => {
       }
       if (existing) {
         const _cbJsonUp = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
+        // السعر محمي — لا يُعدَّل إلا من POS
         await posDb.query(
-          'UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, expiry_date=$4, purchase_price=COALESCE(NULLIF($5,0), purchase_price), category=COALESCE($6, category), checkbox_values=COALESCE($8, checkbox_values) WHERE dentrust_id=$7',
-          [name, price, stock, expiry, purchasePrice, category, d.dentrust_id, _cbJsonUp]
+          'UPDATE products SET product_name=$1, quantity=$2, expiry_date=$3, purchase_price=COALESCE(NULLIF($4,0), purchase_price), category=COALESCE($5, category), checkbox_values=COALESCE($7, checkbox_values) WHERE dentrust_id=$6',
+          [name, stock, expiry, purchasePrice, category, d.dentrust_id, _cbJsonUp]
         );
       } else {
         await posDb.query(
