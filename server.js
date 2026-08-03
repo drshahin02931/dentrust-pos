@@ -764,31 +764,19 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
   try {
     const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
     const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
-    // Only update image_url if a new one was explicitly sent (empty string = no change)
-    let updateQuery, params;
-    if (d.image_url) {
-      params = [
-        d.barcode || null, d.product_name, d.quantity || 0,
-        d.purchase_price || 0, d.sale_price || 0,
-        d.expiry_date || null, d.category || null,
-        parseInt(d.min_stock || 0, 10), d.description || null,
-        variantsJson, d.section || 'dental', cbJson, d.image_url, pid,
-      ];
-      updateQuery = `UPDATE products SET barcode=$1, product_name=$2, quantity=$3, purchase_price=$4,
-        sale_price=$5, expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
-        section=$11, checkbox_values=$12, image_url=$13 WHERE id=$14`;
-    } else {
-      params = [
-        d.barcode || null, d.product_name, d.quantity || 0,
-        d.purchase_price || 0, d.sale_price || 0,
-        d.expiry_date || null, d.category || null,
-        parseInt(d.min_stock || 0, 10), d.description || null,
-        variantsJson, d.section || 'dental', cbJson, pid,
-      ];
-      updateQuery = `UPDATE products SET barcode=$1, product_name=$2, quantity=$3, purchase_price=$4,
-        sale_price=$5, expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
-        section=$11, checkbox_values=$12 WHERE id=$13`;
-    }
+    // الصور لا تُعدَّل من POS — الإضافة/التعديل من لوحة التحكم فقط
+    // purchase_price: COALESCE يحمي القيمة الموجودة لو الجديدة null أو صفر
+    const params = [
+      d.barcode || null, d.product_name, d.quantity || 0,
+      d.purchase_price ?? null, d.sale_price || 0,
+      d.expiry_date || null, d.category || null,
+      parseInt(d.min_stock || 0, 10), d.description || null,
+      variantsJson, d.section || 'dental', cbJson, pid,
+    ];
+    const updateQuery = `UPDATE products SET barcode=$1, product_name=$2, quantity=$3,
+      purchase_price=COALESCE(NULLIF($4::numeric,0), purchase_price), sale_price=$5,
+      expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
+      section=$11, checkbox_values=$12 WHERE id=$13`;
     await posDb.query(updateQuery, params);
     try {
       await syncUpdateProductToDentrust(pid, d);
@@ -2363,26 +2351,13 @@ async function syncUpdateProductToDentrust(pid, d) {
   try {
     const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
     const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
-    // Upload new image to Supabase Storage if one was provided
-    let newPhotoUrl = null;
-    if (d.image_url && d.image_url.startsWith('data:')) {
-      newPhotoUrl = await uploadBase64ToSupabase(d.image_url);
-    } else if (d.image_url && d.image_url.startsWith('http')) {
-      newPhotoUrl = d.image_url;
-    }
-    if (newPhotoUrl) {
-      await client.query(
-        'UPDATE products SET name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, variants=$6, section=$7, checkbox_values=$8, photos=$9 WHERE id=$10',
-        [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
-         d.purchase_price ? String(d.purchase_price) : null, variantsJson,
-         d.section || 'dental', cbJson, [newPhotoUrl], row.dentrust_id]);
-    } else {
-      await client.query(
-        'UPDATE products SET name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, variants=$6, section=$7, checkbox_values=$8 WHERE id=$9',
-        [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
-         d.purchase_price ? String(d.purchase_price) : null, variantsJson,
-         d.section || 'dental', cbJson, row.dentrust_id]);
-    }
+    // الصور لا تُعدَّل من POS — الإضافة/التعديل من لوحة التحكم فقط
+    // purchase_price: COALESCE يحمي القيمة الموجودة لو الجديدة null
+    await client.query(
+      'UPDATE products SET name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=COALESCE($5, purchase_price), variants=$6, section=$7, checkbox_values=$8 WHERE id=$9',
+      [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
+       d.purchase_price ? String(d.purchase_price) : null, variantsJson,
+       d.section || 'dental', cbJson, row.dentrust_id]);
   } finally { client.release(); }
 }
 
@@ -2887,7 +2862,7 @@ async function doFullSync() {
           await posDb.query(
             `UPDATE products SET product_name=$1, sale_price=$2, quantity=$3, category=$4,
              image_url=COALESCE($5, image_url), checkbox_values=COALESCE($6, checkbox_values),
-             purchase_price=COALESCE($7, purchase_price), expiry_date=COALESCE($8, expiry_date) WHERE id=$9`,
+             purchase_price=COALESCE(NULLIF($7,0), purchase_price), expiry_date=COALESCE($8, expiry_date) WHERE id=$9`,
             [p.name, p.price || 0, p.stock || 0, p.cat_name || '', photoUrl, cbJson, p.purchase_price ?? null, p.expiry_date || null, ex.id]);
         }
         synced_products++;
