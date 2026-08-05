@@ -2694,9 +2694,9 @@ app.post(`${BASE}/api/sync/import-products`, async (req, res) => {
           const { rows: [existing] } = await posDb.query('SELECT id FROM products WHERE dentrust_id=$1', [p.id]);
           if (!existing) {
             await posDb.query(
-              `INSERT INTO products (product_name, sale_price, purchase_price, quantity, category, expiry_date, description, dentrust_id, image_url)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
-              [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.details || '', p.id, photoUrl]
+              `INSERT INTO products (product_name, sale_price, quantity, category, expiry_date, description, dentrust_id, image_url)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
+              [p.name, p.price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.details || '', p.id, photoUrl]
             );
             created++;
           } else {
@@ -2854,17 +2854,17 @@ async function doFullSync() {
         const { rows: [ex] } = await posDb.query('SELECT id FROM products WHERE dentrust_id=$1', [p.id]);
         if (!ex) {
           await posDb.query(
-            `INSERT INTO products (product_name, sale_price, purchase_price, quantity, category, expiry_date, description, dentrust_id, image_url, checkbox_values)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`,
-            [p.name, p.price || 0, p.purchase_price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.details || '', p.id, photoUrl, cbJson]
+            `INSERT INTO products (product_name, sale_price, quantity, category, expiry_date, description, dentrust_id, image_url, checkbox_values)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
+            [p.name, p.price || 0, p.stock || 0, p.cat_name || '', p.expiry_date || null, p.details || '', p.id, photoUrl, cbJson]
           );
         } else {
           // السعر محمي — لا يُعدَّل إلا من POS
           await posDb.query(
             `UPDATE products SET product_name=$1, quantity=$2, category=$3,
              image_url=COALESCE($4, image_url), checkbox_values=COALESCE($5, checkbox_values),
-             purchase_price=COALESCE(NULLIF($6,0), purchase_price), expiry_date=COALESCE($7, expiry_date) WHERE id=$8`,
-            [p.name, p.stock || 0, p.cat_name || '', photoUrl, cbJson, p.purchase_price ?? null, p.expiry_date || null, ex.id]);
+             expiry_date=COALESCE($6, expiry_date) WHERE id=$7`,
+            [p.name, p.stock || 0, p.cat_name || '', photoUrl, cbJson, p.expiry_date || null, ex.id]);
         }
         synced_products++;
       } catch (_) {}
@@ -3249,7 +3249,6 @@ app.post(`${BASE}/api/sync/upsert-product`, async (req, res) => {
   const name = d.name || d.product_name || '';
   const price = d.price || d.sale_price || 0;
   const stock = d.stock !== undefined ? d.stock : (d.quantity !== undefined ? d.quantity : 0);
-  const purchasePrice = d.purchase_price || d.cost_price || 0;
   const category = d.category || d.cat_name || null;
   const expiry = d.expiry_date || null;
   try {
@@ -3267,15 +3266,15 @@ app.post(`${BASE}/api/sync/upsert-product`, async (req, res) => {
       }
       if (existing) {
         const _cbJsonUp = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
-        // السعر محمي — لا يُعدَّل إلا من POS
+        // سعر الشراء محمي — لا يُعدَّل من الموقع، والـ POS هو المصدر الوحيد له
         await posDb.query(
-          'UPDATE products SET product_name=$1, quantity=$2, expiry_date=$3, purchase_price=COALESCE(NULLIF($4,0), purchase_price), category=COALESCE($5, category), checkbox_values=COALESCE($7, checkbox_values) WHERE dentrust_id=$6',
-          [name, stock, expiry, purchasePrice, category, d.dentrust_id, _cbJsonUp]
+          'UPDATE products SET product_name=$1, quantity=$2, expiry_date=$3, category=COALESCE($4, category), checkbox_values=COALESCE($5, checkbox_values) WHERE dentrust_id=$6',
+          [name, stock, expiry, category, _cbJsonUp, d.dentrust_id]
         );
       } else {
         await posDb.query(
-          'INSERT INTO products (product_name, sale_price, quantity, expiry_date, dentrust_id, purchase_price, category) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
-          [name, price, stock, expiry, d.dentrust_id, purchasePrice, category]
+          'INSERT INTO products (product_name, sale_price, quantity, expiry_date, dentrust_id, category) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING',
+          [name, price, stock, expiry, d.dentrust_id, category]
         );
       }
     }
