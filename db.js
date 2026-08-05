@@ -7,6 +7,9 @@ types.setTypeParser(1700, val => val === null ? null : parseFloat(val));
 types.setTypeParser(20, val => val === null ? null : parseInt(val, 10));
 
 const DATABASE_URL = process.env.DATABASE_URL;
+// Website/Supabase database. When it is not configured, keep the original
+// single-database behavior by falling back to DATABASE_URL.
+const WEBSITE_DATABASE_URL = process.env.SUPABASE_DATABASE_URL || DATABASE_URL;
 const POS_SCHEMA = 'pos_data';
 
 const sslConfig = process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false;
@@ -17,29 +20,44 @@ const sslConfig = process.env.NODE_ENV === 'production' ? { rejectUnauthorized: 
 //    Supabase Session Pooler وDirect Connection)
 // 2) on('connect') كـ fallback لأي حالة تانية
 // ملاحظة: المسافة بين -c وsearch_path مهمة جداً (-c search_path مش -csearch_path)
-function withSearchPath(url, schema) {
+function withPgOptions(url, options) {
   if (!url) return url;
   const sep = url.includes('?') ? '&' : '?';
-  // %20 = space, %3D = =, %2C = ,
-  return `${url}${sep}options=-c%20search_path%3D${schema}%2Cpublic`;
+  return `${url}${sep}options=${encodeURIComponent(options)}`;
+}
+
+function withSearchPath(url, schema) {
+  return withPgOptions(url, `-c search_path=${schema},public -c app.pos_source=true`);
+}
+
+function withPosSource(url) {
+  return withPgOptions(url, '-c app.pos_source=true');
 }
 
 // posDb: POS-specific tables under pos_data schema
 const posDb = new Pool({ connectionString: withSearchPath(DATABASE_URL, POS_SCHEMA), ssl: sslConfig, max: 5, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
 posDb.on('connect', client => {
-  client.query(`SET search_path TO ${POS_SCHEMA}, public`).catch(() => {});
+  client.query(`SET search_path TO ${POS_SCHEMA}, public`)
+    .then(() => client.query(`SET app.pos_source = 'true'`))
+    .catch(() => {});
 });
 
 // dentrustDb: public schema (products, orders, categories…)
 // نفس قاعدة البيانات — pool منفصل بدون search_path override
-const dentrustDb = new Pool({ connectionString: DATABASE_URL, ssl: sslConfig, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
-// No search_path override → defaults to public schema ✓
+const dentrustDb = new Pool({ connectionString: withPosSource(WEBSITE_DATABASE_URL), ssl: sslConfig, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
+// Mark this pool as POS-owned so database-level product protections allow
+// POS-to-website synchronization while blocking direct website connections.
+dentrustDb.on('connect', client => {
+  client.query(`SET app.pos_source = 'true'`).catch(() => {});
+});
 
 // sessionDb: pool مخصّص لجلسات المستخدمين (تسجيل الدخول) بس، منفصل عن posDb.
 // نفس الـ double-fix عشان الجلسة تتحفظ وتتقرأ صح في pos_data schema.
 const sessionDb = new Pool({ connectionString: withSearchPath(DATABASE_URL, POS_SCHEMA), ssl: sslConfig, max: 4, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
 sessionDb.on('connect', client => {
-  client.query(`SET search_path TO ${POS_SCHEMA}, public`).catch(() => {});
+  client.query(`SET search_path TO ${POS_SCHEMA}, public`)
+    .then(() => client.query(`SET app.pos_source = 'true'`))
+    .catch(() => {});
 });
 
 const ALL_PERMS = {
