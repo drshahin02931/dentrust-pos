@@ -1665,10 +1665,12 @@ app.get(`${BASE}/api/invoices`, async (req, res) => {
     const { rows } = await posDb.query(
       `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone,
               COALESCE(ret.total_refunded,0) AS total_refunded,
-              COALESCE(ret.return_count,0) AS return_count
+              COALESCE(ret.return_count,0) AS return_count,
+              COALESCE(prof.profit,0) AS profit
        FROM sales s
        LEFT JOIN customers c ON s.customer_id = c.id
        LEFT JOIN (SELECT sale_id, SUM(total_refund) AS total_refunded, COUNT(*) AS return_count FROM returns GROUP BY sale_id) ret ON ret.sale_id = s.id
+       LEFT JOIN (SELECT sale_id, SUM((unit_price - COALESCE(snapshot_purchase_price,0)) * quantity) AS profit FROM sale_items GROUP BY sale_id) prof ON prof.sale_id = s.id
        ORDER BY s.date DESC`
     );
     const result = rows.map(r => {
@@ -1709,6 +1711,7 @@ app.get(`${BASE}/api/invoices/:sid`, async (req, res) => {
     const totalSold = items.reduce((s, i) => s + i.quantity, 0);
     const returnStatus = (totalRemaining === 0 && totalSold > 0) ? 2 : (totalRemaining < totalSold ? 1 : 0);
     inv.return_status = returnStatus;
+    inv.profit = items.reduce((s, i) => s + (parseFloat(i.unit_price||0) - parseFloat(i.snapshot_purchase_price||0)) * parseInt(i.quantity||0, 10), 0);
     const { rows: returns } = await posDb.query(
       `SELECT r.*, u.username AS processed_by_name FROM returns r
        LEFT JOIN users u ON u.id = r.processed_by WHERE r.sale_id=$1 ORDER BY r.date`, [sid]
