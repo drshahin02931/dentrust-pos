@@ -86,6 +86,7 @@
           <th class="px-4 py-3" data-ar="العميل" data-en="Customer">العميل</th>
           <th class="px-4 py-3" data-ar="طريقة الدفع" data-en="Payment">طريقة الدفع</th>
           <th class="px-4 py-3" data-ar="الإجمالي" data-en="Total">الإجمالي</th>
+          <% if (isMgr) { %><th class="px-4 py-3 text-green-700" data-ar="الربح" data-en="Profit">الربح</th><% } %>
           <th class="px-4 py-3" data-ar="الحالة" data-en="Status">الحالة</th>
           <th class="px-4 py-3" data-ar="إجراءات" data-en="Actions">إجراءات</th>
         </tr>
@@ -282,6 +283,7 @@ function renderTable() {
       <td class="px-4 py-3 text-gray-700">${inv.customer_name||'—'}</td>
       <td class="px-4 py-3">${payBadge}</td>
       <td class="px-4 py-3 font-bold ${fullyReturned?'text-red-400 line-through':'text-gray-800'}">${(inv.total_amount-(inv.total_refunded||0)).toFixed(2)} جنيه${refundedStrike}</td>
+      ${IS_MGR ? `<td class="px-4 py-3 font-bold ${parseFloat(inv.profit||0)>=0?'text-green-600':'text-red-500'}">${parseFloat(inv.profit||0).toFixed(2)} جنيه</td>` : ''}
       <td class="px-4 py-3">${statusBadge(inv)}</td>
       <td class="px-4 py-3" onclick="event.stopPropagation()">
         <div class="flex gap-1.5 flex-wrap">
@@ -387,6 +389,10 @@ async function viewInvoice(id) {
         ${inv.total_refunded > 0 ? '<div class="text-xs text-red-400 line-through">' + inv.total_amount.toFixed(2) + ' جنيه (قبل المردود)</div>' : ''}
       </div>
     </div>
+    ${IS_MGR ? `<div class="bg-green-50 border border-green-200 rounded-xl p-4 flex justify-between items-center">
+      <span class="font-bold text-green-700">💰 ربح الفاتورة</span>
+      <span class="text-2xl font-black ${parseFloat(data.invoice.profit||0)>=0?'text-green-700':'text-red-600'}">${parseFloat(data.invoice.profit||0).toFixed(2)} جنيه</span>
+    </div>` : ''}
     ${returnsHtml}
   </div>`;
 
