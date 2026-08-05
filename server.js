@@ -1476,9 +1476,9 @@ app.get(`${BASE}/api/extra-profits`, async (req, res) => {
   try {
     const period = req.query.period || 'all';
     let where = '';
-    if (period === 'today') where = `WHERE date = CURRENT_DATE::text`;
-    else if (period === 'week') where = `WHERE date >= (CURRENT_DATE - INTERVAL '7 days')::text`;
-    else if (period === 'month') where = `WHERE date >= (CURRENT_DATE - INTERVAL '30 days')::text`;
+    if (period === 'today') where = `WHERE date::date = CURRENT_DATE`;
+    else if (period === 'week')  where = `WHERE date::date >= CURRENT_DATE - INTERVAL '7 days'`;
+    else if (period === 'month') where = `WHERE TO_CHAR(date::date,'YYYY-MM') = TO_CHAR(CURRENT_DATE,'YYYY-MM')`;
     const { rows } = await posDb.query(`SELECT * FROM extra_profits ${where} ORDER BY id DESC`);
     res.json(rows);
   } catch (err) { console.error(err); res.status(500).json({ error: 'خطأ داخلي' }); }
@@ -1536,9 +1536,9 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
       `SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r WHERE ${rf}`
     );
     const { rows: [sc] } = await posDb.query(`SELECT COUNT(*) as cnt FROM sales s WHERE ${df}`);
-    const pf = period === 'today' ? `WHERE date = CURRENT_DATE::text`
-             : period === 'week'  ? `WHERE date >= (CURRENT_DATE - INTERVAL '7 days')::text`
-             : period === 'month' ? `WHERE date >= (CURRENT_DATE - INTERVAL '30 days')::text`
+    const pf = period === 'today' ? `WHERE date::date = CURRENT_DATE`
+             : period === 'week'  ? `WHERE date::date >= CURRENT_DATE - INTERVAL '7 days'`
+             : period === 'month' ? `WHERE TO_CHAR(date::date,'YYYY-MM') = TO_CHAR(CURRENT_DATE,'YYYY-MM')`
              : '';
     const { rows: [epR] } = await posDb.query(
       `SELECT COALESCE(SUM(amount),0) as t FROM extra_profits ${pf}`
