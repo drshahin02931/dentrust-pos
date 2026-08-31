@@ -125,23 +125,151 @@
   })();
   </script>
 
-  <!-- Notifications Badge Script -->
+  <!-- ════════════════ Online Orders Audio & Toast Alert System ════════════════ -->
+  <div id="globalOrderToast" class="hidden fixed top-5 left-1/2 -translate-x-1/2 z-[99999] max-w-md w-full px-4 animate-in slide-in-from-top duration-200">
+    <div class="bg-gradient-to-r from-orange-600 to-amber-600 text-white rounded-2xl shadow-2xl p-4 border-2 border-white/30 flex items-center gap-3.5 backdrop-blur-md">
+      <div class="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center text-2xl flex-shrink-0 animate-bounce">
+        🛒
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center justify-between">
+          <span class="font-black text-sm text-yellow-100">وصل طلب جديد من الموقع! 🔔</span>
+          <span id="toastTime" class="text-[10px] text-white/80">الآن</span>
+        </div>
+        <p id="toastCustName" class="text-xs font-bold text-white truncate mt-0.5">عميل جديد</p>
+        <p id="toastSummary" class="text-[11px] text-yellow-100 truncate mt-0.5"></p>
+      </div>
+      <div class="flex flex-col gap-1 flex-shrink-0">
+        <a id="toastLink" href="<%= base %>/website-orders" class="bg-white text-orange-700 hover:bg-yellow-50 font-black text-xs px-3 py-1.5 rounded-xl text-center shadow transition-all">
+          عرض ↗
+        </a>
+        <button onclick="dismissGlobalToast()" class="text-white/70 hover:text-white text-[11px] text-center font-bold">
+          إغلاق
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Real-time Alerts & Sound Script -->
   <script>
   (function() {
     const BASE_PATH = "<%= base %>";
-    async function refreshBadge() {
+    let _lastUnseenOrdersCount = null;
+    let _audioCtx = null;
+
+    // Web Audio API Ding-Dong Chime Sound Generator (No external audio file needed)
+    function playOrderAlertSound() {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        if (!_audioCtx) _audioCtx = new AudioCtx();
+        if (_audioCtx.state === 'suspended') _audioCtx.resume();
+
+        const notes = [
+          { freq: 659.25, time: 0, dur: 0.25 },     // E5
+          { freq: 880.00, time: 0.15, dur: 0.35 },  // A5
+          { freq: 1174.66, time: 0.30, dur: 0.55 }  // D6 (high joyful chime)
+        ];
+
+        notes.forEach(n => {
+          const osc = _audioCtx.createOscillator();
+          const gain = _audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(n.freq, _audioCtx.currentTime + n.time);
+
+          gain.gain.setValueAtTime(0.001, _audioCtx.currentTime + n.time);
+          gain.gain.exponentialRampToValueAtTime(0.35, _audioCtx.currentTime + n.time + 0.04);
+          gain.gain.exponentialRampToValueAtTime(0.001, _audioCtx.currentTime + n.time + n.dur);
+
+          osc.connect(gain);
+          gain.connect(_audioCtx.destination);
+
+          osc.start(_audioCtx.currentTime + n.time);
+          osc.stop(_audioCtx.currentTime + n.time + n.dur);
+        });
+      } catch (err) {
+        console.warn('Audio alert error:', err);
+      }
+    }
+
+    // Unlock AudioContext on first user touch/click (browser autoplay policy)
+    function unlockAudio() {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx && !_audioCtx) {
+          _audioCtx = new AudioCtx();
+          if (_audioCtx.state === 'suspended') _audioCtx.resume();
+        }
+      } catch (_) {}
+      document.removeEventListener('click', unlockAudio);
+      document.removeEventListener('keydown', unlockAudio);
+    }
+    document.addEventListener('click', unlockAudio, { once: true });
+    document.addEventListener('keydown', unlockAudio, { once: true });
+
+    // Show Global Toast for New Orders
+    window.showOrderToast = function(orderInfo) {
+      const toast = document.getElementById('globalOrderToast');
+      if (!toast) return;
+      if (orderInfo) {
+        document.getElementById('toastCustName').textContent = `👤 ${orderInfo.customer_name || 'عميل'} (${orderInfo.total_amount ? parseFloat(orderInfo.total_amount).toFixed(2)+' ج' : ''})`;
+        document.getElementById('toastSummary').textContent = orderInfo.items_summary || 'طلب شراء جديد عبر الموقع الإلكتروني';
+      }
+      toast.classList.remove('hidden');
+
+      // Auto dismiss after 12 seconds
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => {
+        dismissGlobalToast();
+      }, 12000);
+    };
+
+    window.dismissGlobalToast = function() {
+      const toast = document.getElementById('globalOrderToast');
+      if (toast) toast.classList.add('hidden');
+    };
+
+    // Poll for Low Stock & Website Orders
+    async function checkAlerts() {
+      // 1. Low stock badge
       try {
         const res = await fetch(`${BASE_PATH}/api/products/low-stock`, { credentials: 'include' });
         const items = await res.json();
         const badge = document.getElementById("lowStockBadge");
-        if (!badge) return;
-        if (items.length > 0) { badge.textContent = items.length; badge.classList.remove("hidden"); }
-        else { badge.classList.add("hidden"); }
-      } catch(e) {}
+        if (badge) {
+          if (items.length > 0) { badge.textContent = items.length; badge.classList.remove("hidden"); }
+          else { badge.classList.add("hidden"); }
+        }
+      } catch(_) {}
+
+      // 2. Website order alerts (every 12 seconds)
+      try {
+        const res = await fetch(`${BASE_PATH}/api/website-orders/alerts/count`, { credentials: 'include' });
+        const data = await res.json();
+        const count = parseInt(data.count || 0, 10);
+        const webBadge = document.getElementById("webOrdersBadge");
+
+        if (webBadge) {
+          if (count > 0) {
+            webBadge.textContent = count;
+            webBadge.classList.remove("hidden");
+          } else {
+            webBadge.classList.add("hidden");
+          }
+        }
+
+        // New order arrived!
+        if (_lastUnseenOrdersCount !== null && count > _lastUnseenOrdersCount) {
+          playOrderAlertSound();
+          showOrderToast(data.latest);
+        }
+        _lastUnseenOrdersCount = count;
+      } catch(_) {}
     }
-    window.refreshBadge = refreshBadge;
-    document.addEventListener('DOMContentLoaded', refreshBadge);
-    setInterval(refreshBadge, 60000);
+
+    window.refreshAlerts = checkAlerts;
+    document.addEventListener('DOMContentLoaded', checkAlerts);
+    setInterval(checkAlerts, 12000); // Poll every 12 seconds
   })();
   </script>
 
