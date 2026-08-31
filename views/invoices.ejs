@@ -593,19 +593,156 @@ function searchAddItems() {
   }, 200);
 }
 
+let _avProduct = null;
+let _avVariants = null;
+let _avSelectedSize = null;
+let _avQty = 1;
+
+function parseAddVariants(p) {
+  if (p.variants) {
+    try {
+      const v = typeof p.variants === 'string' ? JSON.parse(p.variants) : p.variants;
+      if (v && Array.isArray(v.items) && v.items.length > 0) {
+        return { sizes: v.items.map(item => ({ label: item.label, qty: item.qty })) };
+      }
+      if (v && v.sizes && v.sizes.length > 0) return v;
+    } catch(e) {}
+  }
+  if (p.checkbox_values) {
+    try {
+      const cv = typeof p.checkbox_values === 'string' ? JSON.parse(p.checkbox_values) : p.checkbox_values;
+      const sizes = [];
+      Object.entries(cv).forEach(([key, val]) => {
+        const sep = key.indexOf('::');
+        if (sep === -1) return;
+        const label = key.slice(sep + 2);
+        const checked = typeof val === 'boolean' ? val : (val?.checked ?? false);
+        const disabled = typeof val === 'object' ? (val?.disabled ?? false) : false;
+        if (!checked || disabled) return;
+        const stock = (typeof val === 'object' && val?.stock !== null && val?.stock !== undefined)
+          ? parseInt(val.stock)
+          : (p.quantity || 0);
+        sizes.push({ label, qty: stock, _cbKey: key });
+      });
+      if (sizes.length > 0) return { sizes };
+    } catch(e) {}
+  }
+  return null;
+}
+
+function openAddVariantModal(product, variants) {
+  _avProduct = product;
+  _avVariants = variants;
+  _avSelectedSize = null;
+  _avQty = 1;
+
+  document.getElementById('av-prod-name').textContent = product.product_name;
+  document.getElementById('av-prod-price').textContent = product.sale_price.toFixed(2) + ' جنيه';
+  document.getElementById('av-error').classList.add('hidden');
+  document.getElementById('av-qty-section').classList.add('hidden');
+  document.getElementById('av-confirm-btn').disabled = true;
+
+  const sizes = variants.sizes || [];
+  const list = document.getElementById('av-sizes-list');
+  list.innerHTML = sizes.map(s => {
+    const outOfStock = s.qty <= 0;
+    const key = (s._cbKey || s.label).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    return `
+      <button type="button" onclick="selectAddVariantSize('${key}', ${s.qty}, this)" ${outOfStock ? 'disabled' : ''}
+        class="av-size-btn border-2 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all ${outOfStock ? 'bg-gray-50 border-gray-200 text-gray-300 cursor-not-allowed' : 'bg-white border-gray-200 hover:border-blue-400 text-gray-800'}">
+        <span class="font-bold text-sm">${s.label}</span>
+        <span class="text-[11px] mt-0.5 ${outOfStock ? 'text-red-400' : 'text-gray-400'}">${outOfStock ? 'نفذ' : s.qty + ' متاح'}</span>
+      </button>
+    `;
+  }).join('');
+
+  document.getElementById('addVariantModal').classList.remove('hidden');
+}
+
+function selectAddVariantSize(key, maxQty, btnEl) {
+  _avSelectedSize = key;
+  _avQty = 1;
+  document.getElementById('av-qty-display').textContent = '1';
+  document.getElementById('av-qty-section').classList.remove('hidden');
+  document.getElementById('av-confirm-btn').disabled = false;
+
+  document.querySelectorAll('.av-size-btn').forEach(btn => {
+    btn.classList.remove('border-blue-600', 'bg-blue-50', 'text-blue-700', 'font-black');
+  });
+  if (btnEl) {
+    btnEl.classList.add('border-blue-600', 'bg-blue-50', 'text-blue-700', 'font-black');
+  }
+}
+
+function changeAvQty(delta) {
+  if (!_avSelectedSize) return;
+  const sObj = (_avVariants.sizes || []).find(s => (s._cbKey || s.label) === _avSelectedSize);
+  const max = sObj ? sObj.qty : 999;
+  _avQty = Math.max(1, Math.min(_avQty + delta, max));
+  document.getElementById('av-qty-display').textContent = _avQty;
+}
+
+function closeAddVariantModal() {
+  document.getElementById('addVariantModal').classList.add('hidden');
+  _avProduct = _avVariants = _avSelectedSize = null;
+  _avQty = 1;
+}
+
+function confirmAddVariant() {
+  if (!_avProduct || !_avSelectedSize) return;
+  const sObj = (_avVariants.sizes || []).find(s => (s._cbKey || s.label) === _avSelectedSize);
+  const sizeLabel = sObj ? sObj.label : _avSelectedSize;
+  const maxQty = sObj ? sObj.qty : _avProduct.quantity;
+
+  const existing = addItemsCart.find(i => i.product_id === _avProduct.id && i.selected_option === _avSelectedSize);
+  if (existing) {
+    if (existing.quantity + _avQty > maxQty) {
+      alert(`المخزون المتاح للمقاس "${sizeLabel}" هو (${maxQty}) فقط`);
+      return;
+    }
+    existing.quantity += _avQty;
+  } else {
+    addItemsCart.push({
+      product_id: _avProduct.id,
+      product_name: _avProduct.product_name,
+      selected_option: _avSelectedSize,
+      size_label: sizeLabel,
+      unit_price: _avProduct.sale_price,
+      quantity: _avQty,
+      max_qty: maxQty
+    });
+  }
+  closeAddVariantModal();
+  renderAddCart();
+}
+
 function addItemFromSugg(id) {
   const p = addItemsSuggCache[id];
   if (!p) return;
   document.getElementById("addItemsSuggestions").classList.add("hidden");
   document.getElementById("addItemsSearch").value = "";
   if (p.quantity <= 0) { alert(`"${p.product_name}" غير متوفر في المخزون`); return; }
-  const existing = addItemsCart.find(i => i.product_id === p.id);
+
+  const v = parseAddVariants(p);
+  if (v && v.sizes && v.sizes.length > 0) {
+    openAddVariantModal(p, v);
+    return;
+  }
+
+  const existing = addItemsCart.find(i => i.product_id === p.id && !i.selected_option);
   if (existing) {
     if (existing.quantity >= p.quantity) { alert("لا يوجد مخزون كافٍ"); return; }
     existing.quantity++;
   } else {
-    addItemsCart.push({ product_id: p.id, product_name: p.product_name,
-      unit_price: p.sale_price, quantity: 1, max_qty: p.quantity });
+    addItemsCart.push({
+      product_id: p.id,
+      product_name: p.product_name,
+      selected_option: null,
+      size_label: null,
+      unit_price: p.sale_price,
+      quantity: 1,
+      max_qty: p.quantity
+    });
   }
   renderAddCart();
 }
@@ -620,7 +757,10 @@ function renderAddCart() {
   list.innerHTML = addItemsCart.map((item, idx) => `
     <div class="flex items-center gap-3 border rounded-xl p-3 bg-gray-50">
       <div class="flex-1 min-w-0">
-        <div class="font-medium text-sm truncate">${item.product_name}</div>
+        <div class="font-medium text-sm truncate flex items-center gap-1.5">
+          <span>${item.product_name}</span>
+          ${item.size_label || item.selected_option ? `<span class="px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 text-xs font-bold">${item.size_label || item.selected_option}</span>` : ''}
+        </div>
         <div class="text-xs text-gray-500">${item.unit_price.toFixed(2)} جنيه/وحدة</div>
       </div>
       <div class="flex items-center gap-1">
@@ -654,8 +794,11 @@ async function confirmAddItems() {
     method: "POST",
     headers: {"Content-Type":"application/json"},
     body: JSON.stringify({ items: addItemsCart.map(i => ({
-      product_id: i.product_id, product_name: i.product_name,
-      quantity: i.quantity, unit_price: i.unit_price
+      product_id: i.product_id,
+      product_name: i.product_name,
+      selected_option: i.selected_option || null,
+      quantity: i.quantity,
+      unit_price: i.unit_price
     })) })
   });
   const data = await res.json();
@@ -791,6 +934,45 @@ async function saveEditPrices() {
     <div class="flex gap-2 pt-1">
       <button id="editPricesSaveBtn" onclick="saveEditPrices()" class="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2.5 rounded-xl text-sm">حفظ</button>
       <button onclick="closeEditPrices()" class="px-5 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-2.5 rounded-xl text-sm">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal اختيار المقاسات والخيارات عند إضافة صنف للفاتورة -->
+<div id="addVariantModal" class="hidden fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 space-y-4">
+    <div class="flex items-center justify-between border-b pb-3">
+      <div>
+        <h3 id="av-prod-name" class="font-bold text-gray-800 text-base"></h3>
+        <p id="av-prod-price" class="text-xs text-blue-700 font-black mt-0.5"></p>
+      </div>
+      <button onclick="closeAddVariantModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">✕</button>
+    </div>
+
+    <div>
+      <label class="text-xs font-bold text-gray-600 block mb-2">اختر المقاس / الخيار المطلوب:</label>
+      <div id="av-sizes-list" class="grid grid-cols-3 gap-2 max-h-56 overflow-y-auto p-1"></div>
+    </div>
+
+    <div id="av-qty-section" class="hidden bg-gray-50 border rounded-xl p-3 flex items-center justify-between">
+      <span class="text-xs font-semibold text-gray-600">الكمية المطلوبة:</span>
+      <div class="flex items-center gap-2">
+        <button type="button" onclick="changeAvQty(-1)" class="w-8 h-8 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold text-base flex items-center justify-center">−</button>
+        <span id="av-qty-display" class="w-8 text-center font-bold text-base text-blue-700">1</span>
+        <button type="button" onclick="changeAvQty(1)" class="w-8 h-8 rounded-lg bg-gray-200 hover:bg-gray-300 font-bold text-base flex items-center justify-center">+</button>
+      </div>
+    </div>
+
+    <p id="av-error" class="hidden text-xs text-red-600 bg-red-50 rounded-xl p-2 text-center"></p>
+
+    <div class="flex gap-2 pt-2 border-t">
+      <button id="av-confirm-btn" onclick="confirmAddVariant()" disabled
+        class="flex-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-sm transition-all">
+        ➕ إضافة للفاتورة
+      </button>
+      <button type="button" onclick="closeAddVariantModal()" class="px-5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 rounded-xl text-sm">
+        إلغاء
+      </button>
     </div>
   </div>
 </div>
