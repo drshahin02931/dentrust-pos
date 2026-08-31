@@ -3269,6 +3269,14 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
       ]
     ).catch(() => {});
 
+    // 🔔 Send push notification to all staff devices
+    sendPushToAll(
+      '🛒 طلب جديد من الموقع!',
+      `العميل: ${d.customer_name || 'عميل'} — الإجمالي: ${alertTotal.toFixed(2)} ج.م`,
+      `${BASE}/website-orders`,
+      'web-order'
+    ).catch(() => {});
+
     const customerId = await upsertCustomerInPOS({
       name: d.customer_name,
       phone: d.customer_phone,
@@ -4661,13 +4669,19 @@ app.get('/api/admin/price-tracker/analytics', webCors, async (req, res) => {
 
 
 // ── Website Order Alerts (POS staff notifications) ───────────────────────────
-// GET unseen alerts count (for badge)
+// GET unseen alerts count and latest item (for badge & sound alert)
 app.get(`${BASE}/api/website-orders/alerts/count`, async (req, res) => {
-  if (!req.session?.user_id) return res.json({ count: 0 });
+  if (!req.session?.user_id) return res.json({ count: 0, latest: null });
   try {
     const { rows: [r] } = await posDb.query('SELECT COUNT(*) AS count FROM website_order_alerts WHERE seen=false');
-    res.json({ count: parseInt(r.count, 10) });
-  } catch { res.json({ count: 0 }); }
+    const cnt = parseInt(r?.count || 0, 10);
+    let latest = null;
+    if (cnt > 0) {
+      const { rows: [l] } = await posDb.query('SELECT * FROM website_order_alerts WHERE seen=false ORDER BY created_at DESC, id DESC LIMIT 1');
+      latest = l || null;
+    }
+    res.json({ count: cnt, latest });
+  } catch { res.json({ count: 0, latest: null }); }
 });
 
 // GET unseen alerts (for popup)
@@ -5436,6 +5450,77 @@ app.get(`${BASE}/api/reports/top-variants`, async (req, res) => {
   }
 });
 
+// ── Backfill Historical Movements from existing Sales & Returns ───────────────
+async function backfillHistoricalMovements() {
+  try {
+    const { rows: [chk] } = await posDb.query('SELECT COUNT(*) as count FROM product_movement_logs');
+    if (parseInt(chk?.count || 0, 10) === 0) {
+      console.log('[Movements] Backfilling historical product movements from past sales and returns...');
+      // 1. Backfill Sales
+      await posDb.query(`
+        INSERT INTO product_movement_logs (
+          product_id, product_name, movement_type, reference_id, reference_title,
+          selected_option, quantity_change, quantity_before, quantity_after,
+          unit_price, unit_cost, user_name, notes, date, created_at
+        )
+        SELECT
+          si.product_id,
+          COALESCE(si.product_name, 'صنف'),
+          'sale' AS movement_type,
+          s.id AS reference_id,
+          'فاتورة مبيعات #' || s.id AS reference_title,
+          si.selected_option,
+          -COALESCE(si.quantity, 1) AS quantity_change,
+          0 AS quantity_before,
+          0 AS quantity_after,
+          COALESCE(si.unit_price, 0) AS unit_price,
+          COALESCE(si.snapshot_purchase_price, 0) AS unit_cost,
+          COALESCE(u.username, 'كاشير') AS user_name,
+          'مبيعات سابقة للعميل: ' || COALESCE(s.customer_name, 'نقدي') AS notes,
+          COALESCE(s.date, NOW()::text) AS date,
+          (CASE WHEN s.date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN s.date::timestamptz ELSE NOW() END) AS created_at
+        FROM sale_items si
+        JOIN sales s ON s.id = si.sale_id
+        LEFT JOIN users u ON u.id = s.cashier_id
+        ORDER BY s.id ASC
+      `).catch(e => console.error('Sales backfill err:', e.message));
+
+      // 2. Backfill Returns
+      await posDb.query(`
+        INSERT INTO product_movement_logs (
+          product_id, product_name, movement_type, reference_id, reference_title,
+          selected_option, quantity_change, quantity_before, quantity_after,
+          unit_price, unit_cost, user_name, notes, date, created_at
+        )
+        SELECT
+          ri.product_id,
+          COALESCE(ri.product_name, 'صنف'),
+          'return' AS movement_type,
+          r.sale_id AS reference_id,
+          'مرتجع إذن #' || r.id || ' فاتورة #' || r.sale_id AS reference_title,
+          NULL AS selected_option,
+          COALESCE(ri.quantity, 1) AS quantity_change,
+          0 AS quantity_before,
+          0 AS quantity_after,
+          COALESCE(ri.unit_price, 0) AS unit_price,
+          0 AS unit_cost,
+          COALESCE(u.username, 'كاشير') AS user_name,
+          'مرتجع سابق: ' || COALESCE(r.reason, 'بدون سبب') AS notes,
+          COALESCE(r.date, NOW()::text) AS date,
+          (CASE WHEN r.date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN r.date::timestamptz ELSE NOW() END) AS created_at
+        FROM return_items ri
+        JOIN returns r ON r.id = ri.return_id
+        LEFT JOIN users u ON u.id = r.processed_by
+        ORDER BY r.id ASC
+      `).catch(e => console.error('Returns backfill err:', e.message));
+
+      console.log('[Movements] Historical movements backfilled successfully ✓');
+    }
+  } catch (err) {
+    console.error('Backfill movements error:', err.message);
+  }
+}
+
 // ── Start Server ──────────────────────────────────────────────────────────────
 
 async function main() {
@@ -5449,6 +5534,7 @@ async function main() {
   }
   try {
     await initDb();
+    await backfillHistoricalMovements();
 
     // Fix: ensure 'reason' column exists on customer_manual_debts
     await posDb.query(`ALTER TABLE customer_manual_debts ADD COLUMN IF NOT EXISTS reason TEXT DEFAULT ''`).catch(() => {});
