@@ -19,6 +19,7 @@ const BASE = (process.env.BASE_PATH || '/pos-system').replace(/\/$/, '');
 const PORT = parseInt(process.env.PORT || '5000', 10);
 const DATABASE_URL = process.env.DATABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 // ── VAPID / Web Push ─────────────────────────────────────────────────────────
 const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  || '';
@@ -811,28 +812,34 @@ app.delete(`${BASE}/api/products/:pid`, async (req, res) => {
 
 app.post(`${BASE}/api/products/:pid/apply-discount`, async (req, res) => {
   const pid = parseInt(req.params.pid, 10);
-  await posDb.query('UPDATE products SET sale_price=$1 WHERE id=$2', [parseFloat(req.body.new_price || 0), pid]);
-  res.json({ ok: true });
+  try {
+    await posDb.query('UPDATE products SET sale_price=$1 WHERE id=$2', [parseFloat(req.body.new_price || 0), pid]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 app.post(`${BASE}/api/products/:pid/mark-damaged`, async (req, res) => {
   const pid = parseInt(req.params.pid, 10);
-  const { rows: [prod] } = await posDb.query('SELECT * FROM products WHERE id=$1', [pid]);
-  if (prod) {
-    const loss = parseFloat(prod.quantity || 0) * parseFloat(prod.purchase_price || 0);
-    await posDb.query('UPDATE products SET quantity=0 WHERE id=$1', [pid]);
-    await posDb.query(
-      "INSERT INTO expenses (title, amount, date) VALUES ($1,$2,CURRENT_DATE::text)",
-      [`خسارة/تلف: ${prod.product_name}`, loss]
-    );
-  }
-  res.json({ ok: true });
+  try {
+    const { rows: [prod] } = await posDb.query('SELECT * FROM products WHERE id=$1', [pid]);
+    if (prod) {
+      const loss = parseFloat(prod.quantity || 0) * parseFloat(prod.purchase_price || 0);
+      await posDb.query('UPDATE products SET quantity=0 WHERE id=$1', [pid]);
+      await posDb.query(
+        "INSERT INTO expenses (title, amount, date) VALUES ($1,$2,CURRENT_DATE::text)",
+        [`خسارة/تلف: ${prod.product_name}`, loss]
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 app.put(`${BASE}/api/products/:pid/supplier`, async (req, res) => {
   const pid = parseInt(req.params.pid, 10);
-  await posDb.query('UPDATE products SET supplier_id=$1 WHERE id=$2', [req.body.supplier_id || null, pid]);
-  res.json({ ok: true });
+  try {
+    await posDb.query('UPDATE products SET supplier_id=$1 WHERE id=$2', [req.body.supplier_id || null, pid]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // ── API: Barcode image ────────────────────────────────────────────────────────
@@ -1022,11 +1029,11 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
     for (const item of items) {
       const { rows: [snap] } = await client.query('SELECT purchase_price FROM products WHERE id=$1', [item.product_id]);
       const snapPp = snap ? parseFloat(snap.purchase_price || 0) : 0;
+      const selOptSaved = item.selected_option || item.selectedOption || item._checkbox || item._size || item.selected_size || null;
       await client.query(
         `INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_purchase_price, snapshot_unit_price, selected_option)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [saleId, item.product_id, item.product_name, item.quantity, item.unit_price, snapPp, parseFloat(item.unit_price),
-         item.selected_option || item.selectedOption || item._checkbox || null]
+        [saleId, item.product_id, item.product_name, item.quantity, item.unit_price, snapPp, parseFloat(item.unit_price), selOptSaved]
       );
       const stockUpdate = await client.query(
         'UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2 AND quantity >= $1 RETURNING id',
@@ -1169,17 +1176,18 @@ app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
     );
     for (const item of items) {
       const netRestore = item.quantity - item.returned;
-      if (netRestore > 0) await posDb.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [netRestore, item.product_id]);
+      if (netRestore > 0 && item.product_id) {
+        await posDb.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [netRestore, item.product_id]);
+      }
       // Restore checkbox option stock if tracked
-      if (netRestore > 0 && item.selected_option) {
+      if (netRestore > 0 && item.product_id && item.selected_option) {
         try {
-          const { rows: [pcb] } = await posDb.query('SELECT checkbox_values FROM products WHERE id=$1', [item.product_id]);
+          const { rows: [pcb] } = await posDb.query('SELECT checkbox_values, variants FROM products WHERE id=$1', [item.product_id]);
           if (pcb?.checkbox_values) {
             const cbv = typeof pcb.checkbox_values === 'string' ? JSON.parse(pcb.checkbox_values) : { ...pcb.checkbox_values };
             if (cbv[item.selected_option] && typeof cbv[item.selected_option] === 'object' && cbv[item.selected_option].stock != null) {
               cbv[item.selected_option].stock = (cbv[item.selected_option].stock || 0) + netRestore;
               cbv[item.selected_option].disabled = false;
-              // Recalculate main quantity from sum of all checkbox stocks to stay in sync
               const totalCbQty = Object.values(cbv).reduce((sum, v) =>
                 sum + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
               await posDb.query(
@@ -1188,10 +1196,18 @@ app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
               );
             }
           }
+          if (pcb?.variants) {
+            const vObj = typeof pcb.variants === 'string' ? JSON.parse(pcb.variants) : { ...pcb.variants };
+            const sIdx = (vObj.sizes || []).findIndex(s => s.label === item.selected_option);
+            if (sIdx >= 0) {
+              vObj.sizes[sIdx].qty = (vObj.sizes[sIdx].qty || 0) + netRestore;
+              await posDb.query('UPDATE products SET variants=$1 WHERE id=$2', [JSON.stringify(vObj), item.product_id]);
+            }
+          }
         } catch (_cbErr) {}
       }
     }
-    if (sale.customer_id && ['credit','split'].includes(sale.payment_method)) {
+    if (sale.customer_id && ['credit','split'].includes(sale.payment_method) && !sale.credit_paid) {
       const { rows: [rr] } = await posDb.query("SELECT COALESCE(SUM(total_refund),0) AS t FROM returns WHERE sale_id=$1", [sid]);
       let netDebt;
       if (sale.payment_method === 'split') {
@@ -1202,6 +1218,18 @@ app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
       }
       if (netDebt > 0) await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [netDebt, sale.customer_id]);
     }
+    // Delete expenses associated with returns of this sale
+    try {
+      const { rows: saleReturns } = await posDb.query('SELECT id, total_refund FROM returns WHERE sale_id=$1', [sid]);
+      for (const ret of saleReturns) {
+        await posDb.query(
+          `DELETE FROM expenses WHERE id = (
+             SELECT id FROM expenses WHERE (title LIKE $1 OR title LIKE $2) AND amount=$3 ORDER BY id DESC LIMIT 1
+           )`,
+          [`مردود #${ret.id} %`, `مردود فاتورة #${sid}%`, ret.total_refund]
+        );
+      }
+    } catch (_) {}
     await posDb.query('DELETE FROM return_items WHERE return_id IN (SELECT id FROM returns WHERE sale_id=$1)', [sid]);
     await posDb.query('DELETE FROM returns WHERE sale_id=$1', [sid]);
     await posDb.query('DELETE FROM sale_items WHERE sale_id=$1', [sid]);
@@ -1215,6 +1243,8 @@ app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
       } catch (_) {}
       try { await posDb.query('DELETE FROM website_order_alerts WHERE dentrust_order_id=$1', [String(sale.dentrust_order_id)]); } catch (_) {}
     }
+    const restoredPids = items.map(i => i.product_id).filter(Boolean);
+    if (restoredPids.length) syncProductsNow(restoredPids).catch(() => {});
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
@@ -1374,7 +1404,7 @@ app.post(`${BASE}/api/customers/merge`, async (req, res) => {
     if (!keep || !drop) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'أحد العملاء غير موجود' }); }
     await client.query('UPDATE sales                SET customer_id=$1 WHERE customer_id=$2', [keepId, dropId]);
     await client.query('UPDATE customer_payments    SET customer_id=$1 WHERE customer_id=$2', [keepId, dropId]);
-    await client.query('UPDATE customer_manual_debts SET customer_id=$1 WHERE customer_id=$2', [keepId, dropId]);
+    await client.query('UPDATE customer_manual_debts SET customer_id=$1 WHERE customer_id=$2', [keepId, dropId]).catch(() => {});
     await client.query('UPDATE installment_schedules SET customer_id=$1 WHERE customer_id=$2', [keepId, dropId]);
     const mergedDebt = parseFloat(keep.total_debt || 0) + parseFloat(drop.total_debt || 0);
     await client.query('UPDATE customers SET total_debt=$1 WHERE id=$2', [mergedDebt, keepId]);
@@ -1435,13 +1465,22 @@ app.get(`${BASE}/api/customers/:cid/manual-debts`, async (req, res) => {
 app.delete(`${BASE}/api/customers/:cid/manual-debt/:did`, async (req, res) => {
   const cid = parseInt(req.params.cid, 10);
   const did = parseInt(req.params.did, 10);
+  const client = await posDb.connect();
   try {
-    const { rows: [debt] } = await posDb.query('SELECT * FROM customer_manual_debts WHERE id=$1 AND customer_id=$2', [did, cid]);
-    if (!debt) return res.status(404).json({ error: 'غير موجود' });
-    await posDb.query('DELETE FROM customer_manual_debts WHERE id=$1', [did]);
-    await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [parseFloat(debt.amount), cid]);
+    await client.query('BEGIN');
+    const { rows: [debt] } = await client.query('SELECT * FROM customer_manual_debts WHERE id=$1 AND customer_id=$2', [did, cid]);
+    if (!debt) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'غير موجود' });
+    }
+    await client.query('DELETE FROM customer_manual_debts WHERE id=$1', [did]);
+    await client.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [parseFloat(debt.amount || 0), cid]);
+    await client.query('COMMIT');
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    res.status(500).json({ error: 'خطأ داخلي' });
+  } finally { client.release(); }
 });
 
 // ── API: Expenses ─────────────────────────────────────────────────────────────
@@ -1467,8 +1506,10 @@ app.post(`${BASE}/api/expenses`, async (req, res) => {
 });
 
 app.delete(`${BASE}/api/expenses/:eid`, async (req, res) => {
-  await posDb.query('DELETE FROM expenses WHERE id=$1', [parseInt(req.params.eid, 10)]);
-  res.json({ ok: true });
+  try {
+    await posDb.query('DELETE FROM expenses WHERE id=$1', [parseInt(req.params.eid, 10)]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // ── API: Extra Profits ────────────────────────────────────────────────────────
@@ -1498,8 +1539,10 @@ app.post(`${BASE}/api/extra-profits`, async (req, res) => {
 });
 
 app.delete(`${BASE}/api/extra-profits/:id`, async (req, res) => {
-  await posDb.query('DELETE FROM extra_profits WHERE id=$1', [parseInt(req.params.id, 10)]);
-  res.json({ ok: true });
+  try {
+    await posDb.query('DELETE FROM extra_profits WHERE id=$1', [parseInt(req.params.id, 10)]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // ── API: Reports ──────────────────────────────────────────────────────────────
@@ -1575,10 +1618,12 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
 });
 
 app.get(`${BASE}/api/expiry-alerts`, async (req, res) => {
-  const months = parseInt(req.query.months || 3, 10);
+  const months = Math.max(1, parseInt(req.query.months || '3', 10) || 3);
+  const days = months * 30;
   try {
     const { rows } = await posDb.query(
-      `SELECT * FROM products WHERE expiry_date IS NOT NULL AND expiry_date::date <= CURRENT_DATE + INTERVAL '${months * 30} days' ORDER BY expiry_date`
+      `SELECT * FROM products WHERE expiry_date IS NOT NULL AND expiry_date::date <= CURRENT_DATE + ($1 || ' days')::interval ORDER BY expiry_date`,
+      [days]
     );
     const today = new Date().toISOString().substring(0, 10);
     res.json(rows.map(r => ({ ...r, status: String(r.expiry_date) < today ? 'expired' : 'warning' })));
@@ -1844,10 +1889,10 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
         [returnId, item.id, item.product_id, item.product_name, quantity, item.unit_price]
       );
       if (item.product_id) await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [quantity, item.product_id]);
-      // Restore checkbox_values stock if the returned item had a checkbox option
+      // Restore checkbox_values stock or variants stock if the returned item had an option/size
       if (item.product_id && item.selected_option) {
         try {
-          const { rows: [pcb] } = await client.query('SELECT checkbox_values FROM products WHERE id=$1', [item.product_id]);
+          const { rows: [pcb] } = await client.query('SELECT checkbox_values, variants FROM products WHERE id=$1', [item.product_id]);
           if (pcb?.checkbox_values) {
             const cbv = typeof pcb.checkbox_values === 'string' ? JSON.parse(pcb.checkbox_values) : { ...pcb.checkbox_values };
             if (cbv[item.selected_option] && typeof cbv[item.selected_option] === 'object' && cbv[item.selected_option].stock != null) {
@@ -1860,6 +1905,14 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
                 'UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
                 [totalCbQty, JSON.stringify(cbv), item.product_id]
               );
+            }
+          }
+          if (pcb?.variants) {
+            const vObj = typeof pcb.variants === 'string' ? JSON.parse(pcb.variants) : { ...pcb.variants };
+            const sIdx = (vObj.sizes || []).findIndex(s => s.label === item.selected_option);
+            if (sIdx >= 0) {
+              vObj.sizes[sIdx].qty = (vObj.sizes[sIdx].qty || 0) + quantity;
+              await client.query('UPDATE products SET variants=$1 WHERE id=$2', [JSON.stringify(vObj), item.product_id]);
             }
           }
         } catch (_cbErr) {}
@@ -1899,7 +1952,7 @@ app.delete(`${BASE}/api/returns/:rid`, async (req, res) => {
         try {
           const { rows: [si] } = await client.query('SELECT selected_option FROM sale_items WHERE id=$1', [ri.sale_item_id]);
           if (si?.selected_option) {
-            const { rows: [pcb] } = await client.query('SELECT checkbox_values FROM products WHERE id=$1', [ri.product_id]);
+            const { rows: [pcb] } = await client.query('SELECT checkbox_values, variants FROM products WHERE id=$1', [ri.product_id]);
             if (pcb?.checkbox_values) {
               const cbv = typeof pcb.checkbox_values === 'string' ? JSON.parse(pcb.checkbox_values) : { ...pcb.checkbox_values };
               if (cbv[si.selected_option] && typeof cbv[si.selected_option] === 'object' && cbv[si.selected_option].stock != null) {
@@ -1909,6 +1962,14 @@ app.delete(`${BASE}/api/returns/:rid`, async (req, res) => {
                   sum + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
                 await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
                   [totalCbQty, JSON.stringify(cbv), ri.product_id]);
+              }
+            }
+            if (pcb?.variants) {
+              const vObj = typeof pcb.variants === 'string' ? JSON.parse(pcb.variants) : { ...pcb.variants };
+              const sIdx = (vObj.sizes || []).findIndex(s => s.label === si.selected_option);
+              if (sIdx >= 0) {
+                vObj.sizes[sIdx].qty = Math.max(0, (vObj.sizes[sIdx].qty || 0) - ri.quantity);
+                await client.query('UPDATE products SET variants=$1 WHERE id=$2', [JSON.stringify(vObj), ri.product_id]);
               }
             }
           }
@@ -1948,31 +2009,103 @@ app.post(`${BASE}/api/invoices/:sid/add-items`, async (req, res) => {
     const { rows: [sale] } = await client.query('SELECT * FROM sales WHERE id=$1', [sid]);
     if (!sale) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'الفاتورة غير موجودة' }); }
     let extraTotal = 0;
+    const updatedProductIds = [];
     for (const item of items) {
       const prodId = item.product_id;
       const qty = parseInt(item.quantity || 1, 10);
       const price = parseFloat(item.unit_price || 0);
       const name = item.product_name || '';
+      const selOpt = item.selected_option || item.selectedOption || item._checkbox || item._size || item.selected_size || null;
       let prod = null;
       if (prodId) {
         const { rows: [p] } = await client.query('SELECT * FROM products WHERE id=$1', [prodId]);
         if (!p) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'المنتج غير موجود' }); }
         if (p.quantity < qty) { await client.query('ROLLBACK'); return res.status(400).json({ error: `مخزون غير كافٍ لـ ${p.product_name}` }); }
+
+        // Variant stock check
+        if (selOpt && p.variants) {
+          try {
+            const vObj = typeof p.variants === 'string' ? JSON.parse(p.variants) : p.variants;
+            const vSz = (vObj?.sizes || []).find(s => s.label === selOpt);
+            if (vSz !== undefined && vSz.qty < qty) {
+              await client.query('ROLLBACK');
+              return res.status(400).json({ error: `الكمية المطلوبة تتجاوز مخزون المقاس "${selOpt}" المتاح (${vSz.qty})` });
+            }
+          } catch (_) {}
+        }
+        // Checkbox stock check
+        if (selOpt && p.checkbox_values) {
+          try {
+            const cbv = typeof p.checkbox_values === 'string' ? JSON.parse(p.checkbox_values) : p.checkbox_values;
+            const cbOpt = cbv?.[selOpt];
+            if (cbOpt && typeof cbOpt === 'object' && cbOpt.stock != null && cbOpt.stock < qty) {
+              await client.query('ROLLBACK');
+              return res.status(400).json({ error: `الكمية المطلوبة تتجاوز المخزون المتاح للخيار "${selOpt}" (${cbOpt.stock})` });
+            }
+          } catch (_) {}
+        }
         prod = p;
       }
       const snapPp = prod ? parseFloat(prod.purchase_price || 0) : 0;
       await client.query(
-        'INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_purchase_price, snapshot_unit_price) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-        [sid, prodId, name, qty, price, snapPp, price]
+        'INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_purchase_price, snapshot_unit_price, selected_option) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+        [sid, prodId, name || prod?.product_name || '', qty, price, snapPp, price, selOpt]
       );
-      if (prodId) await client.query('UPDATE products SET quantity = quantity - $1 WHERE id=$2', [qty, prodId]);
+      if (prodId) {
+        const stockRes = await client.query(
+          'UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2 AND quantity >= $1 RETURNING id',
+          [qty, prodId]
+        );
+        if (!stockRes.rows.length) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `نفد المخزون للمنتج ${name || prod?.product_name || '#' + prodId}` });
+        }
+        // Deduct variant stock
+        if (selOpt && prod?.variants) {
+          try {
+            const vObj = typeof prod.variants === 'string' ? JSON.parse(prod.variants) : { ...prod.variants };
+            const sIdx = (vObj.sizes || []).findIndex(s => s.label === selOpt);
+            if (sIdx >= 0) {
+              vObj.sizes[sIdx].qty = Math.max(0, (vObj.sizes[sIdx].qty || 0) - qty);
+              await client.query('UPDATE products SET variants=$1 WHERE id=$2', [JSON.stringify(vObj), prodId]);
+            }
+          } catch (_) {}
+        }
+        // Deduct checkbox stock
+        if (selOpt && prod?.checkbox_values) {
+          try {
+            const cbv = typeof prod.checkbox_values === 'string' ? JSON.parse(prod.checkbox_values) : { ...prod.checkbox_values };
+            if (cbv[selOpt] && typeof cbv[selOpt] === 'object' && cbv[selOpt].stock != null) {
+              cbv[selOpt].stock = Math.max(0, (cbv[selOpt].stock || 0) - qty);
+              if (cbv[selOpt].stock === 0) cbv[selOpt].disabled = true;
+              const totalCbQty = Object.values(cbv).reduce((sum, v) =>
+                sum + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
+              await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
+                [totalCbQty, JSON.stringify(cbv), prodId]);
+            }
+          } catch (_) {}
+        }
+        updatedProductIds.push(prodId);
+      }
       extraTotal += qty * price;
     }
     await client.query('UPDATE sales SET total_amount = total_amount + $1 WHERE id=$2', [extraTotal, sid]);
-    if (sale.payment_method === 'credit' && sale.customer_id) {
-      await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [extraTotal, sale.customer_id]);
+    if (sale.customer_id) {
+      if (sale.payment_method === 'credit') {
+        await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [extraTotal, sale.customer_id]);
+        if (sale.credit_paid) {
+          await client.query('UPDATE sales SET credit_paid=0 WHERE id=$1', [sid]);
+        }
+      } else if (sale.payment_method === 'split') {
+        let splitData = {};
+        try { splitData = JSON.parse(sale.payment_split || '{}'); } catch(_) {}
+        splitData.credit = (parseFloat(splitData.credit || 0) + extraTotal);
+        await client.query('UPDATE sales SET payment_split=$1 WHERE id=$2', [JSON.stringify(splitData), sid]);
+        await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [extraTotal, sale.customer_id]);
+      }
     }
     await client.query('COMMIT');
+    if (updatedProductIds.length) syncProductsNow(updatedProductIds).catch(() => {});
     res.status(201).json({ ok: true, added_amount: extraTotal });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -2072,14 +2205,18 @@ app.post(`${BASE}/api/suppliers`, async (req, res) => {
 
 app.put(`${BASE}/api/suppliers/:sid`, async (req, res) => {
   const d = req.body;
-  await posDb.query('UPDATE suppliers SET name=$1, phone=$2, address=$3, notes=$4 WHERE id=$5', [d.name, d.phone || '', d.address || '', d.notes || '', req.params.sid]);
-  res.json({ ok: true });
+  try {
+    await posDb.query('UPDATE suppliers SET name=$1, phone=$2, address=$3, notes=$4 WHERE id=$5', [d.name, d.phone || '', d.address || '', d.notes || '', req.params.sid]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 app.delete(`${BASE}/api/suppliers/:sid`, async (req, res) => {
-  await posDb.query('UPDATE products SET supplier_id=NULL WHERE supplier_id=$1', [req.params.sid]);
-  await posDb.query('DELETE FROM suppliers WHERE id=$1', [req.params.sid]);
-  res.json({ ok: true });
+  try {
+    await posDb.query('UPDATE products SET supplier_id=NULL WHERE supplier_id=$1', [req.params.sid]);
+    await posDb.query('DELETE FROM suppliers WHERE id=$1', [req.params.sid]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 app.get(`${BASE}/api/suppliers/:sid/products`, async (req, res) => {
@@ -2143,8 +2280,10 @@ app.put(`${BASE}/api/installments/:iid`, async (req, res) => {
 });
 
 app.delete(`${BASE}/api/installments/:iid`, async (req, res) => {
-  await posDb.query('DELETE FROM installment_schedules WHERE id=$1', [req.params.iid]);
-  res.json({ ok: true });
+  try {
+    await posDb.query('DELETE FROM installment_schedules WHERE id=$1', [req.params.iid]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
 // ── API: CSV Export ────────────────────────────────────────────────────────────
@@ -2283,24 +2422,27 @@ async function syncProductsNow(productIds) {
           const { rows: [webProd] } = await client.query(
             'SELECT photos FROM products WHERE id=$1', [p.dentrust_id]
           ).catch(() => ({ rows: [null] }));
-          const firstPhoto = Array.isArray(webProd?.photos) && webProd.photos.length
-            ? webProd.photos[0] : null;
-
           if (cbJson) {
-            await posDb.query(
-              'UPDATE products SET stock=$1, is_sold_out=$2, checkbox_values=$3, image_url=COALESCE(NULLIF($4,\'\'), image_url) WHERE dentrust_id=$5',
-              [p.quantity, p.quantity <= 0, cbJson, firstPhoto || '', p.dentrust_id]
+            await client.query(
+              'UPDATE products SET stock=$1, is_sold_out=$2, checkbox_values=$3 WHERE id=$4',
+              [p.quantity, p.quantity <= 0, cbJson, p.dentrust_id]
             );
           } else if (varJson) {
-            await posDb.query(
-              'UPDATE products SET stock=$1, is_sold_out=$2, variants=$3, image_url=COALESCE(NULLIF($4,\'\'), image_url) WHERE dentrust_id=$5',
-              [p.quantity, p.quantity <= 0, varJson, firstPhoto || '', p.dentrust_id]
+            await client.query(
+              'UPDATE products SET stock=$1, is_sold_out=$2, variants=$3 WHERE id=$4',
+              [p.quantity, p.quantity <= 0, varJson, p.dentrust_id]
             );
           } else {
-            await posDb.query(
-              'UPDATE products SET stock=$1, is_sold_out=$2, image_url=COALESCE(NULLIF($3,\'\'), image_url) WHERE dentrust_id=$4',
-              [p.quantity, p.quantity <= 0, firstPhoto || '', p.dentrust_id]
+            await client.query(
+              'UPDATE products SET stock=$1, is_sold_out=$2 WHERE id=$3',
+              [p.quantity, p.quantity <= 0, p.dentrust_id]
             );
+          }
+          if (firstPhoto) {
+            await posDb.query(
+              'UPDATE products SET image_url=COALESCE(NULLIF(image_url,\'\'), $1) WHERE id=$2',
+              [firstPhoto, p.id]
+            ).catch(() => {});
           }
         } catch (_) {}
       }
@@ -3997,8 +4139,8 @@ async function scrapePageProducts(siteUrl) {
     }
   }
 
-    // ── Step 4: AI extraction (Gemini primary, OpenRouter fallback) ─────────────
-  if (products.length < 3 && (GEMINI_API_KEY || OPENROUTER_KEY)) {
+  // ── Step 4: AI extraction (OpenRouter) ──────────────────────────────────
+  if (products.length < 3 && OPENROUTER_KEY) {
     try {
       const visibleText = html
         .replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -4008,15 +4150,12 @@ async function scrapePageProducts(siteUrl) {
         .replace(/\s+/g, ' ').trim().slice(0, 7000);
 
       const prompt = 'You are a product price extractor for dental supply websites. Extract ALL product names and prices from the given text. Return ONLY a JSON array: [{"title":"product name","price":123.50}]. Prices must be numbers only (no currency). Return [] if nothing found.';
-      let raw = '[]';
-
-      if (GEMINI_API_KEY) {
-        const aiData = await callGemini([{ role: 'user', content: prompt + '\n\nExtract products and prices:\n\n' + visibleText }], { max_tokens: 1500 });
-        raw = aiData.choices?.[0]?.message?.content || '[]';
-      } else {
-        const aiData = await callOpenRouter({ model: 'google/gemini-1.5-flash', max_tokens: 1500, messages: [{ role: 'system', content: prompt }, { role: 'user', content: `Extract products and prices:\n\n${visibleText}` }] });
-        raw = aiData.choices?.[0]?.message?.content || '[]';
-      }
+      const aiData = await callOpenRouter({
+        model: await getBestFreeModel(),
+        max_tokens: 1500,
+        messages: [{ role: 'system', content: prompt }, { role: 'user', content: `Extract products and prices:\n\n${visibleText}` }]
+      });
+      const raw = aiData.choices?.[0]?.message?.content || '[]';
 
       const jsonMatch = raw.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
