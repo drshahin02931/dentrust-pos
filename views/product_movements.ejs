@@ -1,0 +1,235 @@
+<%- include('partials/header', Object.assign({pageTitle: 'سجل حركة المنتجات'}, locals)) %>
+
+<div class="space-y-6">
+  <!-- Header Title -->
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-black text-gray-800 flex items-center gap-2">
+        <span>📜</span> سجل ومراقبة حركة المنتجات (Stock Audit Log)
+      </h1>
+      <p class="text-xs text-gray-500 mt-1">تتبع زمني دقيق لكل حركة صنف ومقاس (بيع، مرتجع، تحويل مستودع، إتلاف) مع الرصيد قبل وبعد</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <a href="<%= base %>/warehouse" class="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-4 py-2.5 rounded-xl text-sm border border-blue-200 transition-all flex items-center gap-1.5">
+        <span>🏢</span> المستودع
+      </a>
+      <a href="<%= base %>/top-selling" class="bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold px-4 py-2.5 rounded-xl text-sm border border-amber-200 transition-all flex items-center gap-1.5">
+        <span>🔥</span> الأكثر مبيعاً
+      </a>
+      <button onclick="printMovementLog()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold px-4 py-2.5 rounded-xl text-sm transition-all flex items-center gap-1.5">
+        <span>🖨️</span> طباعة السجل
+      </button>
+    </div>
+  </div>
+
+  <!-- KPI Summary Cards -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center">
+      <div class="text-xs text-gray-500 font-medium">🛒 إجمالي المنصرف (مبيعات)</div>
+      <div id="kpi-sales" class="text-2xl font-black text-blue-700 mt-1">0</div>
+    </div>
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center">
+      <div class="text-xs text-gray-500 font-medium">↩️ إجمالي المرتجعات</div>
+      <div id="kpi-returns" class="text-2xl font-black text-red-600 mt-1">0</div>
+    </div>
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center">
+      <div class="text-xs text-gray-500 font-medium">🚚 الوارد من المستودع</div>
+      <div id="kpi-transfers" class="text-2xl font-black text-emerald-600 mt-1">0</div>
+    </div>
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center">
+      <div class="text-xs text-gray-500 font-medium">📊 إجمالي الحركات المسجلة</div>
+      <div id="kpi-total-logs" class="text-2xl font-black text-gray-800 mt-1">0</div>
+    </div>
+  </div>
+
+  <!-- Filter & Search Toolbar -->
+  <div class="bg-white rounded-2xl shadow-sm border p-4 flex flex-wrap items-center gap-3">
+    <div class="flex-1 min-w-[200px] relative">
+      <span class="absolute inset-y-0 right-3 flex items-center text-gray-400">🔍</span>
+      <input id="movSearch" type="text" placeholder="ابحث باسم المنتج، المقاس، أو رقم الفاتورة..."
+        oninput="applyMovementFilters()"
+        class="w-full pl-4 pr-10 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+    </div>
+    <select id="movTypeFilter" onchange="applyMovementFilters()"
+      class="border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white">
+      <option value="">جميع أنواع الحركات</option>
+      <option value="sale">🛒 مبيعات (POS & Online)</option>
+      <option value="return">↩️ مرتجعات</option>
+      <option value="transfer_to_store">🚚 تحويل من المستودع للمحل</option>
+      <option value="damage">🗑️ تالف / هالك</option>
+      <option value="adjustment">✏️ تعديل يدوي / جرد</option>
+    </select>
+    <div class="flex items-center gap-2 text-xs text-gray-500 font-bold">
+      <span>من:</span>
+      <input id="movDateFrom" type="date" onchange="applyMovementFilters()"
+        class="border rounded-xl px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+      <span>إلى:</span>
+      <input id="movDateTo" type="date" onchange="applyMovementFilters()"
+        class="border rounded-xl px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+    </div>
+    <button onclick="resetMovementFilters()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all">
+      مسح الفلاتر
+    </button>
+  </div>
+
+  <!-- Movements Table -->
+  <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-right text-sm">
+        <thead class="bg-gray-50/80 text-gray-600 font-bold border-b text-xs">
+          <tr>
+            <th class="p-3.5">التاريخ والوقت</th>
+            <th class="p-3.5">المنتج والمقاس</th>
+            <th class="p-3.5 text-center">نوع الحركة</th>
+            <th class="p-3.5 text-center">المرجع / المستند</th>
+            <th class="p-3.5 text-center">الكمية</th>
+            <th class="p-3.5 text-center">الرصيد قبل ➔ بعد</th>
+            <th class="p-3.5 font-mono">سعر الوحدة</th>
+            <th class="p-3.5">المستخدم</th>
+          </tr>
+        </thead>
+        <tbody id="movTableBody" class="divide-y divide-gray-100">
+          <tr>
+            <td colspan="8" class="text-center py-10 text-gray-400 font-medium">جارٍ تحميل سجل الحركات...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="movNoData" class="hidden text-center py-12 text-gray-400">
+      <span class="text-3xl block mb-2">📜</span>
+      لا توجد حركات مطابقة للفلاتر المحددة
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = '<%= base %>';
+let _movementLogs = [];
+
+const TYPE_CONFIG = {
+  sale:              { label: '🛒 بيع', class: 'bg-blue-100 text-blue-800' },
+  return:            { label: '↩️ مرتجع', class: 'bg-red-100 text-red-800' },
+  transfer_to_store: { label: '🚚 تحويل للمحل', class: 'bg-emerald-100 text-emerald-800' },
+  warehouse_in:      { label: '📥 توريد مستودع', class: 'bg-purple-100 text-purple-800' },
+  damage:            { label: '🗑️ تالف', class: 'bg-gray-100 text-gray-800' },
+  adjustment:        { label: '✏️ تعديل رصيد', class: 'bg-amber-100 text-amber-800' }
+};
+
+async function loadMovements() {
+  try {
+    const res = await fetch(`${BASE}/api/products/movements`);
+    const data = await res.json();
+    _movementLogs = data.logs || [];
+
+    // Calculate KPIs
+    let salesCount = 0, returnsCount = 0, transferCount = 0;
+    _movementLogs.forEach(l => {
+      const q = Math.abs(parseInt(l.quantity_change||0));
+      if (l.movement_type === 'sale') salesCount += q;
+      if (l.movement_type === 'return') returnsCount += q;
+      if (l.movement_type === 'transfer_to_store') transferCount += q;
+    });
+
+    document.getElementById('kpi-sales').textContent = salesCount + ' قطعة';
+    document.getElementById('kpi-returns').textContent = returnsCount + ' قطعة';
+    document.getElementById('kpi-transfers').textContent = transferCount + ' قطعة';
+    document.getElementById('kpi-total-logs').textContent = _movementLogs.length;
+
+    renderMovementsTable(_movementLogs);
+  } catch (err) {
+    console.error('Failed to load movement logs:', err);
+  }
+}
+
+function renderMovementsTable(logs) {
+  const tbody = document.getElementById('movTableBody');
+  const noData = document.getElementById('movNoData');
+  if (!logs.length) {
+    tbody.innerHTML = '';
+    noData.classList.remove('hidden');
+    return;
+  }
+  noData.classList.add('hidden');
+
+  tbody.innerHTML = logs.map(l => {
+    const cfg = TYPE_CONFIG[l.movement_type] || { label: l.movement_type, class: 'bg-gray-100 text-gray-700' };
+    const chg = parseInt(l.quantity_change || 0);
+    const chgSign = chg > 0 ? `+${chg}` : `${chg}`;
+    const chgColor = chg > 0 ? 'text-emerald-700 font-black' : 'text-red-600 font-black';
+
+    const isInvoiceRef = l.reference_id && (l.movement_type === 'sale' || l.movement_type === 'return');
+    const refHtml = isInvoiceRef
+      ? `<a href="${BASE}/invoice/${l.reference_id}" target="_blank" class="text-blue-600 font-mono font-bold hover:underline">#${String(l.reference_id).padStart(5,'0')} ↗</a>`
+      : `<span class="text-gray-500 font-mono text-xs">${l.reference_title || (l.reference_id ? '#'+l.reference_id : '—')}</span>`;
+
+    return `
+      <tr class="hover:bg-gray-50 transition-colors">
+        <td class="p-3.5 text-xs text-gray-500 font-mono">
+          ${(l.created_at || l.date || '').replace('T', ' ').slice(0, 16)}
+        </td>
+        <td class="p-3.5">
+          <div class="font-bold text-gray-900">${l.product_name}</div>
+          ${l.selected_option ? `<span class="inline-block mt-0.5 px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-bold text-xs font-mono border border-blue-100">${l.selected_option}</span>` : ''}
+          ${l.notes ? `<div class="text-[11px] text-gray-400 mt-0.5">${l.notes}</div>` : ''}
+        </td>
+        <td class="p-3.5 text-center">
+          <span class="inline-block px-2.5 py-1 rounded-full text-xs font-bold ${cfg.class}">
+            ${cfg.label}
+          </span>
+        </td>
+        <td class="p-3.5 text-center">${refHtml}</td>
+        <td class="p-3.5 text-center font-mono text-base ${chgColor}">${chgSign}</td>
+        <td class="p-3.5 text-center text-xs font-mono">
+          <span class="text-gray-400">${l.quantity_before}</span>
+          <span class="text-gray-300 mx-1">➔</span>
+          <span class="font-bold text-gray-800">${l.quantity_after}</span>
+        </td>
+        <td class="p-3.5 font-mono text-xs text-gray-700">
+          ${parseFloat(l.unit_price || 0) > 0 ? parseFloat(l.unit_price).toFixed(2) + ' ج' : '—'}
+        </td>
+        <td class="p-3.5 text-xs text-gray-600 font-medium">
+          ${l.user_name || 'النظام'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function applyMovementFilters() {
+  const q = document.getElementById('movSearch').value.trim().toLowerCase();
+  const type = document.getElementById('movTypeFilter').value;
+  const dFrom = document.getElementById('movDateFrom').value;
+  const dTo = document.getElementById('movDateTo').value;
+
+  const filtered = _movementLogs.filter(l => {
+    const matchQ = !q || (l.product_name||'').toLowerCase().includes(q) || 
+      (l.selected_option||'').toLowerCase().includes(q) ||
+      String(l.reference_id||'').includes(q);
+    const matchType = !type || l.movement_type === type;
+    const logDate = (l.created_at || l.date || '').slice(0, 10);
+    const matchFrom = !dFrom || logDate >= dFrom;
+    const matchTo = !dTo || logDate <= dTo;
+    return matchQ && matchType && matchFrom && matchTo;
+  });
+
+  renderMovementsTable(filtered);
+}
+
+function resetMovementFilters() {
+  document.getElementById('movSearch').value = '';
+  document.getElementById('movTypeFilter').value = '';
+  document.getElementById('movDateFrom').value = '';
+  document.getElementById('movDateTo').value = '';
+  renderMovementsTable(_movementLogs);
+}
+
+function printMovementLog() {
+  window.print();
+}
+
+// Initial load
+loadMovements();
+</script>
+
+</main>
+<%- include('partials/footer', locals) %>
