@@ -100,6 +100,9 @@
 
       <% if (typeof isMgr !== 'undefined' && isMgr) { %>
       <div class="h-5 w-px bg-blue-500 mx-1"></div>
+      <a href="<%= base %>/admin/price-tracker" class="nav-link <%= reqPath.includes('/admin/price-tracker') ? 'active' : '' %>">
+        🏷️ مراقبة الأسعار
+      </a>
       <a href="<%= base %>/admin/users" class="nav-link <%= reqPath.includes('/admin/users') ? 'active' : '' %>">
         👤 المستخدمون
       </a>
