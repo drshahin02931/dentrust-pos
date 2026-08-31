@@ -148,14 +148,65 @@
   <!-- PWA: Service Worker + Push Notifications -->
   <script>
   (function () {
-    if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('<%= base %>/sw.js', { scope: '<%= base %>/' })
-      .then(function (reg) {
-        if ('Notification' in window && Notification.permission === 'default') {
-          setTimeout(function () { Notification.requestPermission(); }, 3000);
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+    function urlBase64ToUint8Array(base64String) {
+      const padding = '='.repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+      const rawData = window.atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+      }
+      return outputArray;
+    }
+
+    async function initPush() {
+      try {
+        const reg = await navigator.serviceWorker.register('<%= base %>/sw.js', { scope: '<%= base %>/' });
+        if (!('Notification' in window)) return;
+
+        let permission = Notification.permission;
+        if (permission === 'default') {
+          permission = await Notification.requestPermission();
         }
-      })
-      .catch(function (err) { console.warn('[DenTrust SW]', err); });
+        if (permission !== 'granted') return;
+
+        const keyRes = await fetch('<%= base %>/api/push/vapid-public-key', { credentials: 'include' });
+        if (!keyRes.ok) return;
+        const { publicKey } = await keyRes.json();
+        if (!publicKey) return;
+
+        let sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(publicKey)
+          });
+        }
+
+        const subJson = sub.toJSON();
+        if (subJson && subJson.keys) {
+          await fetch('<%= base %>/api/push/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              endpoint: sub.endpoint,
+              keys: subJson.keys
+            })
+          });
+        }
+      } catch (err) {
+        console.warn('[DenTrust Push]', err);
+      }
+    }
+
+    if (document.readyState === 'complete') {
+      initPush();
+    } else {
+      window.addEventListener('load', initPush);
+    }
   })();
   </script>
 
