@@ -287,6 +287,8 @@ const MIGRATIONS = [
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_amount NUMERIC DEFAULT 0",
   "ALTER TABLE pos_data.sale_items DROP CONSTRAINT IF EXISTS sale_items_product_id_fkey",
+  "ALTER TABLE pos_data.return_items DROP CONSTRAINT IF EXISTS return_items_product_id_fkey",
+  "ALTER TABLE return_items DROP CONSTRAINT IF EXISTS return_items_product_id_fkey",
 ];
 
 // Migrations that run on the PUBLIC schema (Supabase website DB) — customers table.
