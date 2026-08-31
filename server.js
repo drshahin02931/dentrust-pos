@@ -1879,14 +1879,14 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
     if (!validated.length) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'الكميات غير صحيحة أو مسترجعة مسبقاً' }); }
     const { rows: [ret] } = await client.query(
       'INSERT INTO returns (sale_id, total_refund, reason, processed_by) VALUES ($1,$2,$3,$4) RETURNING id',
-      [sid, totalRefund, reason, req.session.user_id]
+      [sid, totalRefund, reason || '', req.session?.user_id || null]
     );
     const returnId = ret.id;
     for (const v of validated) {
       const { item, quantity } = v;
       await client.query(
         'INSERT INTO return_items (return_id, sale_item_id, product_id, product_name, quantity, unit_price) VALUES ($1,$2,$3,$4,$5,$6)',
-        [returnId, item.id, item.product_id, item.product_name, quantity, item.unit_price]
+        [returnId, item.id, item.product_id || null, item.product_name || '', quantity, parseFloat(item.unit_price || 0)]
       );
       if (item.product_id) await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [quantity, item.product_id]);
       // Restore checkbox_values stock or variants stock if the returned item had an option/size
@@ -1918,17 +1918,20 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
         } catch (_cbErr) {}
       }
     }
-    if (sale.customer_id && ['credit','split'].includes(sale.payment_method)) {
+    if (sale.customer_id && ['credit','split'].includes(sale.payment_method || '')) {
       await client.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [totalRefund, sale.customer_id]);
     }
-    await client.query('INSERT INTO expenses (title, amount, date) VALUES ($1,$2,CURRENT_DATE::text)',
-      [`مردود #${returnId} فاتورة #${sid}${reason ? ` (${reason})` : ''}`, totalRefund]);
+    try {
+      await client.query('INSERT INTO expenses (title, amount, date) VALUES ($1,$2,CURRENT_DATE::text)',
+        [`مردود #${returnId} فاتورة #${sid}${reason ? ` (${reason})` : ''}`, totalRefund]);
+    } catch (_) {}
     await client.query('COMMIT');
     syncProductsNow(validated.filter(v => v.item.product_id).map(v => v.item.product_id)).catch(() => {});
     res.status(201).json({ ok: true, refund_amount: totalRefund });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    res.status(500).json({ error: 'خطأ داخلي' });
+    console.error('Invoice return error:', err);
+    res.status(500).json({ error: 'خطأ أثناء الاسترجاع: ' + err.message });
   } finally { client.release(); }
 });
 
