@@ -242,6 +242,13 @@ const PG_SCHEMA_SQL = `
     amount NUMERIC NOT NULL,
     date TEXT DEFAULT (CURRENT_DATE::text)
   );
+  CREATE TABLE IF NOT EXISTS customer_manual_debts (
+    id SERIAL PRIMARY KEY,
+    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    amount DECIMAL(10,2) NOT NULL,
+    reason TEXT DEFAULT '',
+    date TIMESTAMPTZ DEFAULT NOW()
+  );
 `;
 
 const MIGRATIONS = [
@@ -611,7 +618,8 @@ async function initDb() {
 async function seedManager() {
   const { rows } = await posDb.query('SELECT id FROM users WHERE username=$1', ['dr.shahin']);
   if (!rows.length) {
-    const hash = await bcrypt.hash('255205', 12);
+    const defaultPass = process.env.DEFAULT_MANAGER_PASSWORD || '255205';
+    const hash = await bcrypt.hash(defaultPass, 12);
     await posDb.query(
       'INSERT INTO users (username, password_hash, role, permissions) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING',
       ['dr.shahin', hash, 'manager', JSON.stringify(ALL_PERMS)]
