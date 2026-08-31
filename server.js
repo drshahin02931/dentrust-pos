@@ -214,6 +214,18 @@ app.get(`${BASE}/expiry`, (req, res) => {
   return renderPage(req, res, 'expiry');
 });
 app.get(`${BASE}/notifications`, (req, res) => { if (!req.session?.user_id) return res.redirect(`${BASE}/login`); return renderPage(req, res, 'notifications'); });
+app.get(`${BASE}/warehouse`, (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'warehouse');
+});
+app.get(`${BASE}/product-movements`, (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'product_movements');
+});
+app.get(`${BASE}/top-selling`, (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'top_selling');
+});
 app.get(`${BASE}/admin/price-tracker`, (req, res) => {
   if (!isMgr(req)) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'price_tracker');
@@ -1036,13 +1048,16 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
         [saleId, item.product_id, item.product_name, item.quantity, item.unit_price, snapPp, parseFloat(item.unit_price), selOptSaved]
       );
       const stockUpdate = await client.query(
-        'UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2 AND quantity >= $1 RETURNING id',
+        'UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2 AND quantity >= $1 RETURNING id, quantity',
         [item.quantity, item.product_id]
       );
       if (!stockUpdate.rows.length) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: `المنتج "${item.product_name}" نفد من المخزن أو الكمية غير كافية` });
       }
+      const newQty = parseInt(stockUpdate.rows[0].quantity || 0, 10);
+      const prevQty = newQty + parseInt(item.quantity || 0, 10);
+
       // Deduct per-variant qty from variants JSON if a specific size was sold
       const selSize = item._size || item.selected_size;
       if (selSize) {
@@ -1080,6 +1095,23 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
           }
         } catch(_) {}
       }
+
+      // Log movement to audit log
+      await logProductMovement({
+        productId: item.product_id,
+        productName: item.product_name,
+        movementType: 'sale',
+        referenceId: saleId,
+        referenceTitle: `فاتورة مبيعات #${saleId}`,
+        selectedOption: selOptSaved,
+        quantityChange: -Math.abs(parseInt(item.quantity || 0, 10)),
+        quantityBefore: prevQty,
+        quantityAfter: newQty,
+        unitPrice: parseFloat(item.unit_price || 0),
+        unitCost: snapPp,
+        userName: req.session?.username || 'كاشير',
+        notes: `مبيعات للعميل: ${customerNameFree || 'نقدي'}`
+      }, client);
       lowStockItemIds.push(item.product_id);
     }
     if (method === 'credit' && customerId) {
@@ -1924,6 +1956,23 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
           }
         } catch (_cbErr) {}
       }
+
+      // Log movement to audit log
+      await logProductMovement({
+        productId: validProdId,
+        productName: item.product_name || '',
+        movementType: 'return',
+        referenceId: sid,
+        referenceTitle: `مرتجع إذن #${returnId} فاتورة #${sid}`,
+        selectedOption: item.selected_option || null,
+        quantityChange: Math.abs(parseInt(quantity || 0, 10)),
+        quantityBefore: 0,
+        quantityAfter: quantity,
+        unitPrice: parseFloat(item.unit_price || 0),
+        unitCost: 0,
+        userName: req.session?.username || 'كاشير',
+        notes: `مرتجع فاتورة: ${reason || 'بدون سبب'}`
+      }, client);
     }
     if (sale.customer_id && ['credit','split'].includes(sale.payment_method || '')) {
       await client.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [totalRefund, sale.customer_id]);
@@ -4994,6 +5043,397 @@ app.get(`${BASE}/api/push/subscriptions`, async (req, res) => {
     const { rows: [r] } = await posDb.query('SELECT COUNT(*) as count FROM push_subscriptions');
     res.json({ count: parseInt(r.count, 10) });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 🏢 WAREHOUSE & PRODUCT MOVEMENT AUDIT LOG & TOP-SELLING ANALYTICS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Helper: Log product movement safely
+async function logProductMovement({
+  productId = null,
+  productName = '',
+  movementType = 'adjustment', // 'sale', 'return', 'transfer_to_store', 'warehouse_in', 'damage', 'adjustment'
+  referenceId = null,
+  referenceTitle = '',
+  selectedOption = null,
+  quantityChange = 0,
+  quantityBefore = 0,
+  quantityAfter = 0,
+  unitPrice = 0,
+  unitCost = 0,
+  userName = 'النظام',
+  notes = ''
+}, client = posDb) {
+  try {
+    await client.query(
+      `INSERT INTO product_movement_logs (
+        product_id, product_name, movement_type, reference_id, reference_title,
+        selected_option, quantity_change, quantity_before, quantity_after,
+        unit_price, unit_cost, user_name, notes
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [
+        productId || null,
+        productName || '',
+        movementType,
+        referenceId || null,
+        referenceTitle || '',
+        selectedOption || null,
+        quantityChange,
+        quantityBefore,
+        quantityAfter,
+        parseFloat(unitPrice || 0),
+        parseFloat(unitCost || 0),
+        userName || 'النظام',
+        notes || ''
+      ]
+    );
+  } catch (err) {
+    console.error('Movement log error:', err.message);
+  }
+}
+
+// GET /api/warehouse/products — list warehouse items and shop products
+app.get(`${BASE}/api/warehouse/products`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const [whRes, shopRes] = await Promise.all([
+      posDb.query('SELECT * FROM warehouse_items ORDER BY created_at DESC, id DESC'),
+      posDb.query('SELECT id, product_name, quantity, sale_price, purchase_price, barcode, variants, checkbox_values FROM products ORDER BY product_name')
+    ]);
+    res.json({ items: whRes.rows, shop_products: shopRes.rows });
+  } catch (err) {
+    console.error('Warehouse products error:', err);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
+});
+
+// POST /api/warehouse/products — add new item to warehouse
+app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  const { product_name, barcode, category, cost_price, sale_price, quantity, product_id, notes } = req.body;
+  if (!product_name || !product_name.trim()) return res.status(400).json({ error: 'اسم الصنف مطلوب' });
+  const qty = parseInt(quantity || 0, 10);
+  const cost = parseFloat(cost_price || 0);
+  const price = parseFloat(sale_price || 0);
+
+  try {
+    // If linked to shop product, copy its variants if available
+    let variants = null, checkboxValues = null;
+    if (product_id) {
+      const { rows: [p] } = await posDb.query('SELECT variants, checkbox_values FROM products WHERE id=$1', [product_id]);
+      if (p) {
+        variants = p.variants;
+        checkboxValues = p.checkbox_values;
+      }
+    }
+
+    const { rows: [item] } = await posDb.query(
+      `INSERT INTO warehouse_items (product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants, checkbox_values, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [product_id || null, product_name.trim(), barcode || '', category || 'عام', cost, price, qty, variants, checkboxValues, notes || '']
+    );
+
+    // Log movement
+    await logProductMovement({
+      productId: product_id || null,
+      productName: item.product_name,
+      movementType: 'warehouse_in',
+      referenceTitle: `إدخال مستودع #${item.id}`,
+      quantityChange: qty,
+      quantityBefore: 0,
+      quantityAfter: qty,
+      unitPrice: price,
+      unitCost: cost,
+      userName: req.session?.username || 'المدير',
+      notes: notes || 'توريد جديد للمستودع'
+    });
+
+    res.status(201).json(item);
+  } catch (err) {
+    console.error('Add warehouse item error:', err);
+    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
+  }
+});
+
+// POST /api/warehouse/transfer — transfer quantity/variant from warehouse to store
+app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  const { warehouse_item_id, quantity, selected_option, note } = req.body;
+  const transferQty = parseInt(quantity || 0, 10);
+  if (!warehouse_item_id || transferQty <= 0) {
+    return res.status(400).json({ error: 'حدد كمية صحيحة للتحويل' });
+  }
+
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [whItem] } = await client.query('SELECT * FROM warehouse_items WHERE id=$1 FOR UPDATE', [warehouse_item_id]);
+    if (!whItem) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'الصنف غير موجود بالمستودع' });
+    }
+
+    // 1. Deduct from warehouse
+    if (selected_option && whItem.checkbox_values) {
+      const cbv = typeof whItem.checkbox_values === 'string' ? JSON.parse(whItem.checkbox_values) : { ...whItem.checkbox_values };
+      if (cbv[selected_option] && typeof cbv[selected_option] === 'object') {
+        const avail = cbv[selected_option].stock != null ? parseInt(cbv[selected_option].stock) : whItem.quantity;
+        if (avail < transferQty) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `الكمية المتاحة بالمستودع للمقاس (${avail}) أقل من المطلوب (${transferQty})` });
+        }
+        cbv[selected_option].stock = Math.max(0, avail - transferQty);
+        const totalCb = Object.values(cbv).reduce((s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
+        await client.query('UPDATE warehouse_items SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(cbv), whItem.id]);
+      } else {
+        if (whItem.quantity < transferQty) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'الكمية بالمستودع غير كافية' });
+        }
+        await client.query('UPDATE warehouse_items SET quantity = quantity - $1 WHERE id=$2', [transferQty, whItem.id]);
+      }
+    } else if (selected_option && whItem.variants) {
+      const vObj = typeof whItem.variants === 'string' ? JSON.parse(whItem.variants) : { ...whItem.variants };
+      const sIdx = (vObj.sizes || []).findIndex(s => s.label === selected_option);
+      if (sIdx >= 0) {
+        const avail = parseInt(vObj.sizes[sIdx].qty || 0);
+        if (avail < transferQty) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `الكمية المتاحة بالمستودع للمقاس (${avail}) أقل من المطلوب (${transferQty})` });
+        }
+        vObj.sizes[sIdx].qty = Math.max(0, avail - transferQty);
+        await client.query('UPDATE warehouse_items SET variants=$1, quantity = GREATEST(0, quantity - $2) WHERE id=$3', [JSON.stringify(vObj), transferQty, whItem.id]);
+      } else {
+        if (whItem.quantity < transferQty) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'الكمية بالمستودع غير كافية' });
+        }
+        await client.query('UPDATE warehouse_items SET quantity = quantity - $1 WHERE id=$2', [transferQty, whItem.id]);
+      }
+    } else {
+      if (whItem.quantity < transferQty) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'الكمية بالمستودع غير كافية' });
+      }
+      await client.query('UPDATE warehouse_items SET quantity = quantity - $1 WHERE id=$2', [transferQty, whItem.id]);
+    }
+
+    // 2. Add to Shop Products (and find or create shop product)
+    let shopProdId = whItem.product_id;
+    let beforeShopQty = 0;
+
+    if (shopProdId) {
+      const { rows: [sp] } = await client.query('SELECT id, quantity, variants, checkbox_values FROM products WHERE id=$1', [shopProdId]);
+      if (sp) {
+        beforeShopQty = parseInt(sp.quantity || 0);
+        await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [transferQty, shopProdId]);
+
+        // If size option was transferred, increase that size in shop product
+        if (selected_option && sp.checkbox_values) {
+          const scbv = typeof sp.checkbox_values === 'string' ? JSON.parse(sp.checkbox_values) : { ...sp.checkbox_values };
+          if (scbv[selected_option] && typeof scbv[selected_option] === 'object') {
+            scbv[selected_option].stock = (scbv[selected_option].stock || 0) + transferQty;
+            scbv[selected_option].disabled = false;
+            const totalCb = Object.values(scbv).reduce((s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
+            await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(scbv), shopProdId]);
+          }
+        }
+        if (selected_option && sp.variants) {
+          const svObj = typeof sp.variants === 'string' ? JSON.parse(sp.variants) : { ...sp.variants };
+          const sIdx = (svObj.sizes || []).findIndex(s => s.label === selected_option);
+          if (sIdx >= 0) {
+            svObj.sizes[sIdx].qty = (svObj.sizes[sIdx].qty || 0) + transferQty;
+            await client.query('UPDATE products SET variants=$1 WHERE id=$2', [JSON.stringify(svObj), shopProdId]);
+          }
+        }
+      } else {
+        shopProdId = null;
+      }
+    }
+
+    // If no linked shop product, find by name or create
+    if (!shopProdId) {
+      const { rows: [existingByName] } = await client.query('SELECT id, quantity FROM products WHERE LOWER(product_name)=LOWER($1) LIMIT 1', [whItem.product_name]);
+      if (existingByName) {
+        shopProdId = existingByName.id;
+        beforeShopQty = parseInt(existingByName.quantity || 0);
+        await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [transferQty, shopProdId]);
+      } else {
+        const { rows: [newProd] } = await client.query(
+          `INSERT INTO products (product_name, sale_price, purchase_price, quantity, barcode, category)
+           VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+          [whItem.product_name, whItem.sale_price, whItem.cost_price, transferQty, whItem.barcode || '', whItem.category || 'عام']
+        );
+        shopProdId = newProd.id;
+        beforeShopQty = 0;
+      }
+      // Link back to warehouse item
+      await client.query('UPDATE warehouse_items SET product_id=$1 WHERE id=$2', [shopProdId, whItem.id]);
+    }
+
+    // 3. Record transfer record
+    const { rows: [transRecord] } = await client.query(
+      `INSERT INTO warehouse_transfers (warehouse_item_id, product_id, product_name, selected_option, quantity, cost_price, sale_price, transferred_by, transferred_by_name, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+      [whItem.id, shopProdId, whItem.product_name, selected_option || null, transferQty, whItem.cost_price, whItem.sale_price, req.session?.user_id || null, req.session?.username || 'المدير', note || '']
+    );
+
+    // 4. Log Movement Audit Record
+    await logProductMovement({
+      productId: shopProdId,
+      productName: whItem.product_name,
+      movementType: 'transfer_to_store',
+      referenceId: transRecord.id,
+      referenceTitle: `إذن تحويل #${transRecord.id}`,
+      selectedOption: selected_option || null,
+      quantityChange: transferQty,
+      quantityBefore: beforeShopQty,
+      quantityAfter: beforeShopQty + transferQty,
+      unitPrice: whItem.sale_price,
+      unitCost: whItem.cost_price,
+      userName: req.session?.username || 'المدير',
+      notes: note || 'تحويل من المستودع إلى المحل'
+    }, client);
+
+    await client.query('COMMIT');
+
+    // 5. Sync shop product with website immediately
+    if (shopProdId) {
+      syncProductsNow([shopProdId]).catch(() => {});
+    }
+
+    res.json({ ok: true, transferred_qty: transferQty, product_id: shopProdId });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Warehouse transfer error:', err);
+    res.status(500).json({ error: 'خطأ أثناء التحويل: ' + err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// GET /api/products/movements — get product movement audit logs
+app.get(`${BASE}/api/products/movements`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const { q, type, date_from, date_to, limit = 500 } = req.query;
+    let where = 'WHERE 1=1';
+    const params = [];
+
+    if (q && q.trim()) {
+      params.push(`%${q.trim().toLowerCase()}%`);
+      where += ` AND (LOWER(product_name) LIKE $${params.length} OR LOWER(COALESCE(selected_option,'')) LIKE $${params.length} OR LOWER(COALESCE(reference_title,'')) LIKE $${params.length})`;
+    }
+    if (type && type.trim()) {
+      params.push(type.trim());
+      where += ` AND movement_type = $${params.length}`;
+    }
+    if (date_from) {
+      params.push(date_from);
+      where += ` AND created_at::date >= $${params.length}::date`;
+    }
+    if (date_to) {
+      params.push(date_to);
+      where += ` AND created_at::date <= $${params.length}::date`;
+    }
+
+    params.push(parseInt(limit, 10) || 500);
+    const sql = `SELECT * FROM product_movement_logs ${where} ORDER BY created_at DESC, id DESC LIMIT $${params.length}`;
+    const { rows } = await posDb.query(sql, params);
+    res.json({ logs: rows });
+  } catch (err) {
+    console.error('Get movements error:', err);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
+});
+
+// GET /api/reports/top-variants — Top-Selling Products & Variant Velocity Analytics
+app.get(`${BASE}/api/reports/top-variants`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const period = req.query.period || 'month';
+    const df = periodFilter(period, 's.date');
+
+    // Aggregate sales grouped by product and selected_option
+    const { rows: itemRows } = await posDb.query(
+      `SELECT
+         si.product_id,
+         si.product_name,
+         COALESCE(si.selected_option, '') as selected_option,
+         SUM(si.quantity) as sold_qty,
+         SUM(si.quantity * si.unit_price) as revenue,
+         SUM(si.quantity * (si.unit_price - COALESCE(si.snapshot_purchase_price, 0))) as profit
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       WHERE ${df}
+       GROUP BY si.product_id, si.product_name, COALESCE(si.selected_option, '')
+       ORDER BY sold_qty DESC`
+    );
+
+    // Group by main product
+    const productMap = {};
+    for (const r of itemRows) {
+      const pName = r.product_name;
+      if (!productMap[pName]) {
+        productMap[pName] = {
+          product_id: r.product_id,
+          product_name: pName,
+          total_quantity: 0,
+          total_revenue: 0,
+          total_profit: 0,
+          category: 'عام',
+          current_stock: 0,
+          variants_breakdown: []
+        };
+      }
+      const q = parseInt(r.sold_qty || 0, 10);
+      const rev = parseFloat(r.revenue || 0);
+      const prof = parseFloat(r.profit || 0);
+
+      productMap[pName].total_quantity += q;
+      productMap[pName].total_revenue += rev;
+      productMap[pName].total_profit += prof;
+
+      if (r.selected_option) {
+        productMap[pName].variants_breakdown.push({
+          selected_option: r.selected_option,
+          quantity: q,
+          revenue: rev,
+          profit: prof
+        });
+      }
+    }
+
+    // Attach current stock and category for products
+    const productList = Object.values(productMap);
+    if (productList.length > 0) {
+      const pIds = productList.map(p => p.product_id).filter(Boolean);
+      if (pIds.length > 0) {
+        const placeholders = pIds.map((_, i) => `$${i + 1}`).join(',');
+        const { rows: stockRows } = await posDb.query(
+          `SELECT id, quantity, category FROM products WHERE id IN (${placeholders})`,
+          pIds
+        );
+        const stockMap = {};
+        stockRows.forEach(sr => { stockMap[sr.id] = sr; });
+        productList.forEach(p => {
+          if (p.product_id && stockMap[p.product_id]) {
+            p.current_stock = stockMap[p.product_id].quantity || 0;
+            p.category = stockMap[p.product_id].category || 'عام';
+          }
+        });
+      }
+    }
+
+    // Sort by total quantity descending
+    productList.sort((a, b) => b.total_quantity - a.total_quantity);
+
+    res.json({ products: productList });
+  } catch (err) {
+    console.error('Top variants report error:', err);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
 });
 
 // ── Start Server ──────────────────────────────────────────────────────────────
