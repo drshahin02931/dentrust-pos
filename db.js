@@ -249,6 +249,53 @@ const PG_SCHEMA_SQL = `
     reason TEXT DEFAULT '',
     date TIMESTAMPTZ DEFAULT NOW()
   );
+  CREATE TABLE IF NOT EXISTS warehouse_items (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER,
+    product_name TEXT NOT NULL,
+    barcode TEXT,
+    category TEXT,
+    cost_price NUMERIC DEFAULT 0,
+    sale_price NUMERIC DEFAULT 0,
+    quantity INTEGER DEFAULT 0,
+    variants JSONB,
+    checkbox_values JSONB,
+    notes TEXT,
+    created_at TEXT DEFAULT (NOW()::text),
+    updated_at TEXT DEFAULT (NOW()::text)
+  );
+  CREATE TABLE IF NOT EXISTS warehouse_transfers (
+    id SERIAL PRIMARY KEY,
+    warehouse_item_id INTEGER,
+    product_id INTEGER,
+    product_name TEXT NOT NULL,
+    selected_option TEXT,
+    quantity INTEGER NOT NULL,
+    cost_price NUMERIC DEFAULT 0,
+    sale_price NUMERIC DEFAULT 0,
+    transferred_by INTEGER,
+    transferred_by_name TEXT,
+    notes TEXT,
+    date TEXT DEFAULT (NOW()::text)
+  );
+  CREATE TABLE IF NOT EXISTS product_movement_logs (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER,
+    product_name TEXT NOT NULL,
+    movement_type TEXT NOT NULL,
+    reference_id INTEGER,
+    reference_title TEXT,
+    selected_option TEXT,
+    quantity_change INTEGER NOT NULL,
+    quantity_before INTEGER NOT NULL DEFAULT 0,
+    quantity_after INTEGER NOT NULL DEFAULT 0,
+    unit_price NUMERIC DEFAULT 0,
+    unit_cost NUMERIC DEFAULT 0,
+    user_name TEXT,
+    notes TEXT,
+    date TEXT DEFAULT (NOW()::text),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
 `;
 
 const MIGRATIONS = [
@@ -289,6 +336,24 @@ const MIGRATIONS = [
   "ALTER TABLE pos_data.sale_items DROP CONSTRAINT IF EXISTS sale_items_product_id_fkey",
   "ALTER TABLE pos_data.return_items DROP CONSTRAINT IF EXISTS return_items_product_id_fkey",
   "ALTER TABLE return_items DROP CONSTRAINT IF EXISTS return_items_product_id_fkey",
+  `CREATE TABLE IF NOT EXISTS warehouse_items (
+    id SERIAL PRIMARY KEY, product_id INTEGER, product_name TEXT NOT NULL,
+    barcode TEXT, category TEXT, cost_price NUMERIC DEFAULT 0, sale_price NUMERIC DEFAULT 0,
+    quantity INTEGER DEFAULT 0, variants JSONB, checkbox_values JSONB, notes TEXT,
+    created_at TEXT DEFAULT (NOW()::text), updated_at TEXT DEFAULT (NOW()::text)
+  )`,
+  `CREATE TABLE IF NOT EXISTS warehouse_transfers (
+    id SERIAL PRIMARY KEY, warehouse_item_id INTEGER, product_id INTEGER, product_name TEXT NOT NULL,
+    selected_option TEXT, quantity INTEGER NOT NULL, cost_price NUMERIC DEFAULT 0, sale_price NUMERIC DEFAULT 0,
+    transferred_by INTEGER, transferred_by_name TEXT, notes TEXT, date TEXT DEFAULT (NOW()::text)
+  )`,
+  `CREATE TABLE IF NOT EXISTS product_movement_logs (
+    id SERIAL PRIMARY KEY, product_id INTEGER, product_name TEXT NOT NULL, movement_type TEXT NOT NULL,
+    reference_id INTEGER, reference_title TEXT, selected_option TEXT, quantity_change INTEGER NOT NULL,
+    quantity_before INTEGER NOT NULL DEFAULT 0, quantity_after INTEGER NOT NULL DEFAULT 0,
+    unit_price NUMERIC DEFAULT 0, unit_cost NUMERIC DEFAULT 0, user_name TEXT, notes TEXT,
+    date TEXT DEFAULT (NOW()::text), created_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
 ];
 
 // Migrations that run on the PUBLIC schema (Supabase website DB) — customers table.
