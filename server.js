@@ -1884,15 +1884,22 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
     const returnId = ret.id;
     for (const v of validated) {
       const { item, quantity } = v;
+      let validProdId = null;
+      if (item.product_id) {
+        try {
+          const { rows: [pExists] } = await client.query('SELECT id FROM products WHERE id=$1', [item.product_id]);
+          if (pExists) validProdId = item.product_id;
+        } catch (_) {}
+      }
       await client.query(
         'INSERT INTO return_items (return_id, sale_item_id, product_id, product_name, quantity, unit_price) VALUES ($1,$2,$3,$4,$5,$6)',
-        [returnId, item.id, item.product_id || null, item.product_name || '', quantity, parseFloat(item.unit_price || 0)]
+        [returnId, item.id, validProdId, item.product_name || '', quantity, parseFloat(item.unit_price || 0)]
       );
-      if (item.product_id) await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [quantity, item.product_id]);
+      if (validProdId) await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [quantity, validProdId]);
       // Restore checkbox_values stock or variants stock if the returned item had an option/size
-      if (item.product_id && item.selected_option) {
+      if (validProdId && item.selected_option) {
         try {
-          const { rows: [pcb] } = await client.query('SELECT checkbox_values, variants FROM products WHERE id=$1', [item.product_id]);
+          const { rows: [pcb] } = await client.query('SELECT checkbox_values, variants FROM products WHERE id=$1', [validProdId]);
           if (pcb?.checkbox_values) {
             const cbv = typeof pcb.checkbox_values === 'string' ? JSON.parse(pcb.checkbox_values) : { ...pcb.checkbox_values };
             if (cbv[item.selected_option] && typeof cbv[item.selected_option] === 'object' && cbv[item.selected_option].stock != null) {
@@ -1903,7 +1910,7 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
                 sum + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
               await client.query(
                 'UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
-                [totalCbQty, JSON.stringify(cbv), item.product_id]
+                [totalCbQty, JSON.stringify(cbv), validProdId]
               );
             }
           }
@@ -1912,7 +1919,7 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
             const sIdx = (vObj.sizes || []).findIndex(s => s.label === item.selected_option);
             if (sIdx >= 0) {
               vObj.sizes[sIdx].qty = (vObj.sizes[sIdx].qty || 0) + quantity;
-              await client.query('UPDATE products SET variants=$1 WHERE id=$2', [JSON.stringify(vObj), item.product_id]);
+              await client.query('UPDATE products SET variants=$1 WHERE id=$2', [JSON.stringify(vObj), validProdId]);
             }
           }
         } catch (_cbErr) {}
