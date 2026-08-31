@@ -615,14 +615,15 @@ function parseAddVariants(p) {
       Object.entries(cv).forEach(([key, val]) => {
         const sep = key.indexOf('::');
         if (sep === -1) return;
-        const label = key.slice(sep + 2);
-        const checked = typeof val === 'boolean' ? val : (val?.checked ?? false);
-        const disabled = typeof val === 'object' ? (val?.disabled ?? false) : false;
+        const group    = key.slice(0, sep);
+        const label    = key.slice(sep + 2);
+        const checked  = typeof val === 'boolean' ? val : (val?.checked ?? false);
+        const disabled = typeof val === 'object'  ? (val?.disabled ?? false) : false;
         if (!checked || disabled) return;
         const stock = (typeof val === 'object' && val?.stock !== null && val?.stock !== undefined)
           ? parseInt(val.stock)
           : (p.quantity || 0);
-        sizes.push({ label, qty: stock, _cbKey: key });
+        sizes.push({ label, qty: stock, _cbKey: key, group });
       });
       if (sizes.length > 0) return { sizes };
     } catch(e) {}
@@ -644,17 +645,51 @@ function openAddVariantModal(product, variants) {
 
   const sizes = variants.sizes || [];
   const list = document.getElementById('av-sizes-list');
-  list.innerHTML = sizes.map(s => {
-    const outOfStock = s.qty <= 0;
-    const key = (s._cbKey || s.label).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-    return `
-      <button type="button" onclick="selectAddVariantSize('${key}', ${s.qty}, this)" ${outOfStock ? 'disabled' : ''}
-        class="av-size-btn border-2 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all ${outOfStock ? 'bg-gray-50 border-gray-200 text-gray-300 cursor-not-allowed' : 'bg-white border-gray-200 hover:border-blue-400 text-gray-800'}">
-        <span class="font-bold text-sm">${s.label}</span>
-        <span class="text-[11px] mt-0.5 ${outOfStock ? 'text-red-400' : 'text-gray-400'}">${outOfStock ? 'نفذ' : s.qty + ' متاح'}</span>
-      </button>
-    `;
-  }).join('');
+  const hasGroups = sizes.some(s => s.group);
+
+  if (hasGroups) {
+    const groupMap = {};
+    const groupOrder = [];
+    sizes.forEach(s => {
+      const g = s.group || 'عام';
+      if (!groupMap[g]) { groupMap[g] = []; groupOrder.push(g); }
+      groupMap[g].push(s);
+    });
+    list.className = "space-y-4 max-h-72 overflow-y-auto p-1";
+    list.innerHTML = groupOrder.map(g => `
+      <div class="border rounded-xl p-3 bg-gray-50/70 space-y-2">
+        <div class="text-xs font-bold text-gray-700 border-b pb-1.5 flex items-center gap-1.5">
+          <span>🏷️</span> <span>${g}</span>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          ${groupMap[g].map(s => {
+            const outOfStock = s.qty <= 0;
+            const key = (s._cbKey || s.label).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+            return `
+              <button type="button" onclick="selectAddVariantSize('${key}', ${s.qty}, this)" ${outOfStock ? 'disabled' : ''}
+                class="av-size-btn border-2 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all ${outOfStock ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed' : 'bg-white border-gray-200 hover:border-blue-400 text-gray-800 shadow-sm'}">
+                <span class="font-bold text-sm">${s.label}</span>
+                <span class="text-[11px] mt-0.5 ${outOfStock ? 'text-red-500 font-semibold' : 'text-gray-400'}">${outOfStock ? 'نفذ' : s.qty + ' متاح'}</span>
+              </button>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `).join('');
+  } else {
+    list.className = "grid grid-cols-3 gap-2 max-h-56 overflow-y-auto p-1";
+    list.innerHTML = sizes.map(s => {
+      const outOfStock = s.qty <= 0;
+      const key = (s._cbKey || s.label).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+      return `
+        <button type="button" onclick="selectAddVariantSize('${key}', ${s.qty}, this)" ${outOfStock ? 'disabled' : ''}
+          class="av-size-btn border-2 rounded-xl p-2.5 flex flex-col items-center justify-center transition-all ${outOfStock ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed' : 'bg-white border-gray-200 hover:border-blue-400 text-gray-800 shadow-sm'}">
+          <span class="font-bold text-sm">${s.label}</span>
+          <span class="text-[11px] mt-0.5 ${outOfStock ? 'text-red-500 font-semibold' : 'text-gray-400'}">${outOfStock ? 'نفذ' : s.qty + ' متاح'}</span>
+        </button>
+      `;
+    }).join('');
+  }
 
   document.getElementById('addVariantModal').classList.remove('hidden');
 }
