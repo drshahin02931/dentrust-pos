@@ -4035,44 +4035,148 @@ async function initPriceTracker() {
   catch (e) { console.error('Price tracker init error:', e.message); }
 }
 
-// ── Title similarity (Jaccard token overlap) ─────────────────────────────────
-// Returns 0.0–1.0.  >= 0.35 considered a real match.
-function titleSimilarity(a, b) {
-  const tokenize = s => s
+// ── Medical Text Normalization & Smart Overlap Matcher ───────────────────────
+function normalizeProductText(text) {
+  if (!text) return '';
+  return String(text)
     .toLowerCase()
-    .replace(/[^\u0600-\u06FFa-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 2);
-  const ta = new Set(tokenize(String(a || '')));
-  const tb = new Set(tokenize(String(b || '')));
-  if (ta.size === 0 || tb.size === 0) return 0;
-  const intersection = [...ta].filter(w => tb.has(w)).length;
-  const union = new Set([...ta, ...tb]).size;
-  return union === 0 ? 0 : intersection / union;
+    // Arabic character normalization
+    .replace(/[إأآا]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/ؤ/g, 'و')
+    .replace(/ئ/g, 'ي')
+    .replace(/ـ/g, '')
+    // Medical gauge sizes: 20 gauge, 20g, gauge 20 -> 20g
+    .replace(/(\d+)\s*(?:gauge|g)\b/gi, '$1g')
+    .replace(/\bgauge\s*(\d+)\b/gi, '$1g')
+    // Shades: shade a1, a2, a3, b1 -> a1, a2, a3, b1
+    .replace(/\bshade\s*([a-d]\d+)\b/gi, '$1')
+    // Weights & volumes: 4 gm, 4gm, 4g -> 4g; 5 ml, 5ml -> 5ml
+    .replace(/(\d+)\s*(?:gm|gram|g)\b/gi, '$1g')
+    .replace(/(\d+)\s*(?:ml|milliliter)\b/gi, '$1ml')
+    .replace(/(\d+)\s*(?:pcs|pieces|قطعة|حبة)\b/gi, '$1pcs')
+    // Strip non-alphanumeric except spaces
+    .replace(/[^\u0600-\u06FFa-z0-9\s]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenizeProduct(text) {
+  const norm = normalizeProductText(text);
+  if (!norm) return [];
+  const stopwords = new Set([
+    'the', 'and', 'for', 'with', 'box', 'set', 'pack', 'piece', 'dental', 'teeth',
+    'من', 'في', 'على', 'مع', 'علبة', 'طقم', 'باكت', 'اسنان', 'طب', 'طبي', 'اصلية', 'اصلي'
+  ]);
+  return norm.split(/\s+/).filter(w => w.length >= 2 && !stopwords.has(w));
+}
+
+// Overlap coefficient with token containment bonus:
+// Computes |A ∩ B| / min(|A|, |B|).
+function titleSimilarity(a, b) {
+  const ta = tokenizeProduct(a);
+  const tb = tokenizeProduct(b);
+  if (ta.length === 0 || tb.length === 0) return 0;
+  const setA = new Set(ta);
+  const setB = new Set(tb);
+  const intersection = [...setA].filter(w => setB.has(w)).length;
+  if (intersection === 0) return 0;
+  const minSize = Math.min(setA.size, setB.size);
+  const overlap = intersection / minSize;
+
+  // Bonus if key model/gauge/shade identifiers match (e.g. 20g, a2, cx, 3m)
+  const keyTokensA = ta.filter(w => /^\d+[a-z]+|[a-z]\d+$/i.test(w) || w.length >= 4);
+  const keyTokensB = new Set(tb);
+  const keyMatches = keyTokensA.filter(w => keyTokensB.has(w)).length;
+  const keyBonus = keyTokensA.length > 0 ? (keyMatches / keyTokensA.length) * 0.2 : 0;
+
+  return Math.min(1.0, overlap * 0.8 + keyBonus);
+}
+
+// AI Semantic Matcher using OpenRouter
+async function aiSemanticMatch(competitorTitle, candidates) {
+  if (!OPENROUTER_KEY || !candidates || candidates.length === 0) return null;
+  try {
+    const candidateList = candidates.slice(0, 15).map((c, i) => `${i + 1}. [ID: ${c.id}] ${c.product_name}`).join('\n');
+    const prompt = `You are an expert dental supply product matching AI.
+A competitor lists a product titled: "${competitorTitle}"
+Here are our dental inventory products:
+${candidateList}
+
+Find the SINGLE best matching product from our list that represents the exact same product (accounting for Arabic/English translation, brand abbreviations, or shade/gauge codes).
+Respond ONLY with a JSON object:
+{"match_id": <our_product_id or null>, "confidence": <0.0 to 1.0>}
+If no clear match exists, return {"match_id": null, "confidence": 0.0}.`;
+
+    const aiRes = await callOpenRouter({
+      model: await getBestFreeModel(),
+      max_tokens: 150,
+      messages: [{ role: 'system', content: prompt }]
+    });
+    const raw = aiRes.choices?.[0]?.message?.content || '';
+    const jsonMatch = raw.match(/\{[\s\S]*?\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.match_id && parsed.confidence >= 0.5) {
+        const found = candidates.find(c => String(c.id) === String(parsed.match_id));
+        if (found) return found;
+      }
+    }
+  } catch (err) {
+    console.error('AI Semantic Match error:', err.message);
+  }
+  return null;
 }
 
 // Find the best matching product in our DB for a competitor title.
-// Returns { id } or null. Requires similarity >= minScore (default 0.35).
-async function findBestOurProduct(competitorTitle, minScore = 0.35) {
+async function findBestOurProduct(competitorTitle, minScore = 0.40) {
   if (!competitorTitle || !competitorTitle.trim()) return null;
-  const words = competitorTitle
-    .replace(/[^\u0600-\u06FFa-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 2)
-    .slice(0, 6);
-  if (words.length === 0) return null;
-  const likes = words.map((_, i) => `LOWER(product_name) LIKE $${i + 1}`).join(' OR ');
-  const params = words.map(w => `%${w.toLowerCase()}%`);
-  const { rows: candidates } = await posDb.query(
-    `SELECT id, product_name FROM products WHERE ${likes} LIMIT 20`, params
-  );
+  const rawTokens = tokenizeProduct(competitorTitle);
+  if (rawTokens.length === 0) return null;
+
+  // Search DB for candidate products using key words
+  const searchWords = rawTokens.slice(0, 8);
+  const likes = searchWords.map((_, i) => `LOWER(product_name) LIKE $${i + 1}`).join(' OR ');
+  const params = searchWords.map(w => `%${w.toLowerCase()}%`);
+
+  let candidates = [];
+  try {
+    const { rows } = await posDb.query(
+      `SELECT id, product_name, sale_price FROM products WHERE ${likes} LIMIT 30`, params
+    );
+    candidates = rows;
+  } catch (_) {}
+
+  // If no LIKE candidates, load a small sample of active products for AI matching
+  if (candidates.length === 0) {
+    try {
+      const { rows } = await posDb.query(
+        'SELECT id, product_name, sale_price FROM products ORDER BY id DESC LIMIT 50'
+      );
+      candidates = rows;
+    } catch (_) {}
+  }
+
   if (candidates.length === 0) return null;
+
+  // Step 1: Fast Overlap Similarity scoring
   let best = null, bestScore = 0;
   for (const c of candidates) {
     const score = titleSimilarity(competitorTitle, c.product_name);
     if (score > bestScore) { bestScore = score; best = c; }
   }
-  return bestScore >= minScore ? best : null;
+
+  // If high confidence match found by overlap algorithm, return immediately
+  if (bestScore >= minScore && best) return best;
+
+  // Step 2: If low score or uncertain, use AI Semantic Matching as fallback
+  if (OPENROUTER_KEY && candidates.length > 0) {
+    const aiMatched = await aiSemanticMatch(competitorTitle, candidates);
+    if (aiMatched) return aiMatched;
+  }
+
+  return bestScore >= 0.30 ? best : null;
 }
 
 // AI-powered scraper — JSON-LD → meta tags → OpenRouter AI → regex fallback
