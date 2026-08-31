@@ -1,0 +1,251 @@
+<%- include('partials/header', Object.assign({pageTitle: 'الأكثر مبيعاً وسرعة الدوران'}, locals)) %>
+
+<div class="space-y-6">
+  <!-- Header Title & Period Filter -->
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-black text-gray-800 flex items-center gap-2">
+        <span>🔥</span> تقرير الأكثر مبيعاً وسرعة دوران المقاسات
+      </h1>
+      <p class="text-xs text-gray-500 mt-1">تحليل مفصل للمنتجات والمقاسات الأكثر طلباً وخروجاً من المخزن ومعدلات الربحية</p>
+    </div>
+    
+    <!-- Period Buttons -->
+    <div class="bg-white border rounded-2xl p-1 shadow-sm flex items-center gap-1">
+      <button onclick="setPeriod('today')" class="period-btn px-3 py-1.5 rounded-xl text-xs font-bold transition-all text-gray-600 hover:bg-gray-100" data-p="today">اليوم</button>
+      <button onclick="setPeriod('week')" class="period-btn px-3 py-1.5 rounded-xl text-xs font-bold transition-all text-gray-600 hover:bg-gray-100" data-p="week">هذا الأسبوع</button>
+      <button onclick="setPeriod('month')" class="period-btn px-3 py-1.5 rounded-xl text-xs font-bold transition-all bg-blue-700 text-white shadow-sm" data-p="month">هذا الشهر</button>
+      <button onclick="setPeriod('3months')" class="period-btn px-3 py-1.5 rounded-xl text-xs font-bold transition-all text-gray-600 hover:bg-gray-100" data-p="3months">آخر 3 أشهر</button>
+      <button onclick="setPeriod('year')" class="period-btn px-3 py-1.5 rounded-xl text-xs font-bold transition-all text-gray-600 hover:bg-gray-100" data-p="year">هذا العام</button>
+      <button onclick="setPeriod('all')" class="period-btn px-3 py-1.5 rounded-xl text-xs font-bold transition-all text-gray-600 hover:bg-gray-100" data-p="all">كل الأوقات</button>
+    </div>
+  </div>
+
+  <!-- Summary Cards -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="bg-gradient-to-br from-blue-700 to-indigo-800 text-white rounded-3xl p-5 shadow-lg">
+      <span class="text-xs text-blue-200 font-semibold block">📦 إجمالي القطع المباعة</span>
+      <span id="stat-total-qty" class="text-3xl font-black block mt-2">0</span>
+      <span class="text-[11px] text-blue-200 mt-1 block">خلال الفترة المحددة</span>
+    </div>
+    <div class="bg-gradient-to-br from-emerald-600 to-teal-800 text-white rounded-3xl p-5 shadow-lg">
+      <span class="text-xs text-emerald-200 font-semibold block">💰 إجمالي المبيعات</span>
+      <span id="stat-total-rev" class="text-3xl font-black block mt-2">0.00 ج</span>
+      <span class="text-[11px] text-emerald-200 mt-1 block">إيراد المبيعات</span>
+    </div>
+    <div class="bg-gradient-to-br from-amber-600 to-orange-800 text-white rounded-3xl p-5 shadow-lg">
+      <span class="text-xs text-amber-200 font-semibold block">📈 صافي الربح المحقق</span>
+      <span id="stat-total-profit" class="text-3xl font-black block mt-2">0.00 ج</span>
+      <span class="text-[11px] text-amber-200 mt-1 block">الأرباح بعد التكلفة</span>
+    </div>
+    <div class="bg-gradient-to-br from-purple-700 to-slate-900 text-white rounded-3xl p-5 shadow-lg">
+      <span class="text-xs text-purple-200 font-semibold block">👑 الصنف الأكثر طلباً</span>
+      <span id="stat-top-prod" class="text-lg font-black block mt-2 truncate">—</span>
+      <span id="stat-top-prod-sub" class="text-[11px] text-purple-200 mt-1 block">0 قطعة مباعة</span>
+    </div>
+  </div>
+
+  <!-- Search in report -->
+  <div class="bg-white rounded-2xl shadow-sm border p-4 flex items-center justify-between gap-3">
+    <div class="flex-1 relative">
+      <span class="absolute inset-y-0 right-3 flex items-center text-gray-400">🔍</span>
+      <input id="reportSearch" type="text" placeholder="ابحث باسم المنتج أو المقاس في التقرير..."
+        oninput="filterTopSellingTable()"
+        class="w-full pl-4 pr-10 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick="loadTopSellingData()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold px-4 py-2.5 rounded-xl text-sm transition-all">
+        🔄 تحديث
+      </button>
+    </div>
+  </div>
+
+  <!-- Top Products Table -->
+  <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
+    <div class="p-4 border-b bg-gray-50/70 flex items-center justify-between">
+      <h2 class="font-bold text-gray-800 text-base flex items-center gap-2">
+        <span>🏆</span> ترتيب الأصناف والمقاسات حسب الأعلى خروجاً
+      </h2>
+      <span id="reportCountBadge" class="text-xs bg-blue-100 text-blue-800 font-bold px-2.5 py-1 rounded-full">0 منتج</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-right text-sm">
+        <thead class="bg-gray-50/80 text-gray-600 font-bold border-b text-xs">
+          <tr>
+            <th class="p-3.5 text-center w-12">#</th>
+            <th class="p-3.5">اسم المنتج وتفصيل المقاسات والخيارات</th>
+            <th class="p-3.5 text-center">الكمية المباعة</th>
+            <th class="p-3.5 text-center">سرعة الدوران</th>
+            <th class="p-3.5 font-mono">إجمالي الإيراد</th>
+            <th class="p-3.5 font-mono">صافي الربح</th>
+            <th class="p-3.5 text-center">الرصيد المتبقي بالمحل</th>
+          </tr>
+        </thead>
+        <tbody id="topSellingBody" class="divide-y divide-gray-100">
+          <tr>
+            <td colspan="7" class="text-center py-12 text-gray-400 font-medium">جارٍ استخراج وتحليل بيانات المبيعات...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div id="topNoData" class="hidden text-center py-12 text-gray-400">
+      <span class="text-3xl block mb-2">📊</span>
+      لا توجد مبيعات مسجلة خلال الفترة الزمنية المحددة
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = '<%= base %>';
+let _currentPeriod = 'month';
+let _topReportData = [];
+
+function setPeriod(p) {
+  _currentPeriod = p;
+  document.querySelectorAll('.period-btn').forEach(btn => {
+    if (btn.getAttribute('data-p') === p) {
+      btn.className = 'period-btn px-3 py-1.5 rounded-xl text-xs font-bold transition-all bg-blue-700 text-white shadow-sm';
+    } else {
+      btn.className = 'period-btn px-3 py-1.5 rounded-xl text-xs font-bold transition-all text-gray-600 hover:bg-gray-100';
+    }
+  });
+  loadTopSellingData();
+}
+
+async function loadTopSellingData() {
+  try {
+    const res = await fetch(`${BASE}/api/reports/top-variants?period=${_currentPeriod}`);
+    const data = await res.json();
+    _topReportData = data.products || [];
+
+    // KPI Totals
+    const totalQty = _topReportData.reduce((s, p) => s + parseInt(p.total_quantity || 0), 0);
+    const totalRev = _topReportData.reduce((s, p) => s + parseFloat(p.total_revenue || 0), 0);
+    const totalProfit = _topReportData.reduce((s, p) => s + parseFloat(p.total_profit || 0), 0);
+
+    document.getElementById('stat-total-qty').textContent = totalQty + ' قطعة';
+    document.getElementById('stat-total-rev').textContent = totalRev.toFixed(2) + ' ج';
+    document.getElementById('stat-total-profit').textContent = totalProfit.toFixed(2) + ' ج';
+
+    if (_topReportData.length > 0) {
+      document.getElementById('stat-top-prod').textContent = _topReportData[0].product_name;
+      document.getElementById('stat-top-prod-sub').textContent = `${_topReportData[0].total_quantity} قطعة مباعة`;
+    } else {
+      document.getElementById('stat-top-prod').textContent = '—';
+      document.getElementById('stat-top-prod-sub').textContent = 'لا توجد مبيعات';
+    }
+
+    document.getElementById('reportCountBadge').textContent = `${_topReportData.length} منتج`;
+
+    renderTopSellingTable(_topReportData);
+  } catch (err) {
+    console.error('Failed to load top selling report:', err);
+  }
+}
+
+function renderTopSellingTable(products) {
+  const tbody = document.getElementById('topSellingBody');
+  const noData = document.getElementById('topNoData');
+  if (!products.length) {
+    tbody.innerHTML = '';
+    noData.classList.remove('hidden');
+    return;
+  }
+  noData.classList.add('hidden');
+
+  const maxQty = Math.max(...products.map(p => parseInt(p.total_quantity || 1)), 1);
+
+  tbody.innerHTML = products.map((p, idx) => {
+    const q = parseInt(p.total_quantity || 0);
+    const pct = Math.round((q / maxQty) * 100);
+
+    // Velocity badge
+    let velBadge = '';
+    if (idx < 3 || pct >= 70) {
+      velBadge = `<span class="bg-red-100 text-red-700 font-bold px-2.5 py-1 rounded-full text-xs flex items-center gap-1 justify-center">🔥 حركة سريعة جداً</span>`;
+    } else if (pct >= 30) {
+      velBadge = `<span class="bg-amber-100 text-amber-800 font-bold px-2.5 py-1 rounded-full text-xs flex items-center gap-1 justify-center">⚡ حركة متوسطة</span>`;
+    } else {
+      velBadge = `<span class="bg-gray-100 text-gray-600 font-semibold px-2.5 py-1 rounded-full text-xs flex items-center gap-1 justify-center">حركة عادية</span>`;
+    }
+
+    // Variants breakdown
+    let variantsBreakdownHtml = '';
+    if (p.variants_breakdown && p.variants_breakdown.length > 0) {
+      variantsBreakdownHtml = `
+        <div class="mt-2 bg-gray-50 border border-gray-200/80 rounded-xl p-2.5 space-y-1.5">
+          <div class="text-[11px] font-bold text-gray-500">📊 تفصيل المقاسات والخيارات الأكثر خروجاً:</div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            ${p.variants_breakdown.map(v => {
+              const vQty = parseInt(v.quantity || 0);
+              const isTop = vQty === Math.max(...p.variants_breakdown.map(x => parseInt(x.quantity||0)));
+              return `
+                <div class="bg-white border ${isTop ? 'border-blue-300 shadow-xs' : 'border-gray-200'} rounded-lg p-2 flex justify-between items-center text-xs">
+                  <div class="truncate">
+                    <span class="font-bold text-gray-800">${v.selected_option || 'عادي'}</span>
+                    ${isTop ? '<span class="text-[9px] bg-blue-100 text-blue-700 px-1 py-0.2 rounded mr-1 font-bold">الأكثر</span>' : ''}
+                  </div>
+                  <span class="font-mono font-black text-blue-700">${vQty} قطعة</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    const currentStock = parseInt(p.current_stock || 0);
+    const isLowStock = currentStock <= 5 && q >= 5;
+
+    return `
+      <tr class="hover:bg-blue-50/30 transition-colors">
+        <td class="p-3.5 text-center font-black ${idx === 0 ? 'text-amber-500 text-lg' : idx === 1 ? 'text-slate-400 text-base' : idx === 2 ? 'text-amber-700 text-base' : 'text-gray-400'}">
+          ${idx + 1}
+        </td>
+        <td class="p-3.5">
+          <div class="flex items-center gap-2">
+            <span class="font-bold text-gray-900 text-base">${p.product_name}</span>
+            <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-lg">${p.category || 'عام'}</span>
+          </div>
+          ${variantsBreakdownHtml}
+        </td>
+        <td class="p-3.5 text-center">
+          <span class="text-lg font-black text-blue-800 font-mono">${q}</span>
+          <span class="text-xs text-gray-400 block">قطعة</span>
+          <div class="w-24 bg-gray-200 h-1.5 rounded-full mx-auto mt-1 overflow-hidden">
+            <div class="bg-blue-600 h-full rounded-full" style="width: ${pct}%"></div>
+          </div>
+        </td>
+        <td class="p-3.5 text-center">${velBadge}</td>
+        <td class="p-3.5 font-mono font-bold text-gray-800">${parseFloat(p.total_revenue||0).toFixed(2)} ج</td>
+        <td class="p-3.5 font-mono font-bold ${parseFloat(p.total_profit||0) >= 0 ? 'text-emerald-700' : 'text-red-600'}">
+          ${parseFloat(p.total_profit||0).toFixed(2)} ج
+        </td>
+        <td class="p-3.5 text-center">
+          <span class="inline-block px-2.5 py-1 rounded-full font-black text-xs ${currentStock <= 0 ? 'bg-red-100 text-red-700' : isLowStock ? 'bg-orange-100 text-orange-700' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}">
+            ${currentStock} قطعة
+          </span>
+          ${isLowStock ? `<span class="block text-[10px] text-orange-600 font-bold mt-0.5">⚠️ اطلب من المورد</span>` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function filterTopSellingTable() {
+  const q = document.getElementById('reportSearch').value.trim().toLowerCase();
+  const filtered = _topReportData.filter(p => {
+    const nameMatch = (p.product_name||'').toLowerCase().includes(q);
+    const catMatch = (p.category||'').toLowerCase().includes(q);
+    const variantMatch = (p.variants_breakdown||[]).some(v => (v.selected_option||'').toLowerCase().includes(q));
+    return nameMatch || catMatch || variantMatch;
+  });
+  renderTopSellingTable(filtered);
+}
+
+// Initial load
+loadTopSellingData();
+</script>
+
+</main>
+<%- include('partials/footer', locals) %>
