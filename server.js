@@ -5124,6 +5124,14 @@ async function logProductMovement({
   notes = ''
 }, client = posDb) {
   try {
+    const prodId = productId ? parseInt(productId, 10) || null : null;
+    const refId = referenceId ? parseInt(referenceId, 10) || null : null;
+    const qChange = parseInt(quantityChange || 0, 10) || 0;
+    const qBefore = parseInt(quantityBefore || 0, 10) || 0;
+    const qAfter = parseInt(quantityAfter || 0, 10) || 0;
+    const uPrice = parseFloat(unitPrice || 0) || 0;
+    const uCost = parseFloat(unitCost || 0) || 0;
+
     await client.query(
       `INSERT INTO product_movement_logs (
         product_id, product_name, movement_type, reference_id, reference_title,
@@ -5131,17 +5139,17 @@ async function logProductMovement({
         unit_price, unit_cost, user_name, notes
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
-        productId || null,
-        productName || '',
-        movementType,
-        referenceId || null,
+        prodId,
+        productName || 'صنف',
+        movementType || 'adjustment',
+        refId,
         referenceTitle || '',
         selectedOption || null,
-        quantityChange,
-        quantityBefore,
-        quantityAfter,
-        parseFloat(unitPrice || 0),
-        parseFloat(unitCost || 0),
+        qChange,
+        qBefore,
+        qAfter,
+        uPrice,
+        uCost,
         userName || 'النظام',
         notes || ''
       ]
@@ -5375,6 +5383,14 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
 app.get(`${BASE}/api/products/movements`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   try {
+    // If table has 0 rows, backfill from past sales & returns immediately on-demand
+    try {
+      const { rows: [chk] } = await posDb.query('SELECT COUNT(*) as count FROM product_movement_logs');
+      if (parseInt(chk?.count || 0, 10) === 0) {
+        await backfillHistoricalMovements();
+      }
+    } catch (_) {}
+
     const { q, type, date_from, date_to, limit = 500 } = req.query;
     let where = 'WHERE 1=1';
     const params = [];
@@ -5402,7 +5418,7 @@ app.get(`${BASE}/api/products/movements`, async (req, res) => {
     res.json({ logs: rows });
   } catch (err) {
     console.error('Get movements error:', err);
-    res.status(500).json({ error: 'خطأ داخلي' });
+    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
   }
 });
 
