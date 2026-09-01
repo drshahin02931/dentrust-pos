@@ -718,9 +718,11 @@ app.post(`${BASE}/api/products`, async (req, res) => {
   }
 });
 
-app.get(`${BASE}/api/products/:pid`, async (req, res) => {
+app.get(`${BASE}/api/products/:pid`, async (req, res, next) => {
+  const pid = parseInt(req.params.pid, 10);
+  if (isNaN(pid)) return next();
   try {
-    const { rows: [p] } = await posDb.query('SELECT * FROM products WHERE id=$1', [req.params.pid]);
+    const { rows: [p] } = await posDb.query('SELECT * FROM products WHERE id=$1', [pid]);
     if (!p) return res.status(404).json({ error: 'المنتج غير موجود' });
     // Convert relative Supabase storage paths to full public URLs
     if (p.image_url && p.image_url.startsWith('/objects/')) {
