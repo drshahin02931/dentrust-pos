@@ -5379,15 +5379,27 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
   }
 });
 
+// POST /api/products/movements/backfill — force sync/backfill all past sales and returns into movement logs
+app.post(`${BASE}/api/products/movements/backfill`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const count = await backfillHistoricalMovements(true);
+    res.json({ ok: true, synced: count });
+  } catch (err) {
+    console.error('Manual backfill error:', err);
+    res.status(500).json({ error: 'خطأ أثناء المزامنة: ' + err.message });
+  }
+});
+
 // GET /api/products/movements — get product movement audit logs
 app.get(`${BASE}/api/products/movements`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   try {
-    // If table has 0 rows, backfill from past sales & returns immediately on-demand
+    // Check if logs are empty, auto-sync past sales if needed
     try {
       const { rows: [chk] } = await posDb.query('SELECT COUNT(*) as count FROM product_movement_logs');
       if (parseInt(chk?.count || 0, 10) === 0) {
-        await backfillHistoricalMovements();
+        await backfillHistoricalMovements(true);
       }
     } catch (_) {}
 
@@ -5405,15 +5417,15 @@ app.get(`${BASE}/api/products/movements`, async (req, res) => {
     }
     if (date_from) {
       params.push(date_from);
-      where += ` AND created_at::date >= $${params.length}::date`;
+      where += ` AND COALESCE(created_at, NOW())::date >= $${params.length}::date`;
     }
     if (date_to) {
       params.push(date_to);
-      where += ` AND created_at::date <= $${params.length}::date`;
+      where += ` AND COALESCE(created_at, NOW())::date <= $${params.length}::date`;
     }
 
     params.push(parseInt(limit, 10) || 500);
-    const sql = `SELECT * FROM product_movement_logs ${where} ORDER BY created_at DESC, id DESC LIMIT $${params.length}`;
+    const sql = `SELECT * FROM product_movement_logs ${where} ORDER BY id DESC LIMIT $${params.length}`;
     const { rows } = await posDb.query(sql, params);
     res.json({ logs: rows });
   } catch (err) {
@@ -5511,13 +5523,15 @@ app.get(`${BASE}/api/reports/top-variants`, async (req, res) => {
 });
 
 // ── Backfill Historical Movements from existing Sales & Returns ───────────────
-async function backfillHistoricalMovements() {
+async function backfillHistoricalMovements(force = false) {
   try {
     const { rows: [chk] } = await posDb.query('SELECT COUNT(*) as count FROM product_movement_logs');
-    if (parseInt(chk?.count || 0, 10) === 0) {
-      console.log('[Movements] Backfilling historical product movements from past sales and returns...');
+    const existingCount = parseInt(chk?.count || 0, 10);
+    if (existingCount === 0 || force) {
+      console.log('[Movements] Syncing historical product movements from past sales and returns...');
+      
       // 1. Backfill Sales
-      await posDb.query(`
+      const { rowCount: salesAdded } = await posDb.query(`
         INSERT INTO product_movement_logs (
           product_id, product_name, movement_type, reference_id, reference_title,
           selected_option, quantity_change, quantity_before, quantity_after,
@@ -5542,11 +5556,18 @@ async function backfillHistoricalMovements() {
         FROM sale_items si
         JOIN sales s ON s.id = si.sale_id
         LEFT JOIN users u ON u.id = s.cashier_id
+        WHERE NOT EXISTS (
+          SELECT 1 FROM product_movement_logs pml
+          WHERE pml.movement_type = 'sale'
+            AND pml.reference_id = s.id
+            AND (pml.product_id = si.product_id OR (pml.product_id IS NULL AND si.product_id IS NULL))
+            AND COALESCE(pml.selected_option, '') = COALESCE(si.selected_option, '')
+        )
         ORDER BY s.id ASC
-      `).catch(e => console.error('Sales backfill err:', e.message));
+      `).catch(e => { console.error('Sales backfill err:', e.message); return { rowCount: 0 }; });
 
       // 2. Backfill Returns
-      await posDb.query(`
+      const { rowCount: returnsAdded } = await posDb.query(`
         INSERT INTO product_movement_logs (
           product_id, product_name, movement_type, reference_id, reference_title,
           selected_option, quantity_change, quantity_before, quantity_after,
@@ -5571,13 +5592,23 @@ async function backfillHistoricalMovements() {
         FROM return_items ri
         JOIN returns r ON r.id = ri.return_id
         LEFT JOIN users u ON u.id = r.processed_by
+        WHERE NOT EXISTS (
+          SELECT 1 FROM product_movement_logs pml
+          WHERE pml.movement_type = 'return'
+            AND pml.reference_id = r.sale_id
+            AND (pml.product_id = ri.product_id OR (pml.product_id IS NULL AND ri.product_id IS NULL))
+        )
         ORDER BY r.id ASC
-      `).catch(e => console.error('Returns backfill err:', e.message));
+      `).catch(e => { console.error('Returns backfill err:', e.message); return { rowCount: 0 }; });
 
-      console.log('[Movements] Historical movements backfilled successfully ✓');
+      const totalSynced = (salesAdded || 0) + (returnsAdded || 0);
+      console.log(`[Movements] Sync complete: ${totalSynced} rows inserted ✓`);
+      return totalSynced;
     }
+    return 0;
   } catch (err) {
     console.error('Backfill movements error:', err.message);
+    return 0;
   }
 }
 
