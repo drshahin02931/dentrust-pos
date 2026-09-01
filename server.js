@@ -5083,27 +5083,236 @@ app.post(`${BASE}/api/push/test`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/push/send  — manager-only: send custom notification to all devices
-app.post(`${BASE}/api/push/send`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
-  const { title, body, url } = req.body;
-  if (!title || !body) return res.status(400).json({ error: 'title و body مطلوبان' });
+// POST /api/products/movements/backfill — force sync/backfill all past sales and returns into movement logs
+app.post(`${BASE}/api/products/movements/backfill`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   try {
-    await sendPushToAll(title, body, url || null);
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    // Self-heal: ensure table exists before backfill
+    await posDb.query(`CREATE TABLE IF NOT EXISTS product_movement_logs (
+      id SERIAL PRIMARY KEY, product_id INTEGER, product_name TEXT NOT NULL, movement_type TEXT NOT NULL,
+      reference_id INTEGER, reference_title TEXT, selected_option TEXT, quantity_change INTEGER NOT NULL,
+      quantity_before INTEGER NOT NULL DEFAULT 0, quantity_after INTEGER NOT NULL DEFAULT 0,
+      unit_price NUMERIC DEFAULT 0, unit_cost NUMERIC DEFAULT 0, user_name TEXT, notes TEXT,
+      date TEXT DEFAULT (NOW()::text), created_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+    const count = await backfillHistoricalMovements(true);
+    res.json({ ok: true, synced: count || 0 });
+  } catch (err) {
+    console.error('[Movements] Manual backfill error:', err.message);
+    res.json({ ok: false, synced: 0, error: err.message });
+  }
 });
 
-// GET /api/push/subscriptions  — manager only: how many devices subscribed
-app.get(`${BASE}/api/push/subscriptions`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+// GET /api/products/movements — get product movement audit logs
+app.get(`${BASE}/api/products/movements`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   try {
-    const { rows: [r] } = await posDb.query('SELECT COUNT(*) as count FROM push_subscriptions');
-    res.json({ count: parseInt(r.count, 10) });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+    // Self-heal: ensure table exists
+    try {
+      await posDb.query(`CREATE TABLE IF NOT EXISTS product_movement_logs (
+        id SERIAL PRIMARY KEY, product_id INTEGER, product_name TEXT NOT NULL, movement_type TEXT NOT NULL,
+        reference_id INTEGER, reference_title TEXT, selected_option TEXT, quantity_change INTEGER NOT NULL,
+        quantity_before INTEGER NOT NULL DEFAULT 0, quantity_after INTEGER NOT NULL DEFAULT 0,
+        unit_price NUMERIC DEFAULT 0, unit_cost NUMERIC DEFAULT 0, user_name TEXT, notes TEXT,
+        date TEXT DEFAULT (NOW()::text), created_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+    } catch (tblErr) {
+      console.error('[Movements] Table creation error (non-fatal):', tblErr.message);
+    }
+
+    // Auto-backfill if empty
+    try {
+      const { rows: [chk] } = await posDb.query('SELECT COUNT(*) as count FROM product_movement_logs');
+      if (parseInt(chk?.count || 0, 10) === 0) {
+        await backfillHistoricalMovements(true).catch(() => {});
+      }
+    } catch (_) {}
+
+    // Build query with filters
+    const { q, type, date_from, date_to, limit = 500 } = req.query;
+    let where = 'WHERE 1=1';
+    const params = [];
+
+    if (q && q.trim()) {
+      params.push(`%${q.trim().toLowerCase()}%`);
+      where += ` AND (LOWER(product_name) LIKE $${params.length} OR LOWER(COALESCE(selected_option,'')) LIKE $${params.length} OR LOWER(COALESCE(reference_title,'')) LIKE $${params.length})`;
+    }
+    if (type && type.trim()) {
+      params.push(type.trim());
+      where += ` AND movement_type = $${params.length}`;
+    }
+    if (date_from && /^\d{4}-\d{2}-\d{2}$/.test(date_from)) {
+      params.push(date_from);
+      where += ` AND COALESCE(date, created_at::text, '') >= $${params.length}`;
+    }
+    if (date_to && /^\d{4}-\d{2}-\d{2}$/.test(date_to)) {
+      params.push(date_to + ' 23:59:59');
+      where += ` AND COALESCE(date, created_at::text, '') <= $${params.length}`;
+    }
+
+    params.push(parseInt(limit, 10) || 500);
+    const sql = `SELECT * FROM product_movement_logs ${where} ORDER BY id DESC LIMIT $${params.length}`;
+    const { rows } = await posDb.query(sql, params);
+    return res.json({ logs: rows || [] });
+  } catch (err) {
+    console.error('[Movements] GET error:', err.message);
+    return res.json({ logs: [], error: err.message });
+  }
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
+// GET /api/reports/top-variants — Top-Selling Products & Variant Velocity Analytics
+app.get(`${BASE}/api/reports/top-variants`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const period = req.query.period || 'month';
+    const df = periodFilter(period, 's.date');
+
+    // Aggregate sales grouped by product and selected_option
+    const { rows: itemRows } = await posDb.query(
+      `SELECT
+         si.product_id,
+         COALESCE(si.product_name, 'صنف غير محدد') AS product_name,
+         si.selected_option,
+         COALESCE(SUM(si.quantity), 0)::int AS total_qty,
+         COALESCE(SUM(si.quantity * si.unit_price), 0)::numeric AS total_revenue,
+         COUNT(DISTINCT si.sale_id)::int AS invoice_count
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       WHERE ${df}
+       GROUP BY si.product_id, si.product_name, si.selected_option
+       ORDER BY total_qty DESC
+       LIMIT 100`
+    );
+
+    // Get current in-stock quantities for each product/option
+    const { rows: prodRows } = await posDb.query(
+      `SELECT id, product_name, quantity, variants, checkbox_values FROM products`
+    );
+    const prodMap = {};
+    for (const p of prodRows) {
+      prodMap[p.id] = p;
+    }
+
+    const items = itemRows.map(r => {
+      const p = prodMap[r.product_id] || {};
+      let currentStock = p.quantity || 0;
+
+      // If item has a selected variant option, try to get specific option stock
+      if (r.selected_option && p.checkbox_values) {
+        const cv = typeof p.checkbox_values === 'string' ? JSON.parse(p.checkbox_values || '{}') : p.checkbox_values;
+        if (cv[r.selected_option] !== undefined) {
+          currentStock = parseInt(cv[r.selected_option], 10) || 0;
+        }
+      }
+
+      return {
+        product_id: r.product_id,
+        product_name: r.product_name,
+        selected_option: r.selected_option,
+        total_qty: r.total_qty,
+        total_revenue: parseFloat(r.total_revenue || 0),
+        invoice_count: r.invoice_count,
+        current_stock: currentStock
+      };
+    });
+
+    res.json({ period, items });
+  } catch (err) {
+    console.error('Top variants report error:', err);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
+});
+
+// ── Backfill Historical Movements from existing Sales & Returns ───────────────
+async function backfillHistoricalMovements(force = false) {
+  try {
+    const { rows: [chk] } = await posDb.query('SELECT COUNT(*) as count FROM product_movement_logs');
+    const existingCount = parseInt(chk?.count || 0, 10);
+    if (existingCount === 0 || force) {
+      console.log('[Movements] Syncing historical product movements from past sales and returns...');
+      
+      // 1. Backfill Sales
+      const { rowCount: salesAdded } = await posDb.query(`
+        INSERT INTO product_movement_logs (
+          product_id, product_name, movement_type, reference_id, reference_title,
+          selected_option, quantity_change, quantity_before, quantity_after,
+          unit_price, unit_cost, user_name, notes, date, created_at
+        )
+        SELECT
+          si.product_id,
+          COALESCE(si.product_name, 'صنف'),
+          'sale' AS movement_type,
+          s.id AS reference_id,
+          'فاتورة مبيعات #' || COALESCE(s.id::text, ''),
+          si.selected_option,
+          -COALESCE(si.quantity, 1) AS quantity_change,
+          0 AS quantity_before,
+          0 AS quantity_after,
+          COALESCE(si.unit_price, 0) AS unit_price,
+          COALESCE(si.snapshot_purchase_price, 0) AS unit_cost,
+          COALESCE(u.username, 'كاشير') AS user_name,
+          'مبيعات سابقة للعميل: ' || COALESCE(s.customer_name, 'نقدي') AS notes,
+          COALESCE(s.date, NOW()::text) AS date,
+          NOW() AS created_at
+        FROM sale_items si
+        JOIN sales s ON s.id = si.sale_id
+        LEFT JOIN users u ON u.id = s.cashier_id
+        WHERE NOT EXISTS (
+          SELECT 1 FROM product_movement_logs pml
+          WHERE pml.movement_type = 'sale'
+            AND pml.reference_id = s.id
+            AND (pml.product_id = si.product_id OR (pml.product_id IS NULL AND si.product_id IS NULL))
+            AND COALESCE(pml.selected_option, '') = COALESCE(si.selected_option, '')
+        )
+        ORDER BY s.id ASC
+      `).catch(e => { console.error('Sales backfill err:', e.message); return { rowCount: 0 }; });
+
+      // 2. Backfill Returns
+      const { rowCount: returnsAdded } = await posDb.query(`
+        INSERT INTO product_movement_logs (
+          product_id, product_name, movement_type, reference_id, reference_title,
+          selected_option, quantity_change, quantity_before, quantity_after,
+          unit_price, unit_cost, user_name, notes, date, created_at
+        )
+        SELECT
+          ri.product_id,
+          COALESCE(ri.product_name, 'صنف'),
+          'return' AS movement_type,
+          r.sale_id AS reference_id,
+          'مرتجع إذن #' || COALESCE(r.id::text, '') || ' فاتورة #' || COALESCE(r.sale_id::text, ''),
+          NULL AS selected_option,
+          COALESCE(ri.quantity, 1) AS quantity_change,
+          0 AS quantity_before,
+          0 AS quantity_after,
+          COALESCE(ri.unit_price, 0) AS unit_price,
+          0 AS unit_cost,
+          COALESCE(u.username, 'كاشير') AS user_name,
+          'مرتجع سابق: ' || COALESCE(r.reason, 'بدون سبب') AS notes,
+          COALESCE(r.date, NOW()::text) AS date,
+          NOW() AS created_at
+        FROM return_items ri
+        JOIN returns r ON r.id = ri.return_id
+        LEFT JOIN users u ON u.id = r.processed_by
+        WHERE NOT EXISTS (
+          SELECT 1 FROM product_movement_logs pml
+          WHERE pml.movement_type = 'return'
+            AND pml.reference_id = r.sale_id
+            AND (pml.product_id = ri.product_id OR (pml.product_id IS NULL AND ri.product_id IS NULL))
+        )
+        ORDER BY r.id ASC
+      `).catch(e => { console.error('Returns backfill err:', e.message); return { rowCount: 0 }; });
+
+      const totalSynced = (salesAdded || 0) + (returnsAdded || 0);
+      console.log(`[Movements] Sync complete: ${totalSynced} rows inserted ✓`);
+      return totalSynced;
+    }
+    return 0;
+  } catch (err) {
+    console.error('Backfill movements error:', err.message);
+    return 0;
+  }
+}
+
 // 🏢 WAREHOUSE & PRODUCT MOVEMENT AUDIT LOG & TOP-SELLING ANALYTICS
 // ══════════════════════════════════════════════════════════════════════════════
 
