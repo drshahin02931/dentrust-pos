@@ -1200,44 +1200,88 @@ app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
     const { rows: [sale] } = await posDb.query('SELECT * FROM sales WHERE id=$1', [sid]);
     if (!sale) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
     const { rows: items } = await posDb.query(
-      `SELECT si.product_id, si.quantity, si.selected_option, COALESCE(ri_sum.returned,0) AS returned
+      `SELECT si.product_id, si.product_name, si.quantity, si.selected_option, COALESCE(ri_sum.returned,0) AS returned
        FROM sale_items si
        LEFT JOIN (SELECT ri.sale_item_id, SUM(ri.quantity) AS returned FROM return_items ri
                   JOIN returns r ON r.id=ri.return_id WHERE r.sale_id=$1 GROUP BY ri.sale_item_id) ri_sum
          ON ri_sum.sale_item_id=si.id WHERE si.sale_id=$1`, [sid]
     );
     for (const item of items) {
-      const netRestore = item.quantity - item.returned;
-      if (netRestore > 0 && item.product_id) {
-        await posDb.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [netRestore, item.product_id]);
+      const netRestore = parseInt(item.quantity || 0, 10) - parseInt(item.returned || 0, 10);
+      if (netRestore <= 0) continue;
+
+      let pid = item.product_id;
+      if (!pid && item.product_name) {
+        const { rows: [pn] } = await posDb.query('SELECT id FROM products WHERE LOWER(product_name)=LOWER($1) LIMIT 1', [item.product_name]);
+        if (pn) pid = pn.id;
       }
-      // Restore checkbox option stock if tracked
-      if (netRestore > 0 && item.product_id && item.selected_option) {
+      if (!pid) continue;
+
+      const { rows: [prod] } = await posDb.query('SELECT quantity, checkbox_values, variants FROM products WHERE id=$1', [pid]);
+      if (!prod) continue;
+
+      let hasOptionRestored = false;
+
+      // 1. Restore checkbox_values stock if variant option tracked
+      if (item.selected_option && prod.checkbox_values) {
         try {
-          const { rows: [pcb] } = await posDb.query('SELECT checkbox_values, variants FROM products WHERE id=$1', [item.product_id]);
-          if (pcb?.checkbox_values) {
-            const cbv = typeof pcb.checkbox_values === 'string' ? JSON.parse(pcb.checkbox_values) : { ...pcb.checkbox_values };
-            if (cbv[item.selected_option] && typeof cbv[item.selected_option] === 'object' && cbv[item.selected_option].stock != null) {
-              cbv[item.selected_option].stock = (cbv[item.selected_option].stock || 0) + netRestore;
-              cbv[item.selected_option].disabled = false;
-              const totalCbQty = Object.values(cbv).reduce((sum, v) =>
-                sum + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
-              await posDb.query(
-                'UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
-                [totalCbQty, JSON.stringify(cbv), item.product_id]
-              );
-            }
+          const cbv = typeof prod.checkbox_values === 'string' ? JSON.parse(prod.checkbox_values) : { ...prod.checkbox_values };
+          const optClean = item.selected_option.trim().toLowerCase();
+          const cbKey = Object.keys(cbv).find(k => {
+            const kClean = k.trim().toLowerCase();
+            return kClean === optClean || kClean.endsWith('::' + optClean) || kClean.split('::').pop().trim() === optClean;
+          });
+
+          if (cbKey && typeof cbv[cbKey] === 'object' && cbv[cbKey].stock != null) {
+            cbv[cbKey].stock = (parseInt(cbv[cbKey].stock, 10) || 0) + netRestore;
+            cbv[cbKey].disabled = false;
+            const totalCbQty = Object.values(cbv).reduce((sum, v) =>
+              sum + (typeof v === 'object' && v.stock != null ? Math.max(0, parseInt(v.stock, 10)) : 0), 0);
+            await posDb.query(
+              'UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3',
+              [totalCbQty, JSON.stringify(cbv), pid]
+            );
+            hasOptionRestored = true;
           }
-          if (pcb?.variants) {
-            const vObj = typeof pcb.variants === 'string' ? JSON.parse(pcb.variants) : { ...pcb.variants };
-            const sIdx = (vObj.sizes || []).findIndex(s => s.label === item.selected_option);
-            if (sIdx >= 0) {
-              vObj.sizes[sIdx].qty = (vObj.sizes[sIdx].qty || 0) + netRestore;
-              await posDb.query('UPDATE products SET variants=$1 WHERE id=$2', [JSON.stringify(vObj), item.product_id]);
-            }
-          }
-        } catch (_cbErr) {}
+        } catch (_e) {}
       }
+
+      // 2. Restore variants JSON sizes if tracked
+      if (!hasOptionRestored && item.selected_option && prod.variants) {
+        try {
+          const vObj = typeof prod.variants === 'string' ? JSON.parse(prod.variants) : { ...prod.variants };
+          const optClean = item.selected_option.trim().toLowerCase();
+          const sIdx = (vObj.sizes || []).findIndex(s => {
+            const lClean = (s.label || '').trim().toLowerCase();
+            return lClean === optClean || lClean.endsWith('::' + optClean) || lClean.split('::').pop().trim() === optClean;
+          });
+          if (sIdx >= 0) {
+            vObj.sizes[sIdx].qty = (parseInt(vObj.sizes[sIdx].qty, 10) || 0) + netRestore;
+            await posDb.query('UPDATE products SET quantity = quantity + $1, variants=$2 WHERE id=$3', [netRestore, JSON.stringify(vObj), pid]);
+            hasOptionRestored = true;
+          }
+        } catch (_e) {}
+      }
+
+      // 3. Simple Product stock restoration
+      if (!hasOptionRestored) {
+        await posDb.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [netRestore, pid]);
+      }
+
+      // Log movement to audit log
+      await logProductMovement({
+        productId: pid,
+        productName: item.product_name || 'صنف',
+        movementType: 'adjustment',
+        referenceId: sid,
+        referenceTitle: `إلغاء وحذف فاتورة #${sid}`,
+        selectedOption: item.selected_option || null,
+        quantityChange: netRestore,
+        quantityBefore: parseInt(prod.quantity || 0, 10),
+        quantityAfter: parseInt(prod.quantity || 0, 10) + netRestore,
+        userName: req.session?.username || 'المدير',
+        notes: `استرجاع رصيد تلقائي عند حذف الفاتورة`
+      }).catch(() => {});
     }
     if (sale.customer_id && ['credit','split'].includes(sale.payment_method) && !sale.credit_paid) {
       const { rows: [rr] } = await posDb.query("SELECT COALESCE(SUM(total_refund),0) AS t FROM returns WHERE sale_id=$1", [sid]);
