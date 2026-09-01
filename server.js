@@ -5538,7 +5538,7 @@ async function backfillHistoricalMovements() {
           COALESCE(u.username, 'كاشير') AS user_name,
           'مبيعات سابقة للعميل: ' || COALESCE(s.customer_name, 'نقدي') AS notes,
           COALESCE(s.date, NOW()::text) AS date,
-          (CASE WHEN s.date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN s.date::timestamptz ELSE NOW() END) AS created_at
+          NOW() AS created_at
         FROM sale_items si
         JOIN sales s ON s.id = si.sale_id
         LEFT JOIN users u ON u.id = s.cashier_id
@@ -5567,7 +5567,7 @@ async function backfillHistoricalMovements() {
           COALESCE(u.username, 'كاشير') AS user_name,
           'مرتجع سابق: ' || COALESCE(r.reason, 'بدون سبب') AS notes,
           COALESCE(r.date, NOW()::text) AS date,
-          (CASE WHEN r.date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN r.date::timestamptz ELSE NOW() END) AS created_at
+          NOW() AS created_at
         FROM return_items ri
         JOIN returns r ON r.id = ri.return_id
         LEFT JOIN users u ON u.id = r.processed_by
