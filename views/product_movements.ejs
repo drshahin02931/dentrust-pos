@@ -16,6 +16,10 @@
       <a href="<%= base %>/top-selling" class="bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold px-4 py-2.5 rounded-xl text-sm border border-amber-200 transition-all flex items-center gap-1.5">
         <span>🔥</span> الأكثر مبيعاً
       </a>
+      <button id="btnSyncMovements" onclick="syncMovements()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2.5 rounded-xl text-sm transition-all flex items-center gap-1.5 shadow-sm">
+        <span id="syncSpinner" class="hidden animate-spin">⏳</span>
+        <span>🔄</span> مزامنة واستيراد الفواتير
+      </button>
       <button onclick="printMovementLog()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold px-4 py-2.5 rounded-xl text-sm transition-all flex items-center gap-1.5">
         <span>🖨️</span> طباعة السجل
       </button>
@@ -97,7 +101,7 @@
     </div>
     <div id="movNoData" class="hidden text-center py-12 text-gray-400">
       <span class="text-3xl block mb-2">📜</span>
-      لا توجد حركات مطابقة للفلاتر المحددة
+      لا توجد حركات مسجلة حالياً
     </div>
   </div>
 </div>
@@ -141,10 +145,29 @@ async function loadMovements() {
   }
 }
 
+async function syncMovements() {
+  const btn = document.getElementById('btnSyncMovements');
+  const spinner = document.getElementById('syncSpinner');
+  if (btn) btn.disabled = true;
+  if (spinner) spinner.classList.remove('hidden');
+
+  try {
+    const res = await fetch(`${BASE}/api/products/movements/backfill`, { method: 'POST' });
+    const data = await res.json();
+    await loadMovements();
+    alert(`تمت مزامنة الفواتير السابقة بنجاح! تم إدراج ${data.synced || 0} حركة جديدة.`);
+  } catch (err) {
+    alert('حدث خطأ أثناء المزامنة: ' + err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+    if (spinner) spinner.classList.add('hidden');
+  }
+}
+
 function renderMovementsTable(logs) {
   const tbody = document.getElementById('movTableBody');
   const noData = document.getElementById('movNoData');
-  if (!logs.length) {
+  if (!logs || !logs.length) {
     tbody.innerHTML = '';
     noData.classList.remove('hidden');
     return;
@@ -188,7 +211,7 @@ function renderMovementsTable(logs) {
           ${parseFloat(l.unit_price || 0) > 0 ? parseFloat(l.unit_price).toFixed(2) + ' ج' : '—'}
         </td>
         <td class="p-3.5 text-xs text-gray-600 font-medium">
-          ${l.user_name || 'النظام'}
+          👤 ${l.user_name || 'المدير'}
         </td>
       </tr>
     `;
@@ -196,20 +219,28 @@ function renderMovementsTable(logs) {
 }
 
 function applyMovementFilters() {
-  const q = document.getElementById('movSearch').value.trim().toLowerCase();
+  const q = (document.getElementById('movSearch').value || '').trim().toLowerCase();
   const type = document.getElementById('movTypeFilter').value;
   const dFrom = document.getElementById('movDateFrom').value;
   const dTo = document.getElementById('movDateTo').value;
 
-  const filtered = _movementLogs.filter(l => {
-    const matchQ = !q || (l.product_name||'').toLowerCase().includes(q) || 
-      (l.selected_option||'').toLowerCase().includes(q) ||
-      String(l.reference_id||'').includes(q);
-    const matchType = !type || l.movement_type === type;
-    const logDate = (l.created_at || l.date || '').slice(0, 10);
-    const matchFrom = !dFrom || logDate >= dFrom;
-    const matchTo = !dTo || logDate <= dTo;
-    return matchQ && matchType && matchFrom && matchTo;
+  let filtered = _movementLogs.filter(l => {
+    if (q) {
+      const matchName = (l.product_name || '').toLowerCase().includes(q);
+      const matchOpt = (l.selected_option || '').toLowerCase().includes(q);
+      const matchRef = (l.reference_title || '').toLowerCase().includes(q) || String(l.reference_id || '').includes(q);
+      if (!matchName && !matchOpt && !matchRef) return false;
+    }
+    if (type && l.movement_type !== type) return false;
+    if (dFrom) {
+      const rowDate = (l.created_at || l.date || '').slice(0, 10);
+      if (rowDate && rowDate < dFrom) return false;
+    }
+    if (dTo) {
+      const rowDate = (l.created_at || l.date || '').slice(0, 10);
+      if (rowDate && rowDate > dTo) return false;
+    }
+    return true;
   });
 
   renderMovementsTable(filtered);
