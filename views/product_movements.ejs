@@ -1,13 +1,13 @@
 <%- include('partials/header', Object.assign({pageTitle: 'سجل حركة المنتجات'}, locals)) %>
 
 <div class="space-y-6">
-  <!-- Header Title -->
+  <!-- Header Title & Action Buttons -->
   <div class="flex flex-wrap items-center justify-between gap-4">
     <div>
       <h1 class="text-2xl font-black text-gray-800 flex items-center gap-2">
         <span>📜</span> سجل ومراقبة حركة المنتجات (Stock Audit Log)
       </h1>
-      <p class="text-xs text-gray-500 mt-1">تتبع زمني دقيق لكل حركة صنف ومقاس (بيع، مرتجع، تحويل مستودع، إتلاف) مع الرصيد قبل وبعد</p>
+      <p class="text-xs text-gray-500 mt-1">اختر أي منتج لعرض سجله الزمني المفصل (كل فواتير البيع، المرتجعات، وتحويلات المستودع)</p>
     </div>
     <div class="flex items-center gap-2">
       <a href="<%= base %>/warehouse" class="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-4 py-2.5 rounded-xl text-sm border border-blue-200 transition-all flex items-center gap-1.5">
@@ -21,9 +21,19 @@
         <span>🔄</span> مزامنة واستيراد الفواتير
       </button>
       <button onclick="printMovementLog()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold px-4 py-2.5 rounded-xl text-sm transition-all flex items-center gap-1.5">
-        <span>🖨️</span> طباعة السجل
+        <span>🖨️</span> طباعة
       </button>
     </div>
+  </div>
+
+  <!-- View Switcher Tabs -->
+  <div class="flex items-center gap-2 border-b pb-3">
+    <button id="tabBtnProducts" onclick="switchView('products')" class="px-5 py-2.5 rounded-xl font-black text-sm transition-all bg-blue-600 text-white shadow-sm flex items-center gap-2">
+      <span>📦</span> قائمة المنتجات وحركاتها
+    </button>
+    <button id="tabBtnAllLogs" onclick="switchView('all_logs')" class="px-5 py-2.5 rounded-xl font-bold text-sm transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 flex items-center gap-2">
+      <span>📜</span> السجل الزمني العام لكل الحركات
+    </button>
   </div>
 
   <!-- KPI Summary Cards -->
@@ -46,62 +56,190 @@
     </div>
   </div>
 
-  <!-- Filter & Search Toolbar -->
-  <div class="bg-white rounded-2xl shadow-sm border p-4 flex flex-wrap items-center gap-3">
-    <div class="flex-1 min-w-[200px] relative">
-      <span class="absolute inset-y-0 right-3 flex items-center text-gray-400">🔍</span>
-      <input id="movSearch" type="text" placeholder="ابحث باسم المنتج، المقاس، أو رقم الفاتورة..."
-        oninput="applyMovementFilters()"
-        class="w-full pl-4 pr-10 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+  <!-- VIEW 1: PRODUCTS DIRECTORY (Click on product to view logs)                  -->
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+  <div id="viewProducts" class="space-y-4">
+    <!-- Search Bar -->
+    <div class="bg-white rounded-2xl shadow-sm border p-4 flex flex-wrap items-center gap-3">
+      <div class="flex-1 min-w-[240px] relative">
+        <span class="absolute inset-y-0 right-3 flex items-center text-gray-400">🔍</span>
+        <input id="prodSearch" type="text" placeholder="ابحث باسم المنتج، الباركود، أو القسم..."
+          oninput="applyProductFilters()"
+          class="w-full pl-4 pr-10 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+      </div>
+      <select id="prodCategoryFilter" onchange="applyProductFilters()"
+        class="border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white">
+        <option value="">جميع الأقسام</option>
+      </select>
+      <button onclick="resetProductFilters()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all">
+        مسح الفلاتر
+      </button>
     </div>
-    <select id="movTypeFilter" onchange="applyMovementFilters()"
-      class="border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white">
-      <option value="">جميع أنواع الحركات</option>
-      <option value="sale">🛒 مبيعات (POS & Online)</option>
-      <option value="return">↩️ مرتجعات</option>
-      <option value="transfer_to_store">🚚 تحويل من المستودع للمحل</option>
-      <option value="damage">🗑️ تالف / هالك</option>
-      <option value="adjustment">✏️ تعديل يدوي / جرد</option>
-    </select>
-    <div class="flex items-center gap-2 text-xs text-gray-500 font-bold">
-      <span>من:</span>
-      <input id="movDateFrom" type="date" onchange="applyMovementFilters()"
-        class="border rounded-xl px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
-      <span>إلى:</span>
-      <input id="movDateTo" type="date" onchange="applyMovementFilters()"
-        class="border rounded-xl px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+
+    <!-- Products Table -->
+    <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-right text-sm">
+          <thead class="bg-gray-50/80 text-gray-600 font-bold border-b text-xs">
+            <tr>
+              <th class="p-3.5">المنتج</th>
+              <th class="p-3.5">القسم</th>
+              <th class="p-3.5 text-center">الرصيد بالمحل</th>
+              <th class="p-3.5 text-center">المبيعات المسجلة</th>
+              <th class="p-3.5 text-center">المرتجعات</th>
+              <th class="p-3.5 text-center">إجمالي الحركات</th>
+              <th class="p-3.5 text-center">الإجراء</th>
+            </tr>
+          </thead>
+          <tbody id="prodTableBody" class="divide-y divide-gray-100">
+            <tr>
+              <td colspan="7" class="text-center py-10 text-gray-400 font-medium">جارٍ تحميل قائمة المنتجات...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="prodNoData" class="hidden text-center py-12 text-gray-400">
+        <span class="text-3xl block mb-2">📦</span>
+        لا توجد منتجات مطابقة للبحث
+      </div>
     </div>
-    <button onclick="resetMovementFilters()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all">
-      مسح الفلاتر
-    </button>
   </div>
 
-  <!-- Movements Table -->
-  <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
-    <div class="overflow-x-auto">
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+  <!-- VIEW 2: GENERAL AUDIT LOG TIMELINE                                          -->
+  <!-- ═══════════════════════════════════════════════════════════════════════════ -->
+  <div id="viewAllLogs" class="hidden space-y-4">
+    <!-- Filter & Search Toolbar -->
+    <div class="bg-white rounded-2xl shadow-sm border p-4 flex flex-wrap items-center gap-3">
+      <div class="flex-1 min-w-[200px] relative">
+        <span class="absolute inset-y-0 right-3 flex items-center text-gray-400">🔍</span>
+        <input id="movSearch" type="text" placeholder="ابحث باسم المنتج، المقاس، أو رقم الفاتورة..."
+          oninput="applyMovementFilters()"
+          class="w-full pl-4 pr-10 py-2.5 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+      </div>
+      <select id="movTypeFilter" onchange="applyMovementFilters()"
+        class="border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white">
+        <option value="">جميع أنواع الحركات</option>
+        <option value="sale">🛒 مبيعات (POS & Online)</option>
+        <option value="return">↩️ مرتجعات</option>
+        <option value="transfer_to_store">🚚 تحويل من المستودع للمحل</option>
+        <option value="warehouse_in">📥 توريد مستودع</option>
+        <option value="damage">🗑️ تالف / هالك</option>
+        <option value="adjustment">✏️ تعديل يدوي / جرد</option>
+      </select>
+      <div class="flex items-center gap-2 text-xs text-gray-500 font-bold">
+        <span>من:</span>
+        <input id="movDateFrom" type="date" onchange="applyMovementFilters()"
+          class="border rounded-xl px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+        <span>إلى:</span>
+        <input id="movDateTo" type="date" onchange="applyMovementFilters()"
+          class="border rounded-xl px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+      </div>
+      <button onclick="resetMovementFilters()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all">
+        مسح الفلاتر
+      </button>
+    </div>
+
+    <!-- Movements Table -->
+    <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-right text-sm">
+          <thead class="bg-gray-50/80 text-gray-600 font-bold border-b text-xs">
+            <tr>
+              <th class="p-3.5">التاريخ والوقت</th>
+              <th class="p-3.5">المنتج والمقاس</th>
+              <th class="p-3.5 text-center">نوع الحركة</th>
+              <th class="p-3.5 text-center">المرجع / المستند</th>
+              <th class="p-3.5 text-center">الكمية</th>
+              <th class="p-3.5 text-center">الرصيد قبل ➔ بعد</th>
+              <th class="p-3.5 font-mono">سعر الوحدة</th>
+              <th class="p-3.5">المستخدم</th>
+            </tr>
+          </thead>
+          <tbody id="movTableBody" class="divide-y divide-gray-100">
+            <tr>
+              <td colspan="8" class="text-center py-10 text-gray-400 font-medium">جارٍ تحميل سجل الحركات...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="movNoData" class="hidden text-center py-12 text-gray-400">
+        <span class="text-3xl block mb-2">📜</span>
+        لا توجد حركات مسجلة حالياً
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- PRODUCT DETAIL AUDIT MODAL (Popup when clicking a product)                  -->
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="productLogsModal" class="fixed inset-0 z-50 hidden bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 md:p-6 overflow-y-auto">
+  <div class="bg-white rounded-3xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+    <!-- Modal Header -->
+    <div class="p-5 border-b bg-gradient-to-r from-blue-50 to-indigo-50 flex items-center justify-between">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="text-2xl">📦</span>
+          <h2 id="modalProdTitle" class="text-xl font-black text-gray-900">—</h2>
+        </div>
+        <p id="modalProdSub" class="text-xs text-gray-500 mt-1">سجل التتبع الزمني الكامل لحركات هذا المنتج</p>
+      </div>
+      <button onclick="closeProductModal()" class="w-9 h-9 rounded-full bg-white/80 hover:bg-white text-gray-500 hover:text-gray-900 flex items-center justify-center border shadow-sm text-lg font-bold transition-all">
+        ✕
+      </button>
+    </div>
+
+    <!-- Modal Stats Bar -->
+    <div class="grid grid-cols-3 gap-3 p-4 bg-gray-50 border-b text-center text-xs font-bold">
+      <div class="bg-white p-3 rounded-xl border shadow-sm">
+        <span class="text-gray-500 block text-[11px]">الرصيد الحالي بالمحل</span>
+        <span id="modalCurrentStock" class="text-lg font-black text-emerald-700 mt-0.5 block">0</span>
+      </div>
+      <div class="bg-white p-3 rounded-xl border shadow-sm">
+        <span class="text-gray-500 block text-[11px]">إجمالي المنصرف (مبيعات)</span>
+        <span id="modalTotalSold" class="text-lg font-black text-blue-700 mt-0.5 block">0</span>
+      </div>
+      <div class="bg-white p-3 rounded-xl border shadow-sm">
+        <span class="text-gray-500 block text-[11px]">إجمالي الحركات</span>
+        <span id="modalTotalMovements" class="text-lg font-black text-gray-800 mt-0.5 block">0</span>
+      </div>
+    </div>
+
+    <!-- Modal Table -->
+    <div class="flex-1 overflow-y-auto p-4">
       <table class="w-full text-right text-sm">
-        <thead class="bg-gray-50/80 text-gray-600 font-bold border-b text-xs">
+        <thead class="bg-gray-50 text-gray-600 font-bold border-b text-xs sticky top-0">
           <tr>
-            <th class="p-3.5">التاريخ والوقت</th>
-            <th class="p-3.5">المنتج والمقاس</th>
-            <th class="p-3.5 text-center">نوع الحركة</th>
-            <th class="p-3.5 text-center">المرجع / المستند</th>
-            <th class="p-3.5 text-center">الكمية</th>
-            <th class="p-3.5 text-center">الرصيد قبل ➔ بعد</th>
-            <th class="p-3.5 font-mono">سعر الوحدة</th>
-            <th class="p-3.5">المستخدم</th>
+            <th class="p-3">التاريخ والوقت</th>
+            <th class="p-3">المقاس / Option</th>
+            <th class="p-3 text-center">نوع الحركة</th>
+            <th class="p-3 text-center">المرجع / المستند</th>
+            <th class="p-3 text-center">الكمية</th>
+            <th class="p-3 text-center">الرصيد قبل ➔ بعد</th>
+            <th class="p-3 font-mono">السعر</th>
+            <th class="p-3">المستخدم والملاحظات</th>
           </tr>
         </thead>
-        <tbody id="movTableBody" class="divide-y divide-gray-100">
+        <tbody id="modalTableBody" class="divide-y divide-gray-100">
           <tr>
-            <td colspan="8" class="text-center py-10 text-gray-400 font-medium">جارٍ تحميل سجل الحركات...</td>
+            <td colspan="8" class="text-center py-10 text-gray-400 font-medium">جارٍ تحميل الحركات...</td>
           </tr>
         </tbody>
       </table>
+      <div id="modalNoData" class="hidden text-center py-10 text-gray-400">
+        <span class="text-3xl block mb-1">📜</span>
+        لم تسجل أي حركة لهذا المنتج حتى الآن
+      </div>
     </div>
-    <div id="movNoData" class="hidden text-center py-12 text-gray-400">
-      <span class="text-3xl block mb-2">📜</span>
-      لا توجد حركات مسجلة حالياً
+
+    <!-- Modal Footer -->
+    <div class="p-4 border-t bg-gray-50 flex items-center justify-between">
+      <span class="text-xs text-gray-400 font-medium">💡 يتم تسجيل الحركات آلياً عند كل عملية بيع أو مرتجع أو تحويل</span>
+      <button onclick="closeProductModal()" class="bg-gray-800 hover:bg-gray-900 text-white font-bold px-5 py-2.5 rounded-xl text-xs transition-all shadow-sm">
+        إغلاق النافذة
+      </button>
     </div>
   </div>
 </div>
@@ -109,6 +247,8 @@
 <script>
 const BASE = '<%= base %>';
 let _movementLogs = [];
+let _allProducts = [];
+let _currentView = 'products';
 
 const TYPE_CONFIG = {
   sale:              { label: '🛒 بيع', class: 'bg-blue-100 text-blue-800' },
@@ -119,16 +259,48 @@ const TYPE_CONFIG = {
   adjustment:        { label: '✏️ تعديل رصيد', class: 'bg-amber-100 text-amber-800' }
 };
 
-async function loadMovements() {
-  try {
-    const res = await fetch(`${BASE}/api/products/movements`);
-    const data = await res.json();
-    _movementLogs = data.logs || [];
+function switchView(viewName) {
+  _currentView = viewName;
+  const tabProd = document.getElementById('tabBtnProducts');
+  const tabAll = document.getElementById('tabBtnAllLogs');
+  const viewProd = document.getElementById('viewProducts');
+  const viewAll = document.getElementById('viewAllLogs');
 
-    // Calculate KPIs
+  if (viewName === 'products') {
+    tabProd.className = 'px-5 py-2.5 rounded-xl font-black text-sm transition-all bg-blue-600 text-white shadow-sm flex items-center gap-2';
+    tabAll.className = 'px-5 py-2.5 rounded-xl font-bold text-sm transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 flex items-center gap-2';
+    viewProd.classList.remove('hidden');
+    viewAll.classList.add('hidden');
+  } else {
+    tabAll.className = 'px-5 py-2.5 rounded-xl font-black text-sm transition-all bg-blue-600 text-white shadow-sm flex items-center gap-2';
+    tabProd.className = 'px-5 py-2.5 rounded-xl font-bold text-sm transition-all bg-gray-100 text-gray-600 hover:bg-gray-200 flex items-center gap-2';
+    viewAll.classList.remove('hidden');
+    viewProd.classList.add('hidden');
+  }
+}
+
+async function loadData() {
+  try {
+    const [movRes, prodRes] = await Promise.all([
+      fetch(`${BASE}/api/products/movements`),
+      fetch(`${BASE}/api/products`)
+    ]);
+
+    const movData = await movRes.json();
+    _movementLogs = movData.logs || [];
+
+    const prodData = await prodRes.json();
+    _allProducts = Array.isArray(prodData) ? prodData : (prodData.products || []);
+
+    // Populate Category filter
+    const catSelect = document.getElementById('prodCategoryFilter');
+    const categories = Array.from(new Set(_allProducts.map(p => p.category).filter(Boolean)));
+    catSelect.innerHTML = '<option value="">جميع الأقسام</option>' + categories.map(c => `<option value="${c}">${c}</option>`).join('');
+
+    // Calculate Global KPIs
     let salesCount = 0, returnsCount = 0, transferCount = 0;
     _movementLogs.forEach(l => {
-      const q = Math.abs(parseInt(l.quantity_change||0));
+      const q = Math.abs(parseInt(l.quantity_change || 0));
       if (l.movement_type === 'sale') salesCount += q;
       if (l.movement_type === 'return') returnsCount += q;
       if (l.movement_type === 'transfer_to_store') transferCount += q;
@@ -139,31 +311,188 @@ async function loadMovements() {
     document.getElementById('kpi-transfers').textContent = transferCount + ' قطعة';
     document.getElementById('kpi-total-logs').textContent = _movementLogs.length;
 
+    renderProductsTable(_allProducts);
     renderMovementsTable(_movementLogs);
   } catch (err) {
-    console.error('Failed to load movement logs:', err);
+    console.error('Failed to load data:', err);
   }
 }
 
-async function syncMovements() {
-  const btn = document.getElementById('btnSyncMovements');
-  const spinner = document.getElementById('syncSpinner');
-  if (btn) btn.disabled = true;
-  if (spinner) spinner.classList.remove('hidden');
-
-  try {
-    const res = await fetch(`${BASE}/api/products/movements/backfill`, { method: 'POST' });
-    const data = await res.json();
-    await loadMovements();
-    alert(`تمت مزامنة الفواتير السابقة بنجاح! تم إدراج ${data.synced || 0} حركة جديدة.`);
-  } catch (err) {
-    alert('حدث خطأ أثناء المزامنة: ' + err.message);
-  } finally {
-    if (btn) btn.disabled = false;
-    if (spinner) spinner.classList.add('hidden');
+// ── Render Products Directory Table ───────────────────────────────────────────
+function renderProductsTable(products) {
+  const tbody = document.getElementById('prodTableBody');
+  const noData = document.getElementById('prodNoData');
+  if (!products || !products.length) {
+    tbody.innerHTML = '';
+    noData.classList.remove('hidden');
+    return;
   }
+  noData.classList.add('hidden');
+
+  // Pre-calculate logs per product for super fast lookups
+  const logsByProdId = {};
+  const logsByProdName = {};
+  _movementLogs.forEach(l => {
+    if (l.product_id) {
+      if (!logsByProdId[l.product_id]) logsByProdId[l.product_id] = [];
+      logsByProdId[l.product_id].push(l);
+    }
+    const cleanName = (l.product_name || '').trim().toLowerCase();
+    if (cleanName) {
+      if (!logsByProdName[cleanName]) logsByProdName[cleanName] = [];
+      logsByProdName[cleanName].push(l);
+    }
+  });
+
+  tbody.innerHTML = products.map(p => {
+    const pLogs = logsByProdId[p.id] || logsByProdName[(p.product_name || '').trim().toLowerCase()] || [];
+    
+    let soldQty = 0, returnQty = 0;
+    pLogs.forEach(l => {
+      const q = Math.abs(parseInt(l.quantity_change || 0));
+      if (l.movement_type === 'sale') soldQty += q;
+      if (l.movement_type === 'return') returnQty += q;
+    });
+
+    const stock = parseInt(p.quantity || 0);
+    const stockBadge = stock > 0 
+      ? `<span class="px-2.5 py-1 rounded-full font-bold text-xs bg-emerald-50 text-emerald-700 border border-emerald-100 font-mono">${stock} قطعة</span>`
+      : `<span class="px-2.5 py-1 rounded-full font-bold text-xs bg-red-50 text-red-700 border border-red-100">نفد المخزون</span>`;
+
+    return `
+      <tr class="hover:bg-blue-50/40 transition-colors cursor-pointer" onclick="openProductModal(${p.id})">
+        <td class="p-3.5">
+          <div class="font-bold text-gray-900 text-sm flex items-center gap-2">
+            <span>📦</span>
+            <span>${p.product_name}</span>
+          </div>
+          ${p.barcode ? `<span class="text-[11px] text-gray-400 font-mono">باركود: ${p.barcode}</span>` : ''}
+        </td>
+        <td class="p-3.5">
+          <span class="inline-block px-2.5 py-0.5 rounded-lg text-xs font-semibold bg-gray-100 text-gray-600">
+            ${p.category || 'عام'}
+          </span>
+        </td>
+        <td class="p-3.5 text-center">${stockBadge}</td>
+        <td class="p-3.5 text-center font-bold font-mono text-blue-700">${soldQty > 0 ? soldQty + ' قطعة' : '—'}</td>
+        <td class="p-3.5 text-center font-bold font-mono text-red-600">${returnQty > 0 ? returnQty + ' قطعة' : '—'}</td>
+        <td class="p-3.5 text-center font-mono text-xs">
+          <span class="px-2.5 py-1 rounded-md bg-gray-100 text-gray-800 font-bold">${pLogs.length} حركة</span>
+        </td>
+        <td class="p-3.5 text-center">
+          <button onclick="event.stopPropagation(); openProductModal(${p.id})" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition-all shadow-sm flex items-center gap-1 mx-auto">
+            <span>👁️</span> عرض السجل
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
 }
 
+function applyProductFilters() {
+  const q = (document.getElementById('prodSearch').value || '').trim().toLowerCase();
+  const cat = document.getElementById('prodCategoryFilter').value;
+
+  const filtered = _allProducts.filter(p => {
+    if (q) {
+      const matchName = (p.product_name || '').toLowerCase().includes(q);
+      const matchBar = (p.barcode || '').toLowerCase().includes(q);
+      const matchCat = (p.category || '').toLowerCase().includes(q);
+      if (!matchName && !matchBar && !matchCat) return false;
+    }
+    if (cat && p.category !== cat) return false;
+    return true;
+  });
+
+  renderProductsTable(filtered);
+}
+
+function resetProductFilters() {
+  document.getElementById('prodSearch').value = '';
+  document.getElementById('prodCategoryFilter').value = '';
+  renderProductsTable(_allProducts);
+}
+
+// ── Product Details Modal ─────────────────────────────────────────────────────
+function openProductModal(productId) {
+  const prod = _allProducts.find(p => p.id === productId);
+  if (!prod) return;
+
+  document.getElementById('modalProdTitle').textContent = prod.product_name;
+  document.getElementById('modalProdSub').textContent = `القسم: ${prod.category || 'عام'} • السعر: ${parseFloat(prod.sale_price || 0).toFixed(2)} ج`;
+  document.getElementById('modalCurrentStock').textContent = `${prod.quantity || 0} قطعة`;
+
+  // Find all logs for this product
+  const cleanName = (prod.product_name || '').trim().toLowerCase();
+  const pLogs = _movementLogs.filter(l => l.product_id === prod.id || (l.product_name || '').trim().toLowerCase() === cleanName);
+
+  let totalSold = 0;
+  pLogs.forEach(l => {
+    if (l.movement_type === 'sale') totalSold += Math.abs(parseInt(l.quantity_change || 0));
+  });
+
+  document.getElementById('modalTotalSold').textContent = `${totalSold} قطعة`;
+  document.getElementById('modalTotalMovements').textContent = `${pLogs.length} حركة`;
+
+  const tbody = document.getElementById('modalTableBody');
+  const noData = document.getElementById('modalNoData');
+
+  if (!pLogs.length) {
+    tbody.innerHTML = '';
+    noData.classList.remove('hidden');
+  } else {
+    noData.classList.add('hidden');
+    tbody.innerHTML = pLogs.map(l => {
+      const cfg = TYPE_CONFIG[l.movement_type] || { label: l.movement_type, class: 'bg-gray-100 text-gray-700' };
+      const chg = parseInt(l.quantity_change || 0);
+      const chgSign = chg > 0 ? `+${chg}` : `${chg}`;
+      const chgColor = chg > 0 ? 'text-emerald-700 font-black' : 'text-red-600 font-black';
+
+      const isInvoiceRef = l.reference_id && (l.movement_type === 'sale' || l.movement_type === 'return');
+      const refHtml = isInvoiceRef
+        ? `<a href="${BASE}/invoice/${l.reference_id}" target="_blank" class="text-blue-600 font-mono font-bold hover:underline">#${String(l.reference_id).padStart(5,'0')} ↗</a>`
+        : `<span class="text-gray-500 font-mono text-xs">${l.reference_title || (l.reference_id ? '#'+l.reference_id : '—')}</span>`;
+
+      return `
+        <tr class="hover:bg-gray-50 transition-colors text-xs">
+          <td class="p-3 text-gray-500 font-mono">
+            ${(l.created_at || l.date || '').replace('T', ' ').slice(0, 16)}
+          </td>
+          <td class="p-3">
+            ${l.selected_option ? `<span class="inline-block px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 font-bold font-mono border border-blue-100">${l.selected_option}</span>` : '<span class="text-gray-400">أساسي</span>'}
+          </td>
+          <td class="p-3 text-center">
+            <span class="inline-block px-2.5 py-0.5 rounded-full font-bold ${cfg.class}">
+              ${cfg.label}
+            </span>
+          </td>
+          <td class="p-3 text-center">${refHtml}</td>
+          <td class="p-3 text-center font-mono text-sm ${chgColor}">${chgSign}</td>
+          <td class="p-3 text-center font-mono">
+            <span class="text-gray-400">${l.quantity_before}</span>
+            <span class="text-gray-300 mx-1">➔</span>
+            <span class="font-bold text-gray-800">${l.quantity_after}</span>
+          </td>
+          <td class="p-3 font-mono text-gray-700">
+            ${parseFloat(l.unit_price || 0) > 0 ? parseFloat(l.unit_price).toFixed(2) + ' ج' : '—'}
+          </td>
+          <td class="p-3 text-gray-600">
+            <div class="font-medium text-gray-800">👤 ${l.user_name || 'المدير'}</div>
+            ${l.notes ? `<div class="text-[11px] text-gray-400">${l.notes}</div>` : ''}
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  document.getElementById('productLogsModal').classList.remove('hidden');
+}
+
+function closeProductModal() {
+  document.getElementById('productLogsModal').classList.add('hidden');
+}
+
+// ── Render General Movements Timeline ─────────────────────────────────────────
 function renderMovementsTable(logs) {
   const tbody = document.getElementById('movTableBody');
   const noData = document.getElementById('movNoData');
@@ -254,13 +583,30 @@ function resetMovementFilters() {
   renderMovementsTable(_movementLogs);
 }
 
+async function syncMovements() {
+  const btn = document.getElementById('btnSyncMovements');
+  const spinner = document.getElementById('syncSpinner');
+  if (btn) btn.disabled = true;
+  if (spinner) spinner.classList.remove('hidden');
+
+  try {
+    const res = await fetch(`${BASE}/api/products/movements/backfill`, { method: 'POST' });
+    const data = await res.json();
+    await loadData();
+    alert(`تمت مزامنة الفواتير السابقة بنجاح! تم إدراج ${data.synced || 0} حركة جديدة.`);
+  } catch (err) {
+    alert('حدث خطأ أثناء المزامنة: ' + err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+    if (spinner) spinner.classList.add('hidden');
+  }
+}
+
 function printMovementLog() {
   window.print();
 }
 
-// Initial load
-loadMovements();
+document.addEventListener('DOMContentLoaded', loadData);
 </script>
 
-</main>
-<%- include('partials/footer', locals) %>
+<%- include('partials/footer') %>
