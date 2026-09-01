@@ -5383,18 +5383,7 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
 app.post(`${BASE}/api/products/movements/backfill`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   try {
-    const count = await backfillHistoricalMovements(true);
-    res.json({ ok: true, synced: count });
-  } catch (err) {
-    console.error('Manual backfill error:', err);
-    res.status(500).json({ error: 'خطأ أثناء المزامنة: ' + err.message });
-  }
-});
-
-// GET /api/products/movements — get product movement audit logs
-app.get(`${BASE}/api/products/movements`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
-  try {
+    // Self-heal: ensure table exists before backfill
     await posDb.query(`CREATE TABLE IF NOT EXISTS product_movement_logs (
       id SERIAL PRIMARY KEY, product_id INTEGER, product_name TEXT NOT NULL, movement_type TEXT NOT NULL,
       reference_id INTEGER, reference_title TEXT, selected_option TEXT, quantity_change INTEGER NOT NULL,
@@ -5402,15 +5391,42 @@ app.get(`${BASE}/api/products/movements`, async (req, res) => {
       unit_price NUMERIC DEFAULT 0, unit_cost NUMERIC DEFAULT 0, user_name TEXT, notes TEXT,
       date TEXT DEFAULT (NOW()::text), created_at TIMESTAMPTZ DEFAULT NOW()
     )`).catch(() => {});
+    const count = await backfillHistoricalMovements(true);
+    res.json({ ok: true, synced: count || 0 });
+  } catch (err) {
+    console.error('[Movements] Manual backfill error:', err.message);
+    res.json({ ok: false, synced: 0, error: err.message });
+  }
+});
 
-    // Check if logs are empty, auto-sync past sales if needed
+// GET /api/products/movements — get product movement audit logs
+app.get(`${BASE}/api/products/movements`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    // Self-heal: ensure table exists
+    try {
+      await posDb.query(`CREATE TABLE IF NOT EXISTS product_movement_logs (
+        id SERIAL PRIMARY KEY, product_id INTEGER, product_name TEXT NOT NULL, movement_type TEXT NOT NULL,
+        reference_id INTEGER, reference_title TEXT, selected_option TEXT, quantity_change INTEGER NOT NULL,
+        quantity_before INTEGER NOT NULL DEFAULT 0, quantity_after INTEGER NOT NULL DEFAULT 0,
+        unit_price NUMERIC DEFAULT 0, unit_cost NUMERIC DEFAULT 0, user_name TEXT, notes TEXT,
+        date TEXT DEFAULT (NOW()::text), created_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+    } catch (tblErr) {
+      console.error('[Movements] Table creation error (non-fatal):', tblErr.message);
+    }
+
+    // Auto-backfill if empty (non-blocking, won't crash)
     try {
       const { rows: [chk] } = await posDb.query('SELECT COUNT(*) as count FROM product_movement_logs');
       if (parseInt(chk?.count || 0, 10) === 0) {
-        await backfillHistoricalMovements(true);
+        try { await backfillHistoricalMovements(true); } catch (bfErr) {
+          console.error('[Movements] Backfill error (non-fatal):', bfErr.message);
+        }
       }
     } catch (_) {}
 
+    // Build query with filters
     const { q, type, date_from, date_to, limit = 500 } = req.query;
     let where = 'WHERE 1=1';
     const params = [];
@@ -5435,10 +5451,11 @@ app.get(`${BASE}/api/products/movements`, async (req, res) => {
     params.push(parseInt(limit, 10) || 500);
     const sql = `SELECT * FROM product_movement_logs ${where} ORDER BY id DESC LIMIT $${params.length}`;
     const { rows } = await posDb.query(sql, params);
-    res.json({ logs: rows || [] });
+    return res.json({ logs: rows || [] });
   } catch (err) {
-    console.error('Get movements error:', err);
-    res.json({ logs: [] });
+    console.error('[Movements] GET error:', err.message);
+    // NEVER return 500 — always return valid empty result
+    return res.json({ logs: [], error: err.message });
   }
 });
 
