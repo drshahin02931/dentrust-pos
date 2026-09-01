@@ -5395,6 +5395,14 @@ app.post(`${BASE}/api/products/movements/backfill`, async (req, res) => {
 app.get(`${BASE}/api/products/movements`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   try {
+    await posDb.query(`CREATE TABLE IF NOT EXISTS product_movement_logs (
+      id SERIAL PRIMARY KEY, product_id INTEGER, product_name TEXT NOT NULL, movement_type TEXT NOT NULL,
+      reference_id INTEGER, reference_title TEXT, selected_option TEXT, quantity_change INTEGER NOT NULL,
+      quantity_before INTEGER NOT NULL DEFAULT 0, quantity_after INTEGER NOT NULL DEFAULT 0,
+      unit_price NUMERIC DEFAULT 0, unit_cost NUMERIC DEFAULT 0, user_name TEXT, notes TEXT,
+      date TEXT DEFAULT (NOW()::text), created_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+
     // Check if logs are empty, auto-sync past sales if needed
     try {
       const { rows: [chk] } = await posDb.query('SELECT COUNT(*) as count FROM product_movement_logs');
@@ -5427,10 +5435,10 @@ app.get(`${BASE}/api/products/movements`, async (req, res) => {
     params.push(parseInt(limit, 10) || 500);
     const sql = `SELECT * FROM product_movement_logs ${where} ORDER BY id DESC LIMIT $${params.length}`;
     const { rows } = await posDb.query(sql, params);
-    res.json({ logs: rows });
+    res.json({ logs: rows || [] });
   } catch (err) {
     console.error('Get movements error:', err);
-    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
+    res.json({ logs: [] });
   }
 });
 
@@ -5625,7 +5633,30 @@ async function main() {
   }
   try {
     await initDb();
-    await backfillHistoricalMovements();
+
+    // Ensure new warehouse & movement logs tables exist on posDb schema
+    await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_items (
+      id SERIAL PRIMARY KEY, product_id INTEGER, product_name TEXT NOT NULL,
+      barcode TEXT, category TEXT, cost_price NUMERIC DEFAULT 0, sale_price NUMERIC DEFAULT 0,
+      quantity INTEGER DEFAULT 0, variants JSONB, checkbox_values JSONB, notes TEXT,
+      created_at TEXT DEFAULT (NOW()::text), updated_at TEXT DEFAULT (NOW()::text)
+    )`).catch(() => {});
+
+    await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_transfers (
+      id SERIAL PRIMARY KEY, warehouse_item_id INTEGER, product_id INTEGER, product_name TEXT NOT NULL,
+      selected_option TEXT, quantity INTEGER NOT NULL, cost_price NUMERIC DEFAULT 0, sale_price NUMERIC DEFAULT 0,
+      transferred_by INTEGER, transferred_by_name TEXT, notes TEXT, date TEXT DEFAULT (NOW()::text)
+    )`).catch(() => {});
+
+    await posDb.query(`CREATE TABLE IF NOT EXISTS product_movement_logs (
+      id SERIAL PRIMARY KEY, product_id INTEGER, product_name TEXT NOT NULL, movement_type TEXT NOT NULL,
+      reference_id INTEGER, reference_title TEXT, selected_option TEXT, quantity_change INTEGER NOT NULL,
+      quantity_before INTEGER NOT NULL DEFAULT 0, quantity_after INTEGER NOT NULL DEFAULT 0,
+      unit_price NUMERIC DEFAULT 0, unit_cost NUMERIC DEFAULT 0, user_name TEXT, notes TEXT,
+      date TEXT DEFAULT (NOW()::text), created_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+
+    await backfillHistoricalMovements(false).catch(() => {});
 
     // Fix: ensure 'reason' column exists on customer_manual_debts
     await posDb.query(`ALTER TABLE customer_manual_debts ADD COLUMN IF NOT EXISTS reason TEXT DEFAULT ''`).catch(() => {});
