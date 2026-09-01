@@ -15,7 +15,7 @@ const bwip = require('bwip-js');
 const webpush = require('web-push');
 const { posDb, dentrustDb, sessionDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
 
-const BASE = (process.env.BASE_PATH || '/pos-system').replace(/\/$/, '');
+const BASE = (process.env.BASE_PATH || '').replace(/\/$/, '');
 const PORT = parseInt(process.env.PORT || '5000', 10);
 const DATABASE_URL = process.env.DATABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
