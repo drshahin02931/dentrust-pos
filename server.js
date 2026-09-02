@@ -637,7 +637,7 @@ app.get(`${BASE}/api/products/search`, async (req, res) => {
 // Columns for list endpoints — excludes heavy base64 image_url, adds has_image flag
 const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, sale_price,
   expiry_date, category, min_stock, description, variants, section, checkbox_values,
-  is_offer, original_price, is_best_seller,
+  is_offer, original_price, is_best_seller, is_hidden_from_website,
   dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image,
   CASE
     WHEN image_url LIKE 'http%' THEN image_url
@@ -830,6 +830,33 @@ app.post(`${BASE}/api/products/:pid/apply-discount`, async (req, res) => {
     await posDb.query('UPDATE products SET sale_price=$1 WHERE id=$2', [parseFloat(req.body.new_price || 0), pid]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res) => {
+  const pid = parseInt(req.params.pid, 10);
+  try {
+    await posDb.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+    const { rows: [p] } = await posDb.query('SELECT is_hidden_from_website, dentrust_id FROM products WHERE id=$1', [pid]);
+    if (!p) return res.status(404).json({ error: 'المنتج غير موجود' });
+    const newState = !p.is_hidden_from_website;
+    await posDb.query('UPDATE products SET is_hidden_from_website=$1 WHERE id=$2', [newState, pid]);
+    
+    // Sync with website database if linked
+    if (HAS_WEBSITE_DB && p.dentrust_id) {
+      try {
+        const client = await dentrustDb.connect();
+        try {
+          await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+          await client.query('UPDATE products SET is_hidden=$1 WHERE id=$2', [newState, p.dentrust_id]);
+        } finally { client.release(); }
+      } catch (err) {
+        console.error('[TOGGLE VISIBILITY SYNC ERROR]', err.message);
+      }
+    }
+    res.json({ ok: true, is_hidden_from_website: newState });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
+  }
 });
 
 app.post(`${BASE}/api/products/:pid/mark-damaged`, async (req, res) => {
@@ -5930,9 +5957,10 @@ async function main() {
     // Fix: ensure extra_profits table exists (fallback if initDb ran before this migration)
     await posDb.query(`CREATE TABLE IF NOT EXISTS extra_profits (id SERIAL PRIMARY KEY, title TEXT NOT NULL, amount NUMERIC NOT NULL, date TEXT DEFAULT (CURRENT_DATE::text))`).catch(() => {});
 
-    // Fix: ensure 'details' column exists on posDb.products with a safe default
+    // Fix: ensure 'details' and 'is_hidden_from_website' columns exist on posDb.products with safe defaults
     await posDb.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS details TEXT NOT NULL DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE products ALTER COLUMN details SET DEFAULT ''`).catch(() => {});
+    await posDb.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE`).catch(() => {});
 
     await posDb.query(`CREATE TABLE IF NOT EXISTS customer_manual_debts (
       id SERIAL PRIMARY KEY,

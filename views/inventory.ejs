@@ -250,6 +250,21 @@
         </div>
       </div>
 
+      <!-- Website Visibility Toggle Card -->
+      <div class="bg-indigo-50/60 border border-indigo-200 rounded-2xl p-3.5 flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <span class="text-xl">🌐</span>
+          <div>
+            <div class="text-xs font-bold text-gray-800">العرض على المتجر الإلكتروني (الموقع)</div>
+            <div class="text-[11px] text-gray-500">اختر إذا كان هذا المنتج يظهر للعملاء في الموقع أم لا</div>
+          </div>
+        </div>
+        <label class="flex items-center gap-2 cursor-pointer bg-white px-3 py-1.5 rounded-xl border border-indigo-200 shadow-sm">
+          <input type="checkbox" id="f-is-hidden-website" class="w-4 h-4 accent-red-600 rounded"/>
+          <span class="text-xs font-bold text-red-600">إخفاء من الموقع</span>
+        </label>
+      </div>
+
       <!-- Sync Note (small badge) -->
       <div id="syncNote" class="hidden flex items-center gap-2 text-xs text-blue-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-1.5">
         <span>🔗</span><span id="syncNoteText">هذا المنتج مرتبط بـ DenTrust — التعديل سيتم تلقائياً</span>
@@ -347,6 +362,16 @@ function renderTable(products) {
       ? `<span class="text-xs font-semibold ${isLow ? 'text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full' : 'text-gray-500'}">${minStock}</span>`
       : `<span class="text-gray-300">—</span>`;
     const thumbCell = `<div style="width:2.75rem;height:2.75rem;border-radius:0.5rem;" class="bg-gray-100 flex items-center justify-center text-gray-300 text-xs">—</div>`;
+    
+    const isHidden = p.is_hidden_from_website === true;
+    const hideBtn = `
+      <button onclick="toggleWebsiteVisibility(${p.id}, ${isHidden})" title="${isHidden ? 'المنتج مخفي حالياً من الموقع - اضغط لإظهاره' : 'المنتج معروض على الموقع - اضغط لإخفائه'}"
+        class="text-xs px-2.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1 ${isHidden ? 'bg-gray-100 text-gray-500 border border-gray-300 hover:bg-gray-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'}">
+        <span>${isHidden ? '🙈' : '🌐'}</span>
+        <span>${isHidden ? 'مخفي بالموقع' : 'معروض بالموقع'}</span>
+      </button>
+    `;
+
     return `<tr class="hover:bg-gray-50 ${rowBg}">
       <td class="px-4 py-3">${thumbCell}</td>
       <td class="px-4 py-3 font-medium text-gray-800">${p.product_name}${p.dentrust_id ? ' <span class="text-xs text-blue-400" title="مرتبط بـ DenTrust">🔗</span>' : ''}${isLow && !isOut ? ' <span class="text-xs text-orange-500">⚠️</span>' : ''}${isOut ? ' <span class="text-xs text-red-500">🚫</span>' : ''}</td>
@@ -358,7 +383,8 @@ function renderTable(products) {
       <td class="px-4 py-3 text-blue-700 font-semibold">${parseFloat(p.sale_price||0).toFixed(2)}</td>
       <td class="px-4 py-3 text-sm ${expStyle}">${p.expiry_date || '—'}</td>
       <td class="px-4 py-3">
-        <div class="flex gap-2">
+        <div class="flex items-center gap-1.5 flex-wrap">
+          ${hideBtn}
           <button onclick="editProduct(${p.id})" class="text-xs bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg hover:bg-blue-100 font-medium">تعديل</button>
           <button onclick="deleteProduct(${p.id})" class="text-xs bg-red-50 text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-100 font-medium">حذف</button>
         </div>
@@ -451,6 +477,7 @@ function openModal() {
   document.getElementById("productForm").reset();
   document.getElementById("modalError").classList.add("hidden");
   document.getElementById("whQuickSection").classList.add("hidden");
+  document.getElementById("f-is-hidden-website").checked = false;
   resetPhotos();
   resetVariants();
   cbReset();
@@ -480,6 +507,7 @@ function editProduct(id) {
   document.getElementById("f-category").value = p.category || "";
   document.getElementById("f-min-stock").value = p.min_stock || 0;
   document.getElementById("f-description").value = p.description || "";
+  document.getElementById("f-is-hidden-website").checked = p.is_hidden_from_website === true;
   document.getElementById("modalError").classList.add("hidden");
 
   // Load Warehouse Quick Info & Cost Batches
@@ -612,6 +640,7 @@ async function saveProduct(e) {
       variants: variantItems.length > 0 ? { items: variantItems } : null,
       section: document.querySelector('input[name="f-section"]:checked')?.value || 'dental',
       checkbox_values: cbGetValues(),
+      is_hidden_from_website: document.getElementById("f-is-hidden-website").checked,
     };
     const url = id ? `${BASE}/api/products/${id}` : `${BASE}/api/products`;
     const method = id ? "PUT" : "POST";
@@ -630,6 +659,25 @@ async function saveProduct(e) {
     errDiv.classList.remove("hidden");
   } finally {
     btn.disabled = false;
+  }
+}
+
+async function toggleWebsiteVisibility(pid, isCurrentlyHidden) {
+  try {
+    const res = await fetch(`${BASE}/api/products/${pid}/toggle-website-visibility`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'فشل تغيير حالة العرض بالموقع');
+    
+    // Update local state
+    const p = allProducts.find(x => x.id === pid);
+    if (p) p.is_hidden_from_website = data.is_hidden_from_website;
+    
+    applyFilters();
+  } catch (err) {
+    alert('❌ خطأ: ' + err.message);
   }
 }
 
