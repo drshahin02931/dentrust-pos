@@ -5223,17 +5223,17 @@ app.get(`${BASE}/api/push/vapid-public-key`, (req, res) => {
 
 // POST /api/push/subscribe  — save device push subscription
 app.post(`${BASE}/api/push/subscribe`, async (req, res) => {
-  if (!req.session?.user_id) return res.status(401).json({ error: 'غير مصرح' });
   const { endpoint, keys } = req.body || {};
   if (!endpoint || !keys?.p256dh || !keys?.auth) {
     return res.status(400).json({ error: 'بيانات الاشتراك ناقصة' });
   }
   try {
+    const uid = req.session?.user_id || null;
     await posDb.query(
       `INSERT INTO push_subscriptions (endpoint, p256dh, auth, user_id)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (endpoint) DO UPDATE SET p256dh=$2, auth=$3, user_id=$4, updated_at=NOW()`,
-      [endpoint, keys.p256dh, keys.auth, req.session.user_id]
+      [endpoint, keys.p256dh, keys.auth, uid]
     );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
@@ -5318,7 +5318,6 @@ async function logProductMovement({
 
 // GET /api/warehouse/products — list all warehouse items and shop products
 app.get(`${BASE}/api/warehouse/products`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   try {
     // Self-heal: ensure tables exist
     await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_items (
