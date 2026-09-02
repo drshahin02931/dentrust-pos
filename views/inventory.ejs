@@ -593,15 +593,57 @@ function openQuickWhTransfer() {
     alert(`لا توجد كميات متاحة في المستودع حالياً لهذا المنتج (${_currentEditProd.product_name}).\nيمكنك إضافة شحنة جديدة من صفحة المستودع.`);
     return;
   }
-  const qtyStr = prompt(`المتاح بالمستودع: ${_whItemForEdit.quantity} قطعة\nأدخل الكمية المراد تحويلها وسحبها لمخزن المحل:`, "1");
+
+  // Check if warehouse item has variants
+  let whOpts = [];
+  if (_whItemForEdit.checkbox_values) {
+    try {
+      const cbv = typeof _whItemForEdit.checkbox_values === 'string' ? JSON.parse(_whItemForEdit.checkbox_values) : _whItemForEdit.checkbox_values;
+      for (const k of Object.keys(cbv)) {
+        if (typeof cbv[k] === 'object' && cbv[k] !== null) {
+          if (cbv[k].stock != null) {
+            whOpts.push({ key: k, stock: parseInt(cbv[k].stock || 0) });
+          } else {
+            for (const subK of Object.keys(cbv[k])) {
+              if (typeof cbv[k][subK] === 'object' && cbv[k][subK] !== null && cbv[k][subK].stock != null) {
+                whOpts.push({ key: subK, group: k, stock: parseInt(cbv[k][subK].stock || 0) });
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  let selectedOpt = null;
+  let maxAvail = parseInt(_whItemForEdit.quantity || 0);
+
+  if (whOpts.length > 0) {
+    const listStr = whOpts.map((o, i) => `${i + 1}. ${o.group ? '[' + o.group + '] ' : ''}${o.key} (متاح بالمستودع: ${o.stock} قطعة)`).join('\n');
+    const choice = prompt(`اختر رقم المقاس المراد سحبه من المستودع:\n${listStr}\n\n(أدخل رقم المقاس):`, "1");
+    if (!choice) return;
+    const idx = parseInt(choice, 10) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= whOpts.length) {
+      alert("رقم المقاس غير صحيح");
+      return;
+    }
+    selectedOpt = whOpts[idx].key;
+    maxAvail = whOpts[idx].stock;
+    if (maxAvail <= 0) {
+      alert(`المقاس (${selectedOpt}) رصيده صفر بالمستودع حالياً.`);
+      return;
+    }
+  }
+
+  const qtyStr = prompt(`المتاح بالمستودع (${selectedOpt ? 'لمقاس ' + selectedOpt : 'للصنف'}): ${maxAvail} قطعة\nأدخل الكمية المراد تحويلها وسحبها لمخزن المحل:`, "1");
   if (!qtyStr) return;
   const qty = parseInt(qtyStr, 10);
   if (isNaN(qty) || qty <= 0) {
     alert("يرجى إدخال كمية صحيحة أكبر من صفر");
     return;
   }
-  if (qty > parseInt(_whItemForEdit.quantity || 0)) {
-    alert(`الكمية المطلوبة (${qty}) أكبر من المتاح بالمستودع (${_whItemForEdit.quantity})`);
+  if (qty > maxAvail) {
+    alert(`الكمية المطلوبة (${qty}) أكبر من المتاح بالمستودع (${maxAvail})`);
     return;
   }
 
@@ -611,12 +653,13 @@ function openQuickWhTransfer() {
     body: JSON.stringify({
       warehouse_item_id: _whItemForEdit.id,
       quantity: qty,
-      note: 'تحويل سريع من شاشة تعديل المنتج بالمحل'
+      selected_option: selectedOpt,
+      note: 'سحب سريع من المستودع لمخزن المحل'
     })
   }).then(r => r.json())
     .then(data => {
       if (data.error) throw new Error(data.error);
-      alert(`✅ تم تحويل ${qty} قطعة من المستودع إلى المحل بنجاح!`);
+      alert(`✅ تم تحويل ${qty} قطعة ${selectedOpt ? '(مقاس: ' + selectedOpt + ')' : ''} من المستودع إلى المحل بنجاح!`);
       closeModal();
       loadProducts();
     }).catch(e => {

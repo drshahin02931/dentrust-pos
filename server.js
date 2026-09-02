@@ -86,7 +86,11 @@ const apiLimiter = rateLimit({ windowMs: 60*1000, max: 200, standardHeaders: tru
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function isMgr(req) { return req.session?.role === 'manager'; }
+function isMgr(req) {
+  if (!req.session?.user_id) return false;
+  const r = req.session?.role;
+  return r === 'manager' || r === 'admin' || req.session?.is_manager === true;
+}
 function hasPerm(req, perm) {
   if (isMgr(req)) return true;
   return !!(req.session?.permissions?.[perm]);
@@ -100,6 +104,11 @@ const OPEN_API = [
   '/api/ai/stylebot', '/api/products',
   '/api/admin/price-tracker',
   '/api/push/vapid-public-key',
+  '/api/website-orders/alerts/count',
+  '/api/website-orders/alerts',
+  '/api/warehouse/products',
+  '/api/warehouse/transfer',
+  '/api/push/subscribe',
 ];
 
 function authGuard(req, res, next) {
@@ -5445,9 +5454,71 @@ app.delete(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
   }
 });
 
+// Helper to update variant stock in checkbox_values (handles both grouped and flat structures)
+function updateCbvStock(cbv, optKey, changeQty) {
+  if (!cbv || typeof cbv !== 'object') {
+    if (changeQty > 0) {
+      return { updated: true, newCbv: { [optKey]: { checked: true, stock: changeQty, disabled: false } } };
+    }
+    return { updated: false, newCbv: cbv || {} };
+  }
+  let found = false;
+  let newCbv = JSON.parse(JSON.stringify(cbv));
+
+  // 1. Direct key match (flat structure)
+  if (newCbv[optKey] && typeof newCbv[optKey] === 'object') {
+    const cur = parseInt(newCbv[optKey].stock || 0);
+    newCbv[optKey].stock = Math.max(0, cur + changeQty);
+    newCbv[optKey].disabled = false;
+    newCbv[optKey].checked = true;
+    found = true;
+  }
+
+  // 2. Search inside groups (grouped structure)
+  if (!found) {
+    for (const grp of Object.keys(newCbv)) {
+      if (typeof newCbv[grp] === 'object' && newCbv[grp] !== null && newCbv[grp][optKey]) {
+        const cur = parseInt(newCbv[grp][optKey].stock || 0);
+        newCbv[grp][optKey].stock = Math.max(0, cur + changeQty);
+        newCbv[grp][optKey].disabled = false;
+        newCbv[grp][optKey].checked = true;
+        found = true;
+        break;
+      }
+    }
+  }
+
+  // 3. If not found in store product and we are adding stock (+changeQty > 0): create it
+  if (!found && changeQty > 0) {
+    newCbv[optKey] = { checked: true, stock: changeQty, disabled: false };
+    found = true;
+  }
+
+  return { updated: found, newCbv };
+}
+
+function sumCbvStock(cbv) {
+  if (!cbv || typeof cbv !== 'object') return 0;
+  let sum = 0;
+  for (const k of Object.keys(cbv)) {
+    const val = cbv[k];
+    if (typeof val === 'object' && val !== null) {
+      if (val.stock != null) {
+        sum += Math.max(0, parseInt(val.stock || 0));
+      } else {
+        for (const subK of Object.keys(val)) {
+          if (typeof val[subK] === 'object' && val[subK] !== null && val[subK].stock != null) {
+            sum += Math.max(0, parseInt(val[subK].stock || 0));
+          }
+        }
+      }
+    }
+  }
+  return sum;
+}
+
 // POST /api/warehouse/transfer — transfer quantity/variant from warehouse to store
 app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   const { warehouse_item_id, quantity, selected_option, batch_id, note } = req.body;
   const transferQty = parseInt(quantity || 0, 10);
   if (!warehouse_item_id || transferQty <= 0) {
@@ -5471,20 +5542,15 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
     // 1. Deduct from warehouse
     if (selected_option && whItem.checkbox_values) {
       const cbv = typeof whItem.checkbox_values === 'string' ? JSON.parse(whItem.checkbox_values) : { ...whItem.checkbox_values };
-      if (cbv[selected_option] && typeof cbv[selected_option] === 'object') {
-        const avail = cbv[selected_option].stock != null ? parseInt(cbv[selected_option].stock) : whItem.quantity;
-        if (avail < transferQty) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: `الكمية المتاحة بالمستودع للمقاس (${avail}) أقل من المطلوب (${transferQty})` });
-        }
-        cbv[selected_option].stock = Math.max(0, avail - transferQty);
-        const totalCb = Object.values(cbv).reduce((s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
-        await client.query('UPDATE warehouse_items SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(cbv), whItem.id]);
+      const { updated, newCbv } = updateCbvStock(cbv, selected_option, -transferQty);
+      if (updated) {
+        const totalCb = sumCbvStock(newCbv);
+        await client.query('UPDATE warehouse_items SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(newCbv), whItem.id]);
       } else {
-        await client.query('UPDATE warehouse_items SET quantity = quantity - $1 WHERE id=$2', [transferQty, whItem.id]);
+        await client.query('UPDATE warehouse_items SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [transferQty, whItem.id]);
       }
     } else {
-      await client.query('UPDATE warehouse_items SET quantity = quantity - $1 WHERE id=$2', [transferQty, whItem.id]);
+      await client.query('UPDATE warehouse_items SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [transferQty, whItem.id]);
     }
 
     // Deduct from warehouse_batches (specific batch or FIFO)
@@ -5520,18 +5586,15 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       const { rows: [sp] } = await client.query('SELECT id, quantity, variants, checkbox_values, purchase_price, expiry_date, description, category FROM products WHERE id=$1', [shopProdId]);
       if (sp) {
         beforeShopQty = parseInt(sp.quantity || 0);
-        await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [transferQty, shopProdId]);
 
         // If size option was transferred, increase or create that size in shop product
-        if (selected_option && sp.checkbox_values) {
-          const scbv = typeof sp.checkbox_values === 'string' ? JSON.parse(sp.checkbox_values) : { ...sp.checkbox_values };
-          if (!scbv[selected_option] || typeof scbv[selected_option] !== 'object') {
-            scbv[selected_option] = { checked: true, stock: 0, disabled: false };
-          }
-          scbv[selected_option].stock = (scbv[selected_option].stock || 0) + transferQty;
-          scbv[selected_option].disabled = false;
-          const totalCb = Object.values(scbv).reduce((s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
-          await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(scbv), shopProdId]);
+        if (selected_option) {
+          let scbv = sp.checkbox_values ? (typeof sp.checkbox_values === 'string' ? JSON.parse(sp.checkbox_values) : { ...sp.checkbox_values }) : {};
+          const { newCbv } = updateCbvStock(scbv, selected_option, transferQty);
+          const totalCb = sumCbvStock(newCbv);
+          await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(newCbv), shopProdId]);
+        } else {
+          await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [transferQty, shopProdId]);
         }
 
         // Sync description & category if shop product was missing them
