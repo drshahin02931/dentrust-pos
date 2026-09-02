@@ -631,9 +631,16 @@ app.get(`${BASE}/api/products/financial-summary`, async (req, res) => {
 app.get(`${BASE}/api/products/search`, async (req, res) => {
   // Note: uses PRODUCT_LIST_COLS defined above (no base64)
   try {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+
+    const isPosRequest = !!(req.session && req.session.user) || req.headers['x-pos-app'] === '1' || req.query.manage === 'true';
+    const hideCond = isPosRequest ? '' : `AND (COALESCE(is_hidden_from_website, false) = false) AND (section != 'hidden' OR section IS NULL)`;
+
     const q = (req.query.q || '').trim();
     const cat = req.query.category;
-    let sql = `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE 1=1`;
+    let sql = `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE 1=1 ${hideCond}`;
     const params = [];
     if (q) { params.push(q, `%${q}%`); sql += ` AND (barcode=$${params.length-1} OR product_name ILIKE $${params.length})`; }
     if (cat) { params.push(cat); sql += ` AND category=$${params.length}`; }
