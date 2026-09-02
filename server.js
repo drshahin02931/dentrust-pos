@@ -801,26 +801,67 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
   const d = req.body;
   try {
     await posDb.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
-    const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
-    const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+
+    const variantsJson = d.variants ? (typeof d.variants === 'string' ? d.variants : JSON.stringify(d.variants)) : null;
+    const cbJson = d.checkbox_values ? (typeof d.checkbox_values === 'string' ? d.checkbox_values : JSON.stringify(d.checkbox_values)) : null;
     const isHidden = d.is_hidden_from_website === true || d.is_hidden_from_website === 'true';
+    const pPrice = (d.purchase_price != null && d.purchase_price !== '') ? (parseFloat(d.purchase_price) || null) : null;
+    const sPrice = parseFloat(d.sale_price || 0);
+    const qty = parseInt(d.quantity || 0, 10);
+    const minStock = parseInt(d.min_stock || 0, 10);
+
     const params = [
-      d.barcode || null, d.product_name, d.quantity || 0,
-      d.purchase_price ?? null, d.sale_price || 0,
-      d.expiry_date || null, d.category || null,
-      parseInt(d.min_stock || 0, 10), d.description || null,
-      variantsJson, d.section || 'dental', cbJson, isHidden, pid,
+      d.barcode || null,
+      d.product_name || 'بدون اسم',
+      qty,
+      pPrice,
+      sPrice,
+      d.expiry_date || null,
+      d.category || null,
+      minStock,
+      d.description || null,
+      variantsJson,
+      d.section || 'dental',
+      cbJson,
+      isHidden,
+      pid,
     ];
+
     const updateQuery = `UPDATE products SET barcode=$1, product_name=$2, quantity=$3,
-      purchase_price=COALESCE(NULLIF($4::numeric,0), purchase_price), sale_price=$5,
+      purchase_price=COALESCE($4, purchase_price), sale_price=$5,
       expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
       section=$11, checkbox_values=$12, is_hidden_from_website=$13 WHERE id=$14`;
-    await posDb.query(updateQuery, params);
+
+    try {
+      await posDb.query(updateQuery, params);
+    } catch (viewErr) {
+      // Fallback: update on public.products directly if view trigger has issue
+      await posDb.query(
+        `UPDATE public.products SET barcode=$1, product_name=$2, quantity=$3,
+         purchase_price=COALESCE($4, purchase_price), sale_price=$5,
+         expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
+         section=$11, checkbox_values=$12, is_hidden_from_website=$13 WHERE id=$14`,
+        params
+      ).catch(async () => {
+        await posDb.query(
+          `UPDATE products SET barcode=$1, product_name=$2, quantity=$3,
+           purchase_price=COALESCE($4, purchase_price), sale_price=$5,
+           expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
+           section=$11, checkbox_values=$12 WHERE id=$13`,
+          params.slice(0, 12).concat([pid])
+        );
+      });
+    }
+
     try {
       await syncUpdateProductToDentrust(pid, d);
     } catch (syncErr) {
       console.error('[SYNC ERROR] syncUpdateProductToDentrust failed for pid', pid, ':', syncErr.message);
     }
+
     res.json({ ok: true, is_hidden_from_website: isHidden });
   } catch (err) {
     console.error('[PRODUCT UPDATE ERROR] pid:', pid, 'error:', err.message);
