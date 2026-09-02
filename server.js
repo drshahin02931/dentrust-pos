@@ -5395,15 +5395,16 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
         beforeShopQty = parseInt(sp.quantity || 0);
         await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [transferQty, shopProdId]);
 
-        // If size option was transferred, increase that size in shop product
+        // If size option was transferred, increase or create that size in shop product
         if (selected_option && sp.checkbox_values) {
           const scbv = typeof sp.checkbox_values === 'string' ? JSON.parse(sp.checkbox_values) : { ...sp.checkbox_values };
-          if (scbv[selected_option] && typeof scbv[selected_option] === 'object') {
-            scbv[selected_option].stock = (scbv[selected_option].stock || 0) + transferQty;
-            scbv[selected_option].disabled = false;
-            const totalCb = Object.values(scbv).reduce((s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
-            await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(scbv), shopProdId]);
+          if (!scbv[selected_option] || typeof scbv[selected_option] !== 'object') {
+            scbv[selected_option] = { checked: true, stock: 0, disabled: false };
           }
+          scbv[selected_option].stock = (scbv[selected_option].stock || 0) + transferQty;
+          scbv[selected_option].disabled = false;
+          const totalCb = Object.values(scbv).reduce((s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
+          await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(scbv), shopProdId]);
         }
 
         // Sync description & category if shop product was missing them

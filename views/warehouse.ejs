@@ -154,11 +154,25 @@
       <div id="aw-variants-section" class="hidden bg-blue-50/70 border border-blue-200 rounded-2xl p-3.5 space-y-2.5">
         <div class="flex items-center justify-between border-b border-blue-200/80 pb-2">
           <div class="flex items-center gap-1.5 text-xs font-bold text-blue-900">
-            <span>🎨</span> حدد الكمية الموردة للمستودع من كل مقاس / خيار:
+            <span>🎨</span> مقاسات وخيارات الصنف (حدد الوارد من كل مقاس أو أضف مقاساً جديداً):
           </div>
           <span class="text-xs text-blue-800 font-mono">إجمالي المقاسات: <strong id="aw-var-total-sum" class="font-bold">0</strong> قطعة</span>
         </div>
         <div id="aw-variants-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1"></div>
+        
+        <!-- Add New Custom Variant Row -->
+        <div class="flex items-center gap-2 pt-2 border-t border-blue-200">
+          <input type="text" id="aw-new-var-name" placeholder="➕ اسم مقاس جديد (مثال: A4, XL, 50g)..."
+            class="flex-1 border border-blue-300 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();addNewAwVariant();}"/>
+          <input type="number" id="aw-new-var-qty" placeholder="الكمية" min="1" value="1"
+            class="w-16 border border-blue-300 rounded-xl px-2 py-1.5 text-xs text-center font-bold font-mono focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();addNewAwVariant();}"/>
+          <button type="button" onclick="addNewAwVariant()"
+            class="bg-blue-700 hover:bg-blue-800 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-sm transition-all whitespace-nowrap flex items-center gap-1">
+            <span>+</span> إضافة مقاس
+          </button>
+        </div>
       </div>
 
       <!-- Basic Fields -->
@@ -743,6 +757,56 @@ function selectShopProduct(p) {
   }
 }
 
+function addNewAwVariant() {
+  const nameInp = document.getElementById('aw-new-var-name');
+  const qtyInp = document.getElementById('aw-new-var-qty');
+  const optName = (nameInp.value || '').trim();
+  const optQty = Math.max(1, parseInt(qtyInp.value || 1, 10));
+
+  if (!optName) {
+    nameInp.focus();
+    return;
+  }
+
+  const varSec = document.getElementById('aw-variants-section');
+  const varGrid = document.getElementById('aw-variants-grid');
+  varSec.classList.remove('hidden');
+
+  // Check if option already exists
+  const existingInp = document.querySelector(`.aw-var-qty-input[data-opt-key="${CSS.escape(optName)}"]`);
+  if (existingInp) {
+    existingInp.value = parseInt(existingInp.value || 0, 10) + optQty;
+    nameInp.value = '';
+    onAwVariantQtyChange();
+    existingInp.focus();
+    return;
+  }
+
+  // Create new card
+  const card = document.createElement('div');
+  card.className = 'bg-white p-2.5 rounded-xl border-2 border-emerald-300 flex items-center justify-between gap-2 shadow-sm animate-in fade-in duration-150';
+  card.innerHTML = `
+    <div>
+      <span class="text-xs font-bold text-emerald-800 block flex items-center gap-1">✨ ${optName}</span>
+      <span class="text-[10px] text-emerald-600 font-semibold">مقاس جديد مضاف</span>
+    </div>
+    <div class="flex items-center gap-1.5">
+      <span class="text-[11px] text-blue-700 font-bold">وارد:</span>
+      <input type="number" min="0" value="${optQty}"
+        class="aw-var-qty-input w-16 text-center font-bold text-xs border border-emerald-400 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-emerald-400 font-mono"
+        data-opt-key="${optName.replace(/"/g, '&quot;')}"
+        oninput="onAwVariantQtyChange()"/>
+      <button type="button" onclick="this.closest('div.bg-white').remove(); onAwVariantQtyChange();" class="text-gray-400 hover:text-red-600 text-sm px-1">✕</button>
+    </div>
+  `;
+  varGrid.appendChild(card);
+
+  nameInp.value = '';
+  document.getElementById('aw-qty').readOnly = true;
+  document.getElementById('aw-qty').classList.add('bg-gray-100');
+  onAwVariantQtyChange();
+}
+
 function onAwVariantQtyChange() {
   const inputs = document.querySelectorAll('.aw-var-qty-input');
   let total = 0;
@@ -785,17 +849,18 @@ async function submitAddWarehouseItem(e) {
     return;
   }
 
-  // Package variants JSON
+  // Package variants JSON (supports both existing and newly added variants)
   let checkboxValuesJson = null;
-  if (_selectedShopProd && _selectedShopProd.checkbox_values) {
-    const baseCbv = typeof _selectedShopProd.checkbox_values === 'string' ? JSON.parse(_selectedShopProd.checkbox_values) : { ..._selectedShopProd.checkbox_values };
-    const varInputs = document.querySelectorAll('.aw-var-qty-input');
+  const varInputs = document.querySelectorAll('.aw-var-qty-input');
+  if (varInputs.length > 0) {
+    let baseCbv = {};
+    if (_selectedShopProd && _selectedShopProd.checkbox_values) {
+      baseCbv = typeof _selectedShopProd.checkbox_values === 'string' ? JSON.parse(_selectedShopProd.checkbox_values) : { ..._selectedShopProd.checkbox_values };
+    }
     varInputs.forEach(inp => {
       const k = inp.dataset.optKey;
       const q = parseInt(inp.value || 0, 10);
-      if (baseCbv[k]) {
-        baseCbv[k] = { ...baseCbv[k], stock: q, disabled: false };
-      }
+      baseCbv[k] = { ...(baseCbv[k] || { checked: true }), stock: q, disabled: false };
     });
     checkboxValuesJson = JSON.stringify(baseCbv);
   }
@@ -823,7 +888,7 @@ async function submitAddWarehouseItem(e) {
 
     closeAddWarehouseModal();
     await loadWarehouseData();
-    alert('✅ تم حفظ الصنف والشحنة في المستودع بنجاح مع توزيع كميات المقاسات!');
+    alert('✅ تم حفظ الصنف والشحنة في المستودع بنجاح مع المقاسات الجديدة!');
   } catch (err) {
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
