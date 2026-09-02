@@ -931,12 +931,33 @@ app.post(`${BASE}/api/products/:pid/apply-discount`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+const SUPABASE_REST_URL = 'https://ywfunodybcqakhweuxwn.supabase.co';
+const SUPABASE_REST_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_OJMJDWyuUA_zrri3k4hk7Q_K7PFE94A';
+
+async function updateSupabaseProductRest(targetId, updateData) {
+  try {
+    await fetch(`${SUPABASE_REST_URL}/rest/v1/products?id=eq.${targetId}`, {
+      method: 'PATCH',
+      headers: {
+        'apikey': SUPABASE_REST_KEY,
+        'Authorization': `Bearer ${SUPABASE_REST_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify(updateData)
+    });
+  } catch (err) {
+    console.error('[Supabase REST update error]', err.message);
+  }
+}
+
 app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res) => {
   const pid = parseInt(req.params.pid, 10);
   try {
     await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
     await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS orig_section TEXT').catch(() => {});
     await posDb.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
 
     // Fetch product details
@@ -975,6 +996,15 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
          WHERE id = $1 OR LOWER(TRIM(name)) = LOWER(TRIM($2))`,
         [p.dentrust_id || pid, p.product_name || p.name || '']
       ).catch(() => {});
+
+      await updateSupabaseProductRest(p.dentrust_id || pid, {
+        orig_section: p.section || 'dental',
+        section: 'hidden',
+        is_hidden: true,
+        hidden: true,
+        is_hidden_from_website: true,
+        is_active: false
+      });
     } else {
       // UNHIDE PRODUCT: restore section from orig_section, is_hidden=false
       await posDb.query(
@@ -998,6 +1028,14 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
          WHERE id = $1 OR LOWER(TRIM(name)) = LOWER(TRIM($2))`,
         [p.dentrust_id || pid, p.product_name || p.name || '']
       ).catch(() => {});
+
+      await updateSupabaseProductRest(p.dentrust_id || pid, {
+        section: p.orig_section || p.section || 'dental',
+        is_hidden: false,
+        hidden: false,
+        is_hidden_from_website: false,
+        is_active: true
+      });
     }
 
     cacheDel('site_products');
