@@ -150,28 +150,42 @@
         </div>
       </div>
 
-      <!-- Variants / Options Quantity Grid -->
-      <div id="aw-variants-section" class="hidden bg-blue-50/70 border border-blue-200 rounded-2xl p-3.5 space-y-2.5">
+      <!-- Variants / Options Quantity Grid with Group Titles -->
+      <div id="aw-variants-section" class="hidden bg-blue-50/70 border border-blue-200 rounded-2xl p-4 space-y-3">
         <div class="flex items-center justify-between border-b border-blue-200/80 pb-2">
           <div class="flex items-center gap-1.5 text-xs font-bold text-blue-900">
-            <span>🎨</span> مقاسات وخيارات الصنف (حدد الوارد من كل مقاس أو أضف مقاساً جديداً):
+            <span>🎨</span> عناوين ومقاسات الصنف (حدد الوارد أو أضف مجموعة ومقاسات جديدة):
           </div>
           <span class="text-xs text-blue-800 font-mono">إجمالي المقاسات: <strong id="aw-var-total-sum" class="font-bold">0</strong> قطعة</span>
         </div>
-        <div id="aw-variants-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1"></div>
         
-        <!-- Add New Custom Variant Row -->
-        <div class="flex items-center gap-2 pt-2 border-t border-blue-200">
-          <input type="text" id="aw-new-var-name" placeholder="➕ اسم مقاس جديد (مثال: A4, XL, 50g)..."
-            class="flex-1 border border-blue-300 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-            onkeydown="if(event.key==='Enter'){event.preventDefault();addNewAwVariant();}"/>
-          <input type="number" id="aw-new-var-qty" placeholder="الكمية" min="1" value="1"
-            class="w-16 border border-blue-300 rounded-xl px-2 py-1.5 text-xs text-center font-bold font-mono focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-            onkeydown="if(event.key==='Enter'){event.preventDefault();addNewAwVariant();}"/>
-          <button type="button" onclick="addNewAwVariant()"
-            class="bg-blue-700 hover:bg-blue-800 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-sm transition-all whitespace-nowrap flex items-center gap-1">
-            <span>+</span> إضافة مقاس
-          </button>
+        <!-- Grouped Variants Container -->
+        <div id="aw-variants-grid" class="space-y-3 max-h-56 overflow-y-auto p-1"></div>
+        
+        <!-- Add New Group or Variant Controls -->
+        <div class="bg-white p-3 rounded-xl border border-blue-200 space-y-2 text-xs">
+          <div class="font-bold text-gray-700 flex items-center gap-1">
+            <span>➕</span> إضافة مقاس جديد / عنوان مجموعة جديد:
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <select id="aw-var-group-select" class="border border-blue-300 rounded-xl px-2.5 py-1.5 text-xs bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="عام">مجموعة: عام</option>
+            </select>
+            <input type="text" id="aw-new-group-name" placeholder="أو اكتب اسم مجموعة جديدة (مثال: الحجم، اللون)..."
+              class="flex-1 min-w-[150px] border border-blue-300 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"/>
+          </div>
+          <div class="flex items-center gap-2 pt-1">
+            <input type="text" id="aw-new-var-name" placeholder="اسم المقاس (مثال: A4, XL, 50g)..."
+              class="flex-1 border border-blue-300 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();addNewAwVariant();}"/>
+            <input type="number" id="aw-new-var-qty" placeholder="الكمية" min="1" value="1"
+              class="w-16 border border-blue-300 rounded-xl px-2 py-1.5 text-xs text-center font-bold font-mono focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();addNewAwVariant();}"/>
+            <button type="button" onclick="addNewAwVariant()"
+              class="bg-blue-700 hover:bg-blue-800 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-sm transition-all whitespace-nowrap flex items-center gap-1">
+              <span>+</span> إضافة المقاس
+            </button>
+          </div>
         </div>
       </div>
 
@@ -711,37 +725,95 @@ function selectShopProduct(p) {
     document.getElementById('aw-cost').value = p.purchase_price;
   }
 
-  // Render Variants Matrix if product has variants
+  // Render Variants Matrix grouped by category/title
   const varSec = document.getElementById('aw-variants-section');
   const varGrid = document.getElementById('aw-variants-grid');
+  const grpSelect = document.getElementById('aw-var-group-select');
   varGrid.innerHTML = '';
+  grpSelect.innerHTML = '';
 
   let hasVariants = false;
+  let groups = [];
+
   if (p.checkbox_values) {
     const cbv = typeof p.checkbox_values === 'string' ? JSON.parse(p.checkbox_values) : p.checkbox_values;
-    const opts = Object.keys(cbv);
-    if (opts.length > 0) {
+    
+    // Check if nested by group: { "الحجم": { "A1": {...} } } or flat: { "A1": {...} }
+    const topKeys = Object.keys(cbv);
+    const isNested = topKeys.some(k => cbv[k] && typeof cbv[k] === 'object' && !('stock' in cbv[k]) && !('checked' in cbv[k]));
+
+    if (isNested) {
       hasVariants = true;
-      varGrid.innerHTML = opts.map((opt, idx) => {
-        const shopStock = cbv[opt].stock != null ? cbv[opt].stock : '—';
+      groups = topKeys;
+      varGrid.innerHTML = topKeys.map(grpName => {
+        const subOpts = cbv[grpName] || {};
+        const optKeys = Object.keys(subOpts);
         return `
-          <div class="bg-white p-2.5 rounded-xl border border-blue-100 flex items-center justify-between gap-2 shadow-sm">
-            <div>
-              <span class="text-xs font-bold text-gray-800 block">${opt}</span>
-              <span class="text-[10px] text-gray-400">بالمحل: ${shopStock}</span>
+          <div class="bg-white p-3 rounded-2xl border border-blue-200 shadow-sm space-y-2">
+            <div class="text-xs font-bold text-blue-900 border-b border-gray-100 pb-1.5 flex items-center gap-1">
+              <span class="text-blue-600">📂</span> مجموعة: ${grpName}
             </div>
-            <div class="flex items-center gap-1.5">
-              <span class="text-[11px] text-blue-700 font-bold">وارد:</span>
-              <input type="number" min="0" value="0"
-                class="aw-var-qty-input w-16 text-center font-bold text-xs border border-blue-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono"
-                data-opt-key="${opt.replace(/"/g, '&quot;')}"
-                oninput="onAwVariantQtyChange()"/>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2" id="grp-grid-${CSS.escape(grpName)}">
+              ${optKeys.map(opt => {
+                const shopStock = subOpts[opt].stock != null ? subOpts[opt].stock : '—';
+                return `
+                  <div class="bg-gray-50/80 p-2 rounded-xl border border-gray-200 flex items-center justify-between gap-2">
+                    <div>
+                      <span class="text-xs font-bold text-gray-800 block">${opt}</span>
+                      <span class="text-[10px] text-gray-400">بالمحل: ${shopStock}</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-[11px] text-blue-700 font-bold">وارد:</span>
+                      <input type="number" min="0" value="0"
+                        class="aw-var-qty-input w-16 text-center font-bold text-xs border border-blue-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono bg-white"
+                        data-group-name="${grpName.replace(/"/g, '&quot;')}"
+                        data-opt-key="${opt.replace(/"/g, '&quot;')}"
+                        oninput="onAwVariantQtyChange()"/>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
             </div>
           </div>
         `;
       }).join('');
+    } else if (topKeys.length > 0) {
+      hasVariants = true;
+      groups = ['عام'];
+      varGrid.innerHTML = `
+        <div class="bg-white p-3 rounded-2xl border border-blue-200 shadow-sm space-y-2">
+          <div class="text-xs font-bold text-blue-900 border-b border-gray-100 pb-1.5 flex items-center gap-1">
+            <span class="text-blue-600">📂</span> مجموعة المقاسات العامة
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2" id="grp-grid-عام">
+            ${topKeys.map(opt => {
+              const shopStock = cbv[opt].stock != null ? cbv[opt].stock : '—';
+              return `
+                <div class="bg-gray-50/80 p-2 rounded-xl border border-gray-200 flex items-center justify-between gap-2">
+                  <div>
+                    <span class="text-xs font-bold text-gray-800 block">${opt}</span>
+                    <span class="text-[10px] text-gray-400">بالمحل: ${shopStock}</span>
+                  </div>
+                  <div class="flex items-center gap-1.5">
+                    <span class="text-[11px] text-blue-700 font-bold">وارد:</span>
+                    <input type="number" min="0" value="0"
+                      class="aw-var-qty-input w-16 text-center font-bold text-xs border border-blue-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono bg-white"
+                      data-group-name="عام"
+                      data-opt-key="${opt.replace(/"/g, '&quot;')}"
+                      oninput="onAwVariantQtyChange()"/>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
     }
   }
+
+  // Populate Group select
+  if (!groups.length) groups = ['عام', 'الحجم', 'اللون / الشيد'];
+  grpSelect.innerHTML = groups.map(g => `<option value="${g}">مجموعة: ${g}</option>`).join('');
 
   if (hasVariants) {
     varSec.classList.remove('hidden');
@@ -760,8 +832,12 @@ function selectShopProduct(p) {
 function addNewAwVariant() {
   const nameInp = document.getElementById('aw-new-var-name');
   const qtyInp = document.getElementById('aw-new-var-qty');
+  const newGrpInp = document.getElementById('aw-new-group-name');
+  const grpSelect = document.getElementById('aw-var-group-select');
+
   const optName = (nameInp.value || '').trim();
   const optQty = Math.max(1, parseInt(qtyInp.value || 1, 10));
+  let targetGroup = (newGrpInp.value || '').trim() || grpSelect.value || 'عام';
 
   if (!optName) {
     nameInp.focus();
@@ -772,8 +848,36 @@ function addNewAwVariant() {
   const varGrid = document.getElementById('aw-variants-grid');
   varSec.classList.remove('hidden');
 
-  // Check if option already exists
-  const existingInp = document.querySelector(`.aw-var-qty-input[data-opt-key="${CSS.escape(optName)}"]`);
+  // If new group, add to select options
+  if (newGrpInp.value && newGrpInp.value.trim()) {
+    const existingOpt = Array.from(grpSelect.options).find(o => o.value === targetGroup);
+    if (!existingOpt) {
+      const o = document.createElement('option');
+      o.value = targetGroup;
+      o.textContent = `مجموعة: ${targetGroup}`;
+      o.selected = true;
+      grpSelect.appendChild(o);
+    }
+    newGrpInp.value = '';
+  }
+
+  // Find or create group container in grid
+  let grpContainer = document.getElementById(`grp-grid-${CSS.escape(targetGroup)}`);
+  if (!grpContainer) {
+    const grpCard = document.createElement('div');
+    grpCard.className = 'bg-white p-3 rounded-2xl border border-blue-200 shadow-sm space-y-2 animate-in fade-in duration-150';
+    grpCard.innerHTML = `
+      <div class="text-xs font-bold text-blue-900 border-b border-gray-100 pb-1.5 flex items-center gap-1">
+        <span class="text-blue-600">📂</span> مجموعة: ${targetGroup}
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2" id="grp-grid-${targetGroup.replace(/"/g, '&quot;')}"></div>
+    `;
+    varGrid.appendChild(grpCard);
+    grpContainer = grpCard.querySelector(`[id="grp-grid-${targetGroup}"]`);
+  }
+
+  // Check if option already exists in this group
+  const existingInp = grpContainer.querySelector(`.aw-var-qty-input[data-opt-key="${CSS.escape(optName)}"]`);
   if (existingInp) {
     existingInp.value = parseInt(existingInp.value || 0, 10) + optQty;
     nameInp.value = '';
@@ -784,22 +888,23 @@ function addNewAwVariant() {
 
   // Create new card
   const card = document.createElement('div');
-  card.className = 'bg-white p-2.5 rounded-xl border-2 border-emerald-300 flex items-center justify-between gap-2 shadow-sm animate-in fade-in duration-150';
+  card.className = 'bg-emerald-50/70 p-2.5 rounded-xl border border-emerald-300 flex items-center justify-between gap-2 shadow-sm animate-in fade-in duration-150';
   card.innerHTML = `
     <div>
-      <span class="text-xs font-bold text-emerald-800 block flex items-center gap-1">✨ ${optName}</span>
-      <span class="text-[10px] text-emerald-600 font-semibold">مقاس جديد مضاف</span>
+      <span class="text-xs font-bold text-emerald-900 block flex items-center gap-1">✨ ${optName}</span>
+      <span class="text-[10px] text-emerald-700 font-semibold">مضاف حديثاً</span>
     </div>
     <div class="flex items-center gap-1.5">
       <span class="text-[11px] text-blue-700 font-bold">وارد:</span>
       <input type="number" min="0" value="${optQty}"
-        class="aw-var-qty-input w-16 text-center font-bold text-xs border border-emerald-400 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-emerald-400 font-mono"
+        class="aw-var-qty-input w-16 text-center font-bold text-xs border border-emerald-400 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-emerald-400 font-mono bg-white"
+        data-group-name="${targetGroup.replace(/"/g, '&quot;')}"
         data-opt-key="${optName.replace(/"/g, '&quot;')}"
         oninput="onAwVariantQtyChange()"/>
-      <button type="button" onclick="this.closest('div.bg-white').remove(); onAwVariantQtyChange();" class="text-gray-400 hover:text-red-600 text-sm px-1">✕</button>
+      <button type="button" onclick="this.closest('div.bg-emerald-50\\/70').remove(); onAwVariantQtyChange();" class="text-gray-400 hover:text-red-600 text-sm px-1">✕</button>
     </div>
   `;
-  varGrid.appendChild(card);
+  grpContainer.appendChild(card);
 
   nameInp.value = '';
   document.getElementById('aw-qty').readOnly = true;
@@ -849,7 +954,7 @@ async function submitAddWarehouseItem(e) {
     return;
   }
 
-  // Package variants JSON (supports both existing and newly added variants)
+  // Package variants JSON (supports grouped and flat variants)
   let checkboxValuesJson = null;
   const varInputs = document.querySelectorAll('.aw-var-qty-input');
   if (varInputs.length > 0) {
@@ -857,11 +962,23 @@ async function submitAddWarehouseItem(e) {
     if (_selectedShopProd && _selectedShopProd.checkbox_values) {
       baseCbv = typeof _selectedShopProd.checkbox_values === 'string' ? JSON.parse(_selectedShopProd.checkbox_values) : { ..._selectedShopProd.checkbox_values };
     }
-    varInputs.forEach(inp => {
-      const k = inp.dataset.optKey;
-      const q = parseInt(inp.value || 0, 10);
-      baseCbv[k] = { ...(baseCbv[k] || { checked: true }), stock: q, disabled: false };
-    });
+    const isGrouped = Array.from(varInputs).some(i => i.dataset.groupName && i.dataset.groupName !== 'عام');
+    
+    if (isGrouped) {
+      varInputs.forEach(inp => {
+        const grp = inp.dataset.groupName || 'عام';
+        const k = inp.dataset.optKey;
+        const q = parseInt(inp.value || 0, 10);
+        if (!baseCbv[grp] || typeof baseCbv[grp] !== 'object') baseCbv[grp] = {};
+        baseCbv[grp][k] = { ...(baseCbv[grp][k] || { checked: true }), stock: q, disabled: false };
+      });
+    } else {
+      varInputs.forEach(inp => {
+        const k = inp.dataset.optKey;
+        const q = parseInt(inp.value || 0, 10);
+        baseCbv[k] = { ...(baseCbv[k] || { checked: true }), stock: q, disabled: false };
+      });
+    }
     checkboxValuesJson = JSON.stringify(baseCbv);
   }
 
@@ -888,11 +1005,95 @@ async function submitAddWarehouseItem(e) {
 
     closeAddWarehouseModal();
     await loadWarehouseData();
-    alert('✅ تم حفظ الصنف والشحنة في المستودع بنجاح مع المقاسات الجديدة!');
+    alert('✅ تم حفظ الصنف والشحنة في المستودع بنجاح مع توزيع المجموعات والمقاسات!');
   } catch (err) {
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
   }
+}
+
+// ── Flatten Checkbox Values Helper ──────────────────────────────────────────
+function flattenCbv(cbv) {
+  if (!cbv) return {};
+  try {
+    const parsed = typeof cbv === 'string' ? JSON.parse(cbv) : cbv;
+    const out = {};
+    Object.keys(parsed).forEach(k => {
+      const val = parsed[k];
+      if (val && typeof val === 'object' && !('stock' in val) && !('checked' in val)) {
+        Object.keys(val).forEach(subK => {
+          out[`[${k}] ${subK}`] = { ...val[subK], groupName: k, rawKey: subK };
+        });
+      } else {
+        out[k] = { ...val, groupName: 'عام', rawKey: k };
+      }
+    });
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+// ── Variant Comparison Modal Logic ───────────────────────────────────────────
+function openVariantCompareModal(itemId) {
+  const item = _warehouseItems.find(i => i.id === itemId);
+  if (!item) return;
+
+  document.getElementById('cmp-prod-name').textContent = `${item.product_name} • (كود: ${item.barcode || '—'})`;
+  const tbody = document.getElementById('cmp-table-body');
+  tbody.innerHTML = '';
+
+  const whFlat = flattenCbv(item.checkbox_values);
+  const shopProd = _shopProducts.find(p => p.id === item.product_id);
+  const shopFlat = flattenCbv(shopProd ? shopProd.checkbox_values : null);
+
+  const allKeys = Array.from(new Set([...Object.keys(whFlat), ...Object.keys(shopFlat)]));
+
+  if (!allKeys.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-gray-400 font-bold">لا توجد مقاسات مسجلة لهذا الصنف</td></tr>`;
+  } else {
+    tbody.innerHTML = allKeys.map(displayKey => {
+      const wObj = whFlat[displayKey] || {};
+      const sObj = shopFlat[displayKey] || {};
+      const wQty = wObj.stock != null ? parseInt(wObj.stock) : 0;
+      const sQty = sObj.stock != null ? parseInt(sObj.stock) : 0;
+      const total = wQty + sQty;
+      const rawKey = wObj.rawKey || sObj.rawKey || displayKey;
+      const grpName = wObj.groupName || sObj.groupName || 'عام';
+
+      let statusBadge = '';
+      if (sQty <= 0) {
+        statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">🔴 نافد بالمحل</span>`;
+      } else if (sQty <= 2) {
+        statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">🟡 كمية منخفضة</span>`;
+      } else {
+        statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">🟢 متوفر بالمحل</span>`;
+      }
+
+      return `
+        <tr class="hover:bg-gray-50 transition-colors">
+          <td class="p-3 font-bold text-gray-900">
+            <div class="flex items-center gap-1.5">
+              ${grpName !== 'عام' ? `<span class="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded text-[10px] font-mono font-bold">${grpName}</span>` : ''}
+              <span class="text-gray-900">${rawKey}</span>
+            </div>
+          </td>
+          <td class="p-3 text-center font-mono font-bold text-amber-700 bg-amber-50/40">${wQty} قطعة</td>
+          <td class="p-3 text-center font-mono font-bold text-blue-700 bg-blue-50/40">${sQty} قطعة</td>
+          <td class="p-3 text-center font-mono font-black text-gray-800">${total} قطعة</td>
+          <td class="p-3 text-center">${statusBadge}</td>
+          <td class="p-3 text-center">
+            <button onclick="quickTransferSpecificVariant(${item.id}, '${rawKey.replace(/'/g, "\\'")}', ${wQty})" ${wQty <= 0 ? 'disabled' : ''}
+              class="bg-blue-600 hover:bg-blue-700 disabled:opacity-30 text-white font-bold px-3 py-1 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1 mx-auto">
+              <span>🚚</span> تحويل للمحل
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  document.getElementById('variantCompareModal').classList.remove('hidden');
 }
 
 // ── Transfer Modal ────────────────────────────────────────────────────────────
@@ -1124,61 +1325,6 @@ async function submitReturnToWarehouse(e) {
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
   }
-}
-
-// ── Variant Comparison Modal Logic ───────────────────────────────────────────
-function openVariantCompareModal(itemId) {
-  const item = _warehouseItems.find(i => i.id === itemId);
-  if (!item) return;
-
-  document.getElementById('cmp-prod-name').textContent = `${item.product_name} • (كود: ${item.barcode || '—'})`;
-  const tbody = document.getElementById('cmp-table-body');
-  tbody.innerHTML = '';
-
-  const whCbv = item.checkbox_values ? (typeof item.checkbox_values === 'string' ? JSON.parse(item.checkbox_values) : item.checkbox_values) : {};
-  const shopProd = _shopProducts.find(p => p.id === item.product_id);
-  const shopCbv = shopProd && shopProd.checkbox_values ? (typeof shopProd.checkbox_values === 'string' ? JSON.parse(shopProd.checkbox_values) : shopProd.checkbox_values) : {};
-
-  const allOpts = Array.from(new Set([...Object.keys(whCbv), ...Object.keys(shopCbv)]));
-
-  if (!allOpts.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="p-6 text-center text-gray-400 font-bold">لا توجد مقاسات مسجلة لهذا الصنف</td></tr>`;
-  } else {
-    tbody.innerHTML = allOpts.map(opt => {
-      const wQty = whCbv[opt]?.stock != null ? parseInt(whCbv[opt].stock) : 0;
-      const sQty = shopCbv[opt]?.stock != null ? parseInt(shopCbv[opt].stock) : 0;
-      const total = wQty + sQty;
-
-      let statusBadge = '';
-      if (sQty <= 0) {
-        statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">🔴 نافد بالمحل</span>`;
-      } else if (sQty <= 2) {
-        statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">🟡 كمية منخفضة</span>`;
-      } else {
-        statusBadge = `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">🟢 متوفر بالمحل</span>`;
-      }
-
-      return `
-        <tr class="hover:bg-gray-50 transition-colors">
-          <td class="p-3 font-bold text-gray-900 flex items-center gap-1.5">
-            <span class="text-blue-600">🏷️</span> ${opt}
-          </td>
-          <td class="p-3 text-center font-mono font-bold text-amber-700 bg-amber-50/40">${wQty} قطعة</td>
-          <td class="p-3 text-center font-mono font-bold text-blue-700 bg-blue-50/40">${sQty} قطعة</td>
-          <td class="p-3 text-center font-mono font-black text-gray-800">${total} قطعة</td>
-          <td class="p-3 text-center">${statusBadge}</td>
-          <td class="p-3 text-center">
-            <button onclick="quickTransferSpecificVariant(${item.id}, '${opt.replace(/'/g, "\\'")}', ${wQty})" ${wQty <= 0 ? 'disabled' : ''}
-              class="bg-blue-600 hover:bg-blue-700 disabled:opacity-30 text-white font-bold px-3 py-1 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1 mx-auto">
-              <span>🚚</span> تحويل للمحل
-            </button>
-          </td>
-        </tr>
-      `;
-    }).join('');
-  }
-
-  document.getElementById('variantCompareModal').classList.remove('hidden');
 }
 
 function closeVariantCompareModal() {
