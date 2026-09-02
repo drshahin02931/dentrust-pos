@@ -28,18 +28,24 @@
   </div>
 
   <!-- Stats Bar -->
-  <div class="grid grid-cols-3 gap-4">
-    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center">
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center cursor-pointer hover:border-blue-300 transition-all" onclick="resetAllFilters()" title="عرض كل الأصناف">
       <div id="stat-total" class="text-2xl font-black text-blue-700">—</div>
       <div class="text-xs text-gray-500 mt-1">إجمالي الأصناف</div>
     </div>
-    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center cursor-pointer" onclick="filterByMinStock()">
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center cursor-pointer hover:border-orange-300 transition-all" onclick="filterByMinStock()" title="تصفية الأصناف التي بلغت الحد الأدنى">
       <div id="stat-low" class="text-2xl font-black text-orange-500">—</div>
       <div class="text-xs text-gray-500 mt-1">⚠️ بلغ الحد الأدنى</div>
     </div>
     <div class="bg-white rounded-2xl border shadow-sm p-4 text-center">
       <div id="stat-out" class="text-2xl font-black text-red-600">—</div>
       <div class="text-xs text-gray-500 mt-1">نفذ من المخزون</div>
+    </div>
+    <div class="bg-white rounded-2xl border shadow-sm p-4 text-center cursor-pointer hover:border-amber-400 hover:bg-amber-50/40 transition-all group" onclick="setWebsiteFilter('hidden')" title="اضغط لعرض الأصناف المخفية من الموقع فقط">
+      <div id="stat-hidden" class="text-2xl font-black text-amber-600 group-hover:scale-105 transition-transform">—</div>
+      <div class="text-xs text-gray-500 mt-1 flex items-center justify-center gap-1">
+        <span>🙈</span> <span class="font-medium text-amber-700">مخفي من الموقع</span>
+      </div>
     </div>
   </div>
 
@@ -53,18 +59,83 @@
     <button onclick="clearCategoryFilter()" class="mr-auto text-xs text-red-400 hover:text-red-600 underline">إلغاء الفلتر</button>
   </div>
 
-  <!-- Search + Category Filter -->
-  <div class="bg-white rounded-2xl border shadow-sm p-4 space-y-3">
-    <input id="searchBox" type="text"
-      data-ar-placeholder="ابحث بالاسم أو الباركود..." data-en-placeholder="Search by name or barcode..."
-      placeholder="ابحث بالاسم أو الباركود..."
-      oninput="applyFilters()"
-      class="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
-    <div id="categoryFilters" class="flex flex-wrap gap-2 hidden">
+  <!-- Search + Filters + Sort Control Panel -->
+  <div class="bg-white rounded-2xl border shadow-sm p-4 space-y-3.5">
+    <!-- Top Row: Search Input + Sort Dropdown -->
+    <div class="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+      <!-- Search Input -->
+      <div class="relative flex-1">
+        <span class="absolute inset-y-0 right-3.5 flex items-center pointer-events-none text-gray-400 text-sm">🔍</span>
+        <input id="searchBox" type="text"
+          data-ar-placeholder="ابحث بالاسم أو الباركود..." data-en-placeholder="Search by name or barcode..."
+          placeholder="ابحث بالاسم أو الباركود..."
+          oninput="onSearchInput()"
+          class="w-full border rounded-xl pr-10 pl-9 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all"/>
+        <button id="clearSearchBtn" type="button" onclick="clearSearch()" class="hidden absolute inset-y-0 left-3 flex items-center text-gray-400 hover:text-gray-600 text-sm">✕</button>
+      </div>
+
+      <!-- Sort By Dropdown -->
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <label for="sortBySelect" class="text-xs font-bold text-gray-600 flex items-center gap-1 whitespace-nowrap">
+          <span>↕️</span> <span>ترتيب حسب:</span>
+        </label>
+        <select id="sortBySelect" onchange="applyFilters()"
+          class="border rounded-xl px-3 py-2 text-xs font-semibold text-gray-700 bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-200 cursor-pointer">
+          <option value="newest">📅 الأحدث إضافةً (من الأحدث للأقدم)</option>
+          <option value="oldest">📅 الأقدم إضافةً (من الأقدم للأحدث)</option>
+          <option value="price_desc">💰 السعر: من الأغلى للأرخص</option>
+          <option value="price_asc">🏷️ السعر: من الأرخص للأغلى</option>
+          <option value="name_asc">🔤 أبجدي: أ إلى ي (A-Z)</option>
+          <option value="name_desc">🔤 أبجدي: ي إلى أ (Z-A)</option>
+          <option value="qty_desc">📦 الكمية: الأكثر توفراً</option>
+          <option value="qty_asc">⚠️ الكمية: الأقل توفراً</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Middle Row: Website Visibility Tabs & Filter Status -->
+    <div class="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-gray-100">
+      <!-- Website Visibility Toggle Pills -->
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <span class="text-xs font-bold text-gray-600 ml-1">عرض المتجر:</span>
+        
+        <button type="button" onclick="setWebsiteFilter('all')" data-filter="all"
+          class="web-filter-btn text-xs px-3 py-1.5 rounded-xl border font-bold transition-all bg-blue-700 text-white border-blue-700 shadow-sm flex items-center gap-1.5">
+          <span>📋 الكل</span>
+          <span id="badge-all-count" class="bg-white/20 text-white text-[10px] px-1.5 py-0.5 rounded-full font-mono">0</span>
+        </button>
+
+        <button type="button" onclick="setWebsiteFilter('visible')" data-filter="visible"
+          class="web-filter-btn text-xs px-3 py-1.5 rounded-xl border font-medium transition-all bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50 flex items-center gap-1.5">
+          <span>🌐 معروض بالموقع</span>
+          <span id="badge-visible-count" class="bg-emerald-100 text-emerald-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">0</span>
+        </button>
+
+        <button type="button" onclick="setWebsiteFilter('hidden')" data-filter="hidden"
+          class="web-filter-btn text-xs px-3 py-1.5 rounded-xl border font-medium transition-all bg-white text-gray-600 border-gray-200 hover:border-amber-300 hover:bg-amber-50/50 flex items-center gap-1.5"
+          title="عرض المنتجات غير المعروضة على الموقع فقط">
+          <span>🙈 غير معروض بالموقع (مخفي)</span>
+          <span id="badge-hidden-count" class="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">0</span>
+        </button>
+      </div>
+
+      <!-- Filter count and Reset Button -->
+      <div class="flex items-center gap-2 mr-auto">
+        <span id="filteredCount" class="text-xs font-semibold text-gray-500"></span>
+        <button id="resetFiltersBtn" type="button" onclick="resetAllFilters()"
+          class="hidden text-xs text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1 rounded-lg font-bold transition-colors flex items-center gap-1">
+          <span>🔄</span> <span>إعادة ضبط</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Bottom Row: Category Filter Badges -->
+    <div id="categoryFilters" class="flex flex-wrap gap-1.5 pt-2 border-t border-gray-100 hidden">
       <button onclick="setCategoryFilter(null)"
         id="cat-all"
-        class="text-xs px-3 py-1.5 rounded-full border font-medium bg-blue-700 text-white border-blue-700">
-        الكل
+        data-cat="all"
+        class="cat-filter-btn text-xs px-3 py-1.5 rounded-full border font-medium bg-blue-700 text-white border-blue-700">
+        كل الفئات
       </button>
     </div>
   </div>
@@ -282,54 +353,94 @@
 const BASE = "<%- base %>";
 let allProducts = [];
 const productMap = {};
+let activeCategoryFilter = null;
+let showMinStockOnly = false;
+let activeWebsiteFilter = 'all'; // 'all' | 'visible' | 'hidden'
+
+function isProductHidden(p) {
+  if (!p) return false;
+  return p.is_hidden_from_website === true || 
+         p.is_hidden_from_website === 'true' || 
+         p.is_hidden_from_website === 1 || 
+         p.is_hidden === true || 
+         p.hidden === true || 
+         p.section === 'hidden';
+}
+
+function updateCounters() {
+  const total = allProducts.length;
+  const hiddenCount = allProducts.filter(p => isProductHidden(p)).length;
+  const visibleCount = total - hiddenCount;
+  const lowCount = allProducts.filter(p => (p.min_stock||0) > 0 && p.quantity <= (p.min_stock||0)).length;
+  const outCount = allProducts.filter(p => p.quantity <= 0).length;
+
+  const statTotal = document.getElementById("stat-total");
+  if (statTotal) statTotal.textContent = total;
+  const statLow = document.getElementById("stat-low");
+  if (statLow) statLow.textContent = lowCount;
+  const statOut = document.getElementById("stat-out");
+  if (statOut) statOut.textContent = outCount;
+  const statHidden = document.getElementById("stat-hidden");
+  if (statHidden) statHidden.textContent = hiddenCount;
+
+  const badgeAll = document.getElementById("badge-all-count");
+  if (badgeAll) badgeAll.textContent = total;
+  const badgeVis = document.getElementById("badge-visible-count");
+  if (badgeVis) badgeVis.textContent = visibleCount;
+  const badgeHid = document.getElementById("badge-hidden-count");
+  if (badgeHid) badgeHid.textContent = hiddenCount;
+
+  // Low stock banner
+  const banner = document.getElementById("lowStockBanner");
+  const bannerText = document.getElementById("lowStockBannerText");
+  if (banner && bannerText) {
+    if (lowCount > 0) {
+      bannerText.textContent = `${lowCount} منتج وصل للحد الأدنى`;
+      banner.classList.remove("hidden");
+    } else {
+      banner.classList.add("hidden");
+    }
+  }
+}
 
 async function loadProducts() {
-  let lowStockCount = 0;
   try {
     const res = await fetch(`${BASE}/api/products`, { headers: { 'x-pos-app': '1' } });
     const data = await res.json();
     allProducts = Array.isArray(data) ? data : (data.products || []);
     allProducts.forEach(p => productMap[p.id] = p);
-    document.getElementById("stat-total").textContent = allProducts.length;
-    lowStockCount = allProducts.filter(p => (p.min_stock||0) > 0 && p.quantity <= (p.min_stock||0)).length;
-    document.getElementById("stat-low").textContent = lowStockCount;
-    document.getElementById("stat-out").textContent = allProducts.filter(p => p.quantity <= 0).length;
   } catch (err) {
     console.error('Failed to load products:', err);
     allProducts = [];
   }
 
-  // Low-stock banner
-  const banner = document.getElementById("lowStockBanner");
-  const bannerText = document.getElementById("lowStockBannerText");
-  if (lowStockCount > 0) {
-    bannerText.textContent = `${lowStockCount} منتج وصل للحد الأدنى`;
-    banner.classList.remove("hidden");
-  } else {
-    banner.classList.add("hidden");
-  }
+  updateCounters();
 
   // Build category filter buttons
   const categories = [...new Set(allProducts.map(p => p.category).filter(Boolean))].sort();
-  // Populate category dropdown in add/edit form
   const catSelect = document.getElementById("f-category-select");
   if (catSelect) {
     catSelect.innerHTML = '<option value="">اختر فئة موجودة...</option>' +
       categories.map(c => `<option value="${c}">${c}</option>`).join("");
   }
   const filterDiv = document.getElementById("categoryFilters");
-  const datalist = document.getElementById("categoryList");
-  if (categories.length > 0) {
-    filterDiv.classList.remove("hidden");
-    filterDiv.innerHTML = `<button data-cat="all" onclick="setCategoryFilter(null)"
-      class="cat-filter-btn text-xs px-3 py-1.5 rounded-full border font-medium transition-colors bg-blue-700 text-white border-blue-700">الكل</button>` +
-      categories.map(c => `<button data-cat="${c}" onclick="setCategoryFilter('${c}')"
-        class="cat-filter-btn text-xs px-3 py-1.5 rounded-full border font-medium transition-colors bg-white text-gray-600 border-gray-200 hover:border-blue-300">${c}</button>`).join("");
-  } else {
-    filterDiv.classList.add("hidden");
+  if (filterDiv) {
+    if (categories.length > 0) {
+      filterDiv.classList.remove("hidden");
+      filterDiv.innerHTML = `<button data-cat="all" onclick="setCategoryFilter(null)"
+        class="cat-filter-btn text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${!activeCategoryFilter ? 'bg-blue-700 text-white border-blue-700' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'}">كل الفئات (${allProducts.length})</button>` +
+        categories.map(c => {
+          const count = allProducts.filter(p => p.category === c).length;
+          const active = activeCategoryFilter === c;
+          return `<button data-cat="${c}" onclick="setCategoryFilter('${c}')"
+            class="cat-filter-btn text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${active ? 'bg-blue-700 text-white border-blue-700' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'}">${c} (${count})</button>`;
+        }).join("");
+    } else {
+      filterDiv.classList.add("hidden");
+    }
   }
 
-  renderTable(allProducts);
+  applyFilters();
 
   // Financial summary (manager only)
   const finCard = document.getElementById("financialCard");
@@ -342,7 +453,6 @@ async function loadProducts() {
     document.getElementById("fin-revenue").textContent = fmt(totalRevenue);
     document.getElementById("fin-profit").textContent  = (totalProfit >= 0 ? "+" : "") + fmt(Math.abs(totalProfit));
     finCard.style.display = "block";
-    // Show note if all zeros (quantities not set yet)
     if (totalCost === 0 && totalRevenue === 0) {
       document.getElementById("fin-zero-note").style.display = "block";
     }
@@ -400,27 +510,146 @@ function renderTable(products) {
   }).join("");
 }
 
+function onSearchInput() {
+  const q = (document.getElementById("searchBox")?.value || "").trim();
+  const clearBtn = document.getElementById("clearSearchBtn");
+  if (clearBtn) clearBtn.classList.toggle("hidden", !q);
+  applyFilters();
+}
+
+function clearSearch() {
+  const searchBox = document.getElementById("searchBox");
+  if (searchBox) searchBox.value = "";
+  const clearBtn = document.getElementById("clearSearchBtn");
+  if (clearBtn) clearBtn.classList.add("hidden");
+  applyFilters();
+}
+
+function setWebsiteFilter(filter) {
+  activeWebsiteFilter = filter;
+  document.querySelectorAll('.web-filter-btn').forEach(btn => {
+    const isTarget = btn.dataset.filter === filter;
+    if (isTarget) {
+      if (filter === 'hidden') {
+        btn.className = 'web-filter-btn text-xs px-3 py-1.5 rounded-xl border font-bold transition-all bg-amber-600 text-white border-amber-600 shadow-sm flex items-center gap-1.5';
+      } else if (filter === 'visible') {
+        btn.className = 'web-filter-btn text-xs px-3 py-1.5 rounded-xl border font-bold transition-all bg-emerald-600 text-white border-emerald-600 shadow-sm flex items-center gap-1.5';
+      } else {
+        btn.className = 'web-filter-btn text-xs px-3 py-1.5 rounded-xl border font-bold transition-all bg-blue-700 text-white border-blue-700 shadow-sm flex items-center gap-1.5';
+      }
+    } else {
+      btn.className = 'web-filter-btn text-xs px-3 py-1.5 rounded-xl border font-medium transition-all bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50 flex items-center gap-1.5';
+    }
+  });
+  applyFilters();
+}
+
+function resetAllFilters() {
+  clearSearch();
+  activeCategoryFilter = null;
+  showMinStockOnly = false;
+  activeWebsiteFilter = 'all';
+  
+  const sortSelect = document.getElementById("sortBySelect");
+  if (sortSelect) sortSelect.value = 'newest';
+
+  setWebsiteFilter('all');
+  document.querySelectorAll(".cat-filter-btn").forEach(btn => {
+    const active = btn.dataset.cat === "all";
+    btn.className = `cat-filter-btn text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${active ? 'bg-blue-700 text-white border-blue-700' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'}`;
+  });
+  document.getElementById("lowStockBanner")?.classList.add("hidden");
+  
+  applyFilters();
+}
+
 function applyFilters() {
-  const q = (document.getElementById("searchBox").value || "").toLowerCase();
-  let filtered = allProducts;
+  const q = (document.getElementById("searchBox")?.value || "").trim().toLowerCase();
+  let filtered = allProducts.slice();
+
+  // 1. فلتر حالة العرض على الموقع (الكل / معروض بالموقع / غير معروض بالموقع)
+  if (activeWebsiteFilter === 'hidden') {
+    filtered = filtered.filter(p => isProductHidden(p));
+  } else if (activeWebsiteFilter === 'visible') {
+    filtered = filtered.filter(p => !isProductHidden(p));
+  }
+
+  // 2. فلتر الفئة
   if (activeCategoryFilter) {
     filtered = filtered.filter(p => p.category === activeCategoryFilter);
   }
+
+  // 3. فلتر الحد الأدنى للمخزون
   if (showMinStockOnly) {
     filtered = filtered.filter(p => (p.min_stock || 0) > 0 && p.quantity <= (p.min_stock || 0));
   }
+
+  // 4. البحث بالاسم أو الباركود
   if (q) {
-    filtered = filtered.filter(p => p.product_name.toLowerCase().includes(q) || (p.barcode||"").includes(q));
+    filtered = filtered.filter(p => 
+      (p.product_name && p.product_name.toLowerCase().includes(q)) || 
+      (p.barcode && String(p.barcode).toLowerCase().includes(q))
+    );
   }
+
+  // 5. الترتيب (أحدث، أقدم، أغلى، أرخص، أبجدي أ-ي، أبجدي ي-أ، الكمية)
+  const sort = document.getElementById("sortBySelect")?.value || 'newest';
+  filtered.sort((a, b) => {
+    switch (sort) {
+      case 'newest':
+        // من الأحدث للأقدم (أكبر ID أولاً)
+        return (b.id || 0) - (a.id || 0);
+      case 'oldest':
+        // من الأقدم للأحدث (أصغر ID أولاً)
+        return (a.id || 0) - (b.id || 0);
+      case 'price_desc':
+        // من الأغلى للأرخص (سعر البيع تنازلي)
+        return (parseFloat(b.sale_price) || 0) - (parseFloat(a.sale_price) || 0);
+      case 'price_asc':
+        // من الأرخص للأغلى (سعر البيع تصاعدي)
+        return (parseFloat(a.sale_price) || 0) - (parseFloat(b.sale_price) || 0);
+      case 'name_asc':
+        // أبجدي: أ إلى ي (A-Z)
+        return (a.product_name || '').localeCompare(b.product_name || '', 'ar', { numeric: true, sensitivity: 'base' });
+      case 'name_desc':
+        // أبجدي: ي إلى أ (Z-A)
+        return (b.product_name || '').localeCompare(a.product_name || '', 'ar', { numeric: true, sensitivity: 'base' });
+      case 'qty_desc':
+        // الكمية: الأكثر توفراً
+        return (parseInt(b.quantity) || 0) - (parseInt(a.quantity) || 0);
+      case 'qty_asc':
+        // الكمية: الأقل توفراً
+        return (parseInt(a.quantity) || 0) - (parseInt(b.quantity) || 0);
+      default:
+        return (b.id || 0) - (a.id || 0);
+    }
+  });
+
+  // تحديث عداد النتائج وزر إعادة الضبط
+  const countEl = document.getElementById("filteredCount");
+  if (countEl) {
+    if (filtered.length === allProducts.length) {
+      countEl.textContent = `إجمالي: ${allProducts.length} صنف`;
+    } else {
+      countEl.innerHTML = `<span class="text-blue-700 font-bold">${filtered.length}</span> من أصل ${allProducts.length} صنف`;
+    }
+  }
+
+  const resetBtn = document.getElementById("resetFiltersBtn");
+  if (resetBtn) {
+    const isFiltered = q !== "" || activeCategoryFilter !== null || showMinStockOnly || activeWebsiteFilter !== 'all' || sort !== 'newest';
+    resetBtn.classList.toggle("hidden", !isFiltered);
+  }
+
   renderTable(filtered);
 }
 
 function setCategoryFilter(cat) {
   activeCategoryFilter = cat;
   showMinStockOnly = false;
-  document.getElementById("lowStockBanner").classList.add("hidden");
+  document.getElementById("lowStockBanner")?.classList.add("hidden");
   document.querySelectorAll(".cat-filter-btn").forEach(btn => {
-    const active = btn.dataset.cat === (cat || "all");
+    const active = (btn.dataset.cat === "all" && !cat) || (btn.dataset.cat === cat);
     btn.className = `cat-filter-btn text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${active ? 'bg-blue-700 text-white border-blue-700' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'}`;
   });
   applyFilters();
@@ -740,15 +969,24 @@ async function toggleWebsiteVisibility(pid, isCurrentlyHidden, btnEl) {
       p.is_hidden_from_website = data.is_hidden_from_website;
       p.is_hidden = data.is_hidden_from_website;
       p.hidden = data.is_hidden_from_website;
-      if (data.is_hidden_from_website) p.section = 'hidden';
+      if (data.is_hidden_from_website) {
+        p.section = 'hidden';
+      } else {
+        p.section = (p.orig_section && p.orig_section !== 'hidden') ? p.orig_section : 'dental';
+      }
     }
     if (productMap[pid]) {
       productMap[pid].is_hidden_from_website = data.is_hidden_from_website;
       productMap[pid].is_hidden = data.is_hidden_from_website;
       productMap[pid].hidden = data.is_hidden_from_website;
-      if (data.is_hidden_from_website) productMap[pid].section = 'hidden';
+      if (data.is_hidden_from_website) {
+        productMap[pid].section = 'hidden';
+      } else {
+        productMap[pid].section = (productMap[pid].orig_section && productMap[pid].orig_section !== 'hidden') ? productMap[pid].orig_section : 'dental';
+      }
     }
     
+    updateCounters();
     applyFilters();
   } catch (err) {
     alert('❌ خطأ: ' + err.message);
