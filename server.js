@@ -662,44 +662,32 @@ app.get(`${BASE}/api/products`, async (req, res) => {
     res.set('Pragma', 'no-cache');
     res.set('Expires', '0');
 
-    const origin = req.headers.origin || req.headers.referer || '';
-    const isWebsiteOrigin = origin.includes('dentrust.site') || req.query.for_website === 'true';
+    // POS requests have an authenticated manager/cashier session or x-pos-app header
+    const isPosRequest = !!(req.session && req.session.user) || req.headers['x-pos-app'] === '1' || req.query.manage === 'true';
 
     const q = (req.query.q || '').trim();
-    let rows = [];
 
-    if (isWebsiteOrigin) {
-      // Public website callers: query products excluding hidden items
-      const hideCond = `(COALESCE(is_hidden_from_website, false) = false) AND (section != 'hidden' OR section IS NULL)`;
-      if (q) {
-        const { rows: r } = await posDb.query(
-          `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE (barcode=$1 OR product_name ILIKE $2) AND ${hideCond} ORDER BY product_name`,
-          [q, `%${q}%`]
-        ).catch(() => ({ rows: [] }));
-        rows = r;
-      } else {
-        const { rows: r } = await posDb.query(
-          `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE ${hideCond} ORDER BY product_name`
-        ).catch(() => ({ rows: [] }));
-        rows = r;
-      }
-    } else {
+    if (isPosRequest && req.query.for_website !== 'true') {
       // POS callers: ALWAYS return ALL products so inventory dashboard can display and manage them
-      if (q) {
-        const { rows: r } = await posDb.query(
-          `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`,
-          [q, `%${q}%`]
-        ).catch(() => ({ rows: [] }));
-        rows = r;
-      } else {
-        const { rows: r } = await posDb.query(
-          `SELECT ${PRODUCT_LIST_COLS} FROM products ORDER BY product_name`
-        ).catch(() => ({ rows: [] }));
-        rows = r;
-      }
+      const { rows } = await posDb.query(
+        q
+          ? `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`
+          : `SELECT ${PRODUCT_LIST_COLS} FROM products ORDER BY product_name`,
+        q ? [q, `%${q}%`] : []
+      ).catch(() => ({ rows: [] }));
+      return res.json(rows || []);
     }
 
-    res.json(rows || []);
+    // Public website callers (dentrust.site and all customers): ALWAYS FILTER OUT HIDDEN PRODUCTS
+    const hideCond = `(COALESCE(is_hidden_from_website, false) = false) AND (section != 'hidden' OR section IS NULL)`;
+    const { rows } = await posDb.query(
+      q
+        ? `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE (barcode=$1 OR product_name ILIKE $2) AND ${hideCond} ORDER BY product_name`
+        : `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE ${hideCond} ORDER BY product_name`,
+      q ? [q, `%${q}%`] : []
+    ).catch(() => ({ rows: [] }));
+
+    return res.json(rows || []);
   } catch (err) {
     console.error('GET /api/products error:', err);
     res.json([]);

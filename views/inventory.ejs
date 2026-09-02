@@ -286,7 +286,7 @@ const productMap = {};
 async function loadProducts() {
   let lowStockCount = 0;
   try {
-    const res = await fetch(`${BASE}/api/products`);
+    const res = await fetch(`${BASE}/api/products`, { headers: { 'x-pos-app': '1' } });
     const data = await res.json();
     allProducts = Array.isArray(data) ? data : (data.products || []);
     allProducts.forEach(p => productMap[p.id] = p);
