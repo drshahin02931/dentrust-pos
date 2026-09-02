@@ -663,31 +663,38 @@ app.get(`${BASE}/api/products`, async (req, res) => {
     await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await posDb.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
 
+    // If authenticated POS session or explicitly requested via internal header, return all products.
+    // Otherwise (public website / visitors), filter out hidden products.
+    const isPosRequest = !!(req.session && req.session.user);
+    const hideCond = `(COALESCE(is_hidden_from_website, is_hidden, hidden, false) = false) AND (section != 'hidden' OR section IS NULL)`;
+    const websiteFilter = isPosRequest ? '' : `AND ${hideCond}`;
+    const whereClause = isPosRequest ? '' : `WHERE ${hideCond}`;
+
     const q = (req.query.q || '').trim();
     let rows;
     try {
       if (q) {
         ({ rows } = await posDb.query(
-          `SELECT ${PRODUCT_LIST_COLS} FROM public.products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`,
+          `SELECT ${PRODUCT_LIST_COLS} FROM public.products WHERE (barcode=$1 OR product_name ILIKE $2) ${websiteFilter} ORDER BY product_name`,
           [q, `%${q}%`]
         ));
       } else {
-        ({ rows } = await posDb.query(`SELECT ${PRODUCT_LIST_COLS} FROM public.products ORDER BY product_name`));
+        ({ rows } = await posDb.query(`SELECT ${PRODUCT_LIST_COLS} FROM public.products ${whereClause} ORDER BY product_name`));
       }
     } catch (pubErr) {
       try {
         if (q) {
           ({ rows } = await posDb.query(
-            `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`,
+            `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE (barcode=$1 OR product_name ILIKE $2) ${websiteFilter} ORDER BY product_name`,
             [q, `%${q}%`]
           ));
         } else {
-          ({ rows } = await posDb.query(`SELECT ${PRODUCT_LIST_COLS} FROM products ORDER BY product_name`));
+          ({ rows } = await posDb.query(`SELECT ${PRODUCT_LIST_COLS} FROM products ${whereClause} ORDER BY product_name`));
         }
       } catch (viewErr) {
         const fallbackQuery = q
-          ? `SELECT * FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`
-          : `SELECT * FROM products ORDER BY product_name`;
+          ? `SELECT * FROM products WHERE (barcode=$1 OR product_name ILIKE $2) ${websiteFilter} ORDER BY product_name`
+          : `SELECT * FROM products ${whereClause} ORDER BY product_name`;
         const resObj = await posDb.query(fallbackQuery, q ? [q, `%${q}%`] : []);
         rows = resObj.rows || [];
       }
