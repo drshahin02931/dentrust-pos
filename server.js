@@ -658,47 +658,43 @@ const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, 
 
 app.get(`${BASE}/api/products`, async (req, res) => {
   try {
-    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
-    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
-    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
-    await posDb.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
-
-    // If authenticated POS session or explicitly requested via internal header, return all products.
-    // Otherwise (public website / visitors), filter out hidden products.
-    const isPosRequest = !!(req.session && req.session.user);
-    const hideCond = `(COALESCE(is_hidden_from_website, is_hidden, hidden, false) = false) AND (section != 'hidden' OR section IS NULL)`;
-    const websiteFilter = isPosRequest ? '' : `AND ${hideCond}`;
-    const whereClause = isPosRequest ? '' : `WHERE ${hideCond}`;
+    const origin = req.headers.origin || req.headers.referer || '';
+    const isWebsiteOrigin = origin.includes('dentrust.site') || req.query.for_website === 'true';
 
     const q = (req.query.q || '').trim();
-    let rows;
-    try {
+    let rows = [];
+
+    if (isWebsiteOrigin) {
+      // Public website callers: query products excluding hidden items
+      const hideCond = `(COALESCE(is_hidden_from_website, is_hidden, hidden, false) = false) AND (section != 'hidden' OR section IS NULL)`;
       if (q) {
-        ({ rows } = await posDb.query(
-          `SELECT ${PRODUCT_LIST_COLS} FROM public.products WHERE (barcode=$1 OR product_name ILIKE $2) ${websiteFilter} ORDER BY product_name`,
+        const { rows: r } = await posDb.query(
+          `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE (barcode=$1 OR product_name ILIKE $2) AND ${hideCond} ORDER BY product_name`,
           [q, `%${q}%`]
-        ));
+        ).catch(() => ({ rows: [] }));
+        rows = r;
       } else {
-        ({ rows } = await posDb.query(`SELECT ${PRODUCT_LIST_COLS} FROM public.products ${whereClause} ORDER BY product_name`));
+        const { rows: r } = await posDb.query(
+          `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE ${hideCond} ORDER BY product_name`
+        ).catch(() => ({ rows: [] }));
+        rows = r;
       }
-    } catch (pubErr) {
-      try {
-        if (q) {
-          ({ rows } = await posDb.query(
-            `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE (barcode=$1 OR product_name ILIKE $2) ${websiteFilter} ORDER BY product_name`,
-            [q, `%${q}%`]
-          ));
-        } else {
-          ({ rows } = await posDb.query(`SELECT ${PRODUCT_LIST_COLS} FROM products ${whereClause} ORDER BY product_name`));
-        }
-      } catch (viewErr) {
-        const fallbackQuery = q
-          ? `SELECT * FROM products WHERE (barcode=$1 OR product_name ILIKE $2) ${websiteFilter} ORDER BY product_name`
-          : `SELECT * FROM products ${whereClause} ORDER BY product_name`;
-        const resObj = await posDb.query(fallbackQuery, q ? [q, `%${q}%`] : []);
-        rows = resObj.rows || [];
+    } else {
+      // POS callers: ALWAYS return ALL products so inventory dashboard can display and manage them
+      if (q) {
+        const { rows: r } = await posDb.query(
+          `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`,
+          [q, `%${q}%`]
+        ).catch(() => ({ rows: [] }));
+        rows = r;
+      } else {
+        const { rows: r } = await posDb.query(
+          `SELECT ${PRODUCT_LIST_COLS} FROM products ORDER BY product_name`
+        ).catch(() => ({ rows: [] }));
+        rows = r;
       }
     }
+
     res.json(rows || []);
   } catch (err) {
     console.error('GET /api/products error:', err);
