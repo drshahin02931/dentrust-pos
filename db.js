@@ -659,7 +659,10 @@ async function initDb() {
     // 6. Create pos_data.products VIEW + INSTEAD OF triggers
     //    These make the POS see public.products as if it were pos_data.products.
     //    All existing server.js product queries work unchanged.
-    try { await client.query(PRODUCTS_VIEW_SQL); } catch (e) {
+    try {
+      await client.query('DROP VIEW IF EXISTS pos_data.products CASCADE').catch(() => {});
+      await client.query(PRODUCTS_VIEW_SQL);
+    } catch (e) {
       // If a real table named products exists in pos_data, rename it first
       if (e.message && e.message.includes('already exists')) {
         try {
