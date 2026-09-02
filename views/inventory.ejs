@@ -554,10 +554,18 @@ function editProduct(id) {
                 <span class="font-bold text-gray-800">${isActive ? 'شحنة نشطة' : 'شحنة تالية'}</span>
                 ${optBadge}
               </div>
-              <div class="flex items-center gap-3 font-mono text-[11px]">
-                <span class="text-blue-700 font-bold">الكمية: ${b.remaining_quantity}</span>
-                <span class="text-amber-800 font-bold">التكلفة: ${parseFloat(b.cost_price||0).toFixed(2)} ج</span>
-                ${b.expiry_date ? `<span class="text-gray-500">صلاحية: ${b.expiry_date}</span>` : ''}
+              <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2.5 font-mono text-[11px]">
+                  <span class="text-blue-700 font-bold">الكمية: ${b.remaining_quantity}</span>
+                  <span class="text-amber-800 font-bold">التكلفة: ${parseFloat(b.cost_price||0).toFixed(2)} ج</span>
+                  ${b.expiry_date ? `<span class="text-gray-500">صلاحية: ${b.expiry_date}</span>` : ''}
+                </div>
+                ${b.id > 0 ? `
+                  <button type="button" onclick="removeCostBatch(${p.id}, ${b.id}, ${b.remaining_quantity}, '${(b.selected_option||'').replace(/'/g, "\\'")}')"
+                    class="text-red-500 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-lg text-xs font-bold transition-colors border border-red-200 flex items-center gap-1" title="حذف هذه الشحنة وإرجاعها للمستودع">
+                    <span>🗑️</span> حذف الشحنة
+                  </button>
+                ` : ''}
               </div>
             </div>
           `;
@@ -726,6 +734,25 @@ async function toggleWebsiteVisibility(pid, isCurrentlyHidden) {
     if (p) p.is_hidden_from_website = data.is_hidden_from_website;
     
     applyFilters();
+  } catch (err) {
+    alert('❌ خطأ: ' + err.message);
+  }
+}
+
+async function removeCostBatch(pid, bid, qty, opt) {
+  const isReturn = confirm(`هل أنت متأكد من حذف هذه الشحنة (${qty} قطعة${opt ? ' لمقاس ' + opt : ''}) من المحل؟\n\nاضغط "موافق (OK)" لإرجاعها إلى المستودع وإلغائها من المحل.\nاضغط "إلغاء (Cancel)" للتراجع.`);
+  if (!isReturn) return;
+
+  try {
+    const res = await fetch(`${BASE}/api/products/${pid}/cost-batches/${bid}?return_to_wh=true`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'فشل حذف الشحنة');
+    
+    alert('✅ تم حذف الشحنة من المحل وإرجاع كميتها للمستودع بنجاح!');
+    closeModal();
+    loadProducts();
   } catch (err) {
     alert('❌ خطأ: ' + err.message);
   }

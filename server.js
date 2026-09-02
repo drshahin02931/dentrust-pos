@@ -5294,6 +5294,70 @@ app.get(`${BASE}/api/products/:pid/cost-batches`, async (req, res, next) => {
   }
 });
 
+// DELETE /api/products/:pid/cost-batches/:bid — remove or return batch to warehouse
+app.delete(`${BASE}/api/products/:pid/cost-batches/:bid`, async (req, res) => {
+  const pid = parseInt(req.params.pid, 10);
+  const bid = parseInt(req.params.bid, 10);
+  const returnToWh = req.query.return_to_wh === 'true';
+
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [batch] } = await client.query('SELECT * FROM product_cost_batches WHERE id=$1 AND product_id=$2', [bid, pid]);
+    if (!batch) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'الشحنة غير موجودة' });
+    }
+
+    const remQty = parseInt(batch.remaining_quantity || 0, 10);
+
+    // 1. Deduct from store product
+    const { rows: [prod] } = await client.query('SELECT * FROM products WHERE id=$1', [pid]);
+    if (prod) {
+      if (batch.selected_option) {
+        let scbv = prod.checkbox_values ? (typeof prod.checkbox_values === 'string' ? JSON.parse(prod.checkbox_values) : { ...prod.checkbox_values }) : {};
+        const { newCbv } = updateCbvStock(scbv, batch.selected_option, -remQty);
+        const totalCb = sumCbvStock(newCbv);
+        await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(newCbv), pid]);
+      } else {
+        await client.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [remQty, pid]);
+      }
+    }
+
+    // 2. Return to warehouse if requested
+    if (returnToWh && remQty > 0) {
+      const { rows: [whItem] } = await client.query('SELECT * FROM warehouse_items WHERE product_id=$1 LIMIT 1', [pid]);
+      if (whItem) {
+        if (batch.selected_option && whItem.checkbox_values) {
+          let wcbv = typeof whItem.checkbox_values === 'string' ? JSON.parse(whItem.checkbox_values) : { ...whItem.checkbox_values };
+          const { newCbv } = updateCbvStock(wcbv, batch.selected_option, remQty);
+          const totalCb = sumCbvStock(newCbv);
+          await client.query('UPDATE warehouse_items SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(newCbv), whItem.id]);
+        } else {
+          await client.query('UPDATE warehouse_items SET quantity = quantity + $1 WHERE id=$2', [remQty, whItem.id]);
+        }
+
+        // Restore into warehouse_batches
+        await client.query(
+          `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [whItem.id, pid, `إرجاع من المحل #${Date.now().toString().slice(-4)}`, remQty, batch.cost_price, batch.expiry_date, 'إرجاع شحنة ملغاة من المحل']
+        ).catch(() => {});
+      }
+    }
+
+    // 3. Delete from product_cost_batches
+    await client.query('DELETE FROM product_cost_batches WHERE id=$1', [bid]);
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'خطأ أثناء حذف الشحنة: ' + err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/warehouse/products — add new warehouse item or add a new batch
 app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
