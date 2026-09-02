@@ -972,33 +972,33 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
     const newState = !isCurrentHidden;
 
     if (newState) {
-      // HIDE PRODUCT: set section='hidden', is_hidden=true, hidden=true, is_hidden_from_website=true
+      // HIDE PRODUCT: save original section, set section='hidden', is_hidden=true
+      const origSec = (p.section && p.section !== 'hidden') ? p.section : ((p.orig_section && p.orig_section !== 'hidden') ? p.orig_section : 'dental');
+
       await posDb.query(
         `UPDATE public.products SET 
-          orig_section = COALESCE(NULLIF(section, 'hidden'), orig_section, 'dental'),
+          orig_section = $1,
           section = 'hidden',
           is_hidden = true,
           hidden = true,
-          is_hidden_from_website = true,
-          is_active = false
-         WHERE id = $1`,
-        [pid]
+          is_hidden_from_website = true
+         WHERE id = $2`,
+        [origSec, pid]
       ).catch(() => {});
 
       await dentrustDb.query(
         `UPDATE products SET 
-          orig_section = COALESCE(NULLIF(section, 'hidden'), orig_section, 'dental'),
+          orig_section = $1,
           section = 'hidden',
           is_hidden = true,
           hidden = true,
-          is_hidden_from_website = true,
-          is_active = false
-         WHERE id = $1 OR LOWER(TRIM(name)) = LOWER(TRIM($2))`,
-        [p.dentrust_id || pid, p.product_name || p.name || '']
+          is_hidden_from_website = true
+         WHERE id = $2 OR LOWER(TRIM(name)) = LOWER(TRIM($3))`,
+        [origSec, p.dentrust_id || pid, p.product_name || p.name || '']
       ).catch(() => {});
 
       await updateSupabaseProductRest(p.dentrust_id || pid, {
-        orig_section: p.section || 'dental',
+        orig_section: origSec,
         section: 'hidden',
         is_hidden: true,
         hidden: true,
@@ -1006,28 +1006,35 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
       });
     } else {
       // UNHIDE PRODUCT: restore section from orig_section, is_hidden=false
+      const restoredSec = (p.orig_section && p.orig_section !== 'hidden')
+        ? p.orig_section
+        : ((p.section && p.section !== 'hidden') ? p.section : 'dental');
+
       await posDb.query(
         `UPDATE public.products SET 
-          section = COALESCE(NULLIF(orig_section, 'hidden'), 'dental'),
+          section = $1,
+          orig_section = $1,
           is_hidden = false,
           hidden = false,
           is_hidden_from_website = false
-         WHERE id = $1`,
-        [pid]
+         WHERE id = $2`,
+        [restoredSec, pid]
       ).catch(() => {});
 
       await dentrustDb.query(
         `UPDATE products SET 
-          section = COALESCE(NULLIF(orig_section, 'hidden'), 'dental'),
+          section = $1,
+          orig_section = $1,
           is_hidden = false,
           hidden = false,
           is_hidden_from_website = false
-         WHERE id = $1 OR LOWER(TRIM(name)) = LOWER(TRIM($2))`,
-        [p.dentrust_id || pid, p.product_name || p.name || '']
+         WHERE id = $2 OR LOWER(TRIM(name)) = LOWER(TRIM($3))`,
+        [restoredSec, p.dentrust_id || pid, p.product_name || p.name || '']
       ).catch(() => {});
 
       await updateSupabaseProductRest(p.dentrust_id || pid, {
-        section: p.orig_section || p.section || 'dental',
+        section: restoredSec,
+        orig_section: restoredSec,
         is_hidden: false,
         hidden: false,
         is_hidden_from_website: false
