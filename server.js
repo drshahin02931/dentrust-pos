@@ -856,6 +856,25 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
       });
     }
 
+    // Auto-sync product_cost_batches with current stock and variant levels
+    if (qty <= 0) {
+      await posDb.query('UPDATE product_cost_batches SET remaining_quantity = 0 WHERE product_id = $1', [pid]).catch(() => {});
+    } else if (d.checkbox_values) {
+      try {
+        const cbv = typeof d.checkbox_values === 'string' ? JSON.parse(d.checkbox_values) : d.checkbox_values;
+        for (const [key, val] of Object.entries(cbv)) {
+          const vStock = (typeof val === 'object' && val !== null && val.stock != null) ? parseInt(val.stock, 10) : (typeof val === 'number' ? val : 0);
+          if (vStock <= 0) {
+            const shortKey = key.includes('::') ? key.split('::').pop() : key;
+            await posDb.query(
+              `UPDATE product_cost_batches SET remaining_quantity = 0 WHERE product_id = $1 AND (selected_option = $2 OR selected_option = $3)`,
+              [pid, key, shortKey]
+            ).catch(() => {});
+          }
+        }
+      } catch (_) {}
+    }
+
     try {
       await syncUpdateProductToDentrust(pid, d);
     } catch (syncErr) {
@@ -5371,26 +5390,50 @@ app.get(`${BASE}/api/products/:pid/cost-batches`, async (req, res, next) => {
     )`).catch(() => {});
     await posDb.query(`ALTER TABLE product_cost_batches ADD COLUMN IF NOT EXISTS selected_option TEXT`).catch(() => {});
 
+    // Fetch product's current stock and checkbox_values
+    const { rows: [prod] } = await posDb.query('SELECT quantity, purchase_price, expiry_date, checkbox_values FROM products WHERE id=$1', [pid]).catch(() => ({ rows: [] }));
+    const currentTotalQty = parseInt(prod?.quantity || 0, 10);
+
+    // If current total stock in shop is 0, auto-zero out all remaining batches
+    if (currentTotalQty <= 0) {
+      await posDb.query('UPDATE product_cost_batches SET remaining_quantity = 0 WHERE product_id = $1', [pid]).catch(() => {});
+      return res.json({ batches: [] });
+    }
+
+    // If product has checkbox_values, zero out batches for variants that currently have 0 stock
+    if (prod?.checkbox_values) {
+      try {
+        const cbv = typeof prod.checkbox_values === 'string' ? JSON.parse(prod.checkbox_values) : prod.checkbox_values;
+        for (const [key, val] of Object.entries(cbv)) {
+          const vStock = (typeof val === 'object' && val !== null && val.stock != null) ? parseInt(val.stock, 10) : (typeof val === 'number' ? val : 0);
+          if (vStock <= 0) {
+            const shortKey = key.includes('::') ? key.split('::').pop() : key;
+            await posDb.query(
+              `UPDATE product_cost_batches SET remaining_quantity = 0 WHERE product_id = $1 AND (selected_option = $2 OR selected_option = $3)`,
+              [pid, key, shortKey]
+            ).catch(() => {});
+          }
+        }
+      } catch (_) {}
+    }
+
     let { rows } = await posDb.query(
       `SELECT * FROM product_cost_batches WHERE product_id = $1 AND remaining_quantity > 0 ORDER BY id ASC`,
       [pid]
     ).catch(() => ({ rows: [] }));
 
     // If no batches exist yet, but shop product has existing stock, show initial active batch
-    if (!rows || rows.length === 0) {
-      const { rows: [p] } = await posDb.query('SELECT quantity, purchase_price, expiry_date, checkbox_values FROM products WHERE id=$1', [pid]).catch(() => ({ rows: [] }));
-      if (p && parseInt(p.quantity || 0) > 0) {
-        rows = [{
-          id: 0,
-          product_id: pid,
-          selected_option: null,
-          quantity: parseInt(p.quantity),
-          remaining_quantity: parseInt(p.quantity),
-          cost_price: parseFloat(p.purchase_price || 0),
-          expiry_date: p.expiry_date || null,
-          source: 'initial_stock'
-        }];
-      }
+    if ((!rows || rows.length === 0) && currentTotalQty > 0) {
+      rows = [{
+        id: 0,
+        product_id: pid,
+        selected_option: null,
+        quantity: currentTotalQty,
+        remaining_quantity: currentTotalQty,
+        cost_price: parseFloat(prod?.purchase_price || 0),
+        expiry_date: prod?.expiry_date || null,
+        source: 'initial_stock'
+      }];
     }
 
     res.json({ batches: rows || [] });
