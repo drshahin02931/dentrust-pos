@@ -800,31 +800,31 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
   const pid = parseInt(req.params.pid, 10);
   const d = req.body;
   try {
+    await posDb.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
     const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
     const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
-    // الصور لا تُعدَّل من POS — الإضافة/التعديل من لوحة التحكم فقط
-    // purchase_price: COALESCE يحمي القيمة الموجودة لو الجديدة null أو صفر
+    const isHidden = d.is_hidden_from_website === true || d.is_hidden_from_website === 'true';
     const params = [
       d.barcode || null, d.product_name, d.quantity || 0,
       d.purchase_price ?? null, d.sale_price || 0,
       d.expiry_date || null, d.category || null,
       parseInt(d.min_stock || 0, 10), d.description || null,
-      variantsJson, d.section || 'dental', cbJson, pid,
+      variantsJson, d.section || 'dental', cbJson, isHidden, pid,
     ];
     const updateQuery = `UPDATE products SET barcode=$1, product_name=$2, quantity=$3,
       purchase_price=COALESCE(NULLIF($4::numeric,0), purchase_price), sale_price=$5,
       expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
-      section=$11, checkbox_values=$12 WHERE id=$13`;
+      section=$11, checkbox_values=$12, is_hidden_from_website=$13 WHERE id=$14`;
     await posDb.query(updateQuery, params);
     try {
       await syncUpdateProductToDentrust(pid, d);
     } catch (syncErr) {
-      console.error('[SYNC ERROR] syncUpdateProductToDentrust failed for pid', pid, ':', syncErr.message, syncErr.stack);
+      console.error('[SYNC ERROR] syncUpdateProductToDentrust failed for pid', pid, ':', syncErr.message);
     }
-    res.json({ ok: true });
+    res.json({ ok: true, is_hidden_from_website: isHidden });
   } catch (err) {
-    console.error('[PRODUCT UPDATE ERROR] pid:', pid, 'body:', JSON.stringify(d), 'error:', err.message, err.stack);
-    res.status(500).json({ error: 'خطأ داخلي' });
+    console.error('[PRODUCT UPDATE ERROR] pid:', pid, 'error:', err.message);
+    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
   }
 });
 
@@ -2667,19 +2667,38 @@ async function syncNewProductToDentrust(posId, d) {
 }
 
 async function syncUpdateProductToDentrust(pid, d) {
-  const { rows: [row] } = await posDb.query('SELECT dentrust_id FROM products WHERE id=$1', [pid]);
-  if (!row?.dentrust_id) return;
+  let targetWebId = null;
+  const { rows: [row] } = await posDb.query('SELECT dentrust_id, product_name, barcode FROM products WHERE id=$1', [pid]);
+  targetWebId = row?.dentrust_id;
+  
   const client = await dentrustDb.connect();
   try {
+    if (!targetWebId && row?.product_name) {
+      const { rows: [found] } = await client.query(
+        'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) OR (barcode IS NOT NULL AND barcode = $2 AND barcode != \'\') LIMIT 1',
+        [row.product_name, row.barcode || '']
+      ).catch(() => ({ rows: [] }));
+      if (found) {
+        targetWebId = found.id;
+        await posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2', [targetWebId, pid]).catch(() => {});
+      }
+    }
+    if (!targetWebId) return;
+
     const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
     const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
-    // الصور لا تُعدَّل من POS — الإضافة/التعديل من لوحة التحكم فقط
-    // purchase_price: COALESCE يحمي القيمة الموجودة لو الجديدة null
+    const isHidden = d.is_hidden_from_website === true || d.is_hidden_from_website === 'true';
+
+    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+
     await client.query(
-      'UPDATE products SET name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=COALESCE($5, purchase_price), variants=$6, section=$7, checkbox_values=$8 WHERE id=$9',
+      'UPDATE products SET name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=COALESCE($5, purchase_price), variants=$6, section=$7, checkbox_values=$8, is_hidden=$9, hidden=$9, is_hidden_from_website=$9 WHERE id=$10',
       [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
        d.purchase_price ? String(d.purchase_price) : null, variantsJson,
-       d.section || 'dental', cbJson, row.dentrust_id]);
+       d.section || 'dental', cbJson, isHidden, targetWebId]);
+    await client.query('UPDATE products SET is_active=$1 WHERE id=$2', [!isHidden, targetWebId]).catch(() => {});
   } finally { client.release(); }
 }
 
