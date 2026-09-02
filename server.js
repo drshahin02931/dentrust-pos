@@ -5380,6 +5380,57 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
   }
 });
 
+// PUT /api/warehouse/products/:id — edit warehouse item details, stock, or remove/modify variants
+app.put(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  const id = parseInt(req.params.id, 10);
+  try {
+    const { product_name, barcode, category, cost_price, sale_price, quantity, checkbox_values_json, variants_json, description, expiry_date, notes } = req.body;
+    const qty = parseInt(quantity || 0, 10);
+    const cost = parseFloat(cost_price || 0);
+    const price = parseFloat(sale_price || 0);
+    const finalCbv = checkbox_values_json !== undefined ? (typeof checkbox_values_json === 'string' ? checkbox_values_json : JSON.stringify(checkbox_values_json)) : null;
+    const finalVars = variants_json !== undefined ? (typeof variants_json === 'string' ? variants_json : JSON.stringify(variants_json)) : null;
+
+    const { rows: [upd] } = await posDb.query(
+      `UPDATE warehouse_items
+       SET product_name = COALESCE(NULLIF($1, ''), product_name),
+           barcode = $2,
+           category = COALESCE(NULLIF($3, ''), 'عام'),
+           cost_price = $4,
+           sale_price = $5,
+           quantity = $6,
+           checkbox_values = $7,
+           variants = $8,
+           description = $9,
+           expiry_date = $10,
+           notes = $11,
+           updated_at = NOW()
+       WHERE id = $12 RETURNING *`,
+      [product_name?.trim(), barcode || '', category || 'عام', cost, price, qty, finalCbv, finalVars, description || '', expiry_date || '', notes || '', id]
+    );
+
+    if (!upd) return res.status(404).json({ error: 'الصنف غير موجود بالمستودع' });
+    res.json({ ok: true, item: upd });
+  } catch (err) {
+    console.error('Update warehouse item error:', err);
+    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
+  }
+});
+
+// DELETE /api/warehouse/products/:id — delete item from warehouse
+app.delete(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  const id = parseInt(req.params.id, 10);
+  try {
+    await posDb.query('DELETE FROM warehouse_batches WHERE warehouse_item_id=$1', [id]).catch(() => {});
+    await posDb.query('DELETE FROM warehouse_items WHERE id=$1', [id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
+  }
+});
+
 // POST /api/warehouse/transfer — transfer quantity/variant from warehouse to store
 app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
