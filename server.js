@@ -900,23 +900,26 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
   const pid = parseInt(req.params.pid, 10);
   try {
     await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await posDb.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
     
-    // Fetch product details (try public.products then products)
+    // Fetch product details safely with SELECT *
     let p = null;
     try {
-      const { rows } = await posDb.query('SELECT is_hidden_from_website, dentrust_id, product_name, barcode FROM public.products WHERE id=$1', [pid]);
+      const { rows } = await posDb.query('SELECT * FROM public.products WHERE id=$1', [pid]);
       p = rows[0];
     } catch (_) {
-      const { rows } = await posDb.query('SELECT is_hidden_from_website, dentrust_id, product_name, barcode FROM products WHERE id=$1', [pid]);
+      const { rows } = await posDb.query('SELECT * FROM products WHERE id=$1', [pid]);
       p = rows[0];
     }
     if (!p) return res.status(404).json({ error: 'المنتج غير موجود' });
 
-    const newState = !p.is_hidden_from_website;
+    const isCurrentHidden = p.is_hidden_from_website === true || p.is_hidden === true || p.hidden === true;
+    const newState = !isCurrentHidden;
     
     // Update local database (try both public.products and products)
-    await posDb.query('UPDATE public.products SET is_hidden_from_website=$1 WHERE id=$2', [newState, pid])
+    await posDb.query('UPDATE public.products SET is_hidden_from_website=$1, is_hidden=$1, hidden=$1 WHERE id=$2', [newState, pid])
       .catch(async () => {
         await posDb.query('UPDATE products SET is_hidden_from_website=$1 WHERE id=$2', [newState, pid]).catch(() => {});
       });
@@ -934,7 +937,7 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
           if (!targetWebId) {
             const { rows: [found] } = await client.query(
               'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) OR (barcode IS NOT NULL AND barcode = $2 AND barcode != \'\') LIMIT 1',
-              [p.product_name, p.barcode || '']
+              [p.product_name || '', p.barcode || '']
             ).catch(() => ({ rows: [] }));
             if (found) {
               targetWebId = found.id;
