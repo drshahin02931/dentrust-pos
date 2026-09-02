@@ -5636,8 +5636,34 @@ async function main() {
     await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_items (
       id SERIAL PRIMARY KEY, product_id INTEGER, product_name TEXT NOT NULL,
       barcode TEXT, category TEXT, cost_price NUMERIC DEFAULT 0, sale_price NUMERIC DEFAULT 0,
-      quantity INTEGER DEFAULT 0, variants JSONB, checkbox_values JSONB, notes TEXT,
+      quantity INTEGER DEFAULT 0, variants JSONB, checkbox_values JSONB, description TEXT DEFAULT '', expiry_date TEXT DEFAULT '', notes TEXT,
       created_at TEXT DEFAULT (NOW()::text), updated_at TEXT DEFAULT (NOW()::text)
+    )`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS expiry_date TEXT DEFAULT ''`).catch(() => {});
+
+    await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_batches (
+      id SERIAL PRIMARY KEY,
+      warehouse_item_id INTEGER REFERENCES warehouse_items(id) ON DELETE CASCADE,
+      product_id INTEGER,
+      batch_number TEXT,
+      quantity INTEGER NOT NULL DEFAULT 0,
+      cost_price NUMERIC DEFAULT 0,
+      expiry_date TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+
+    await posDb.query(`CREATE TABLE IF NOT EXISTS product_cost_batches (
+      id SERIAL PRIMARY KEY,
+      product_id INTEGER NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 0,
+      remaining_quantity INTEGER NOT NULL DEFAULT 0,
+      cost_price NUMERIC DEFAULT 0,
+      expiry_date TEXT,
+      source TEXT DEFAULT 'warehouse_transfer',
+      reference_id INTEGER,
+      created_at TIMESTAMPTZ DEFAULT NOW()
     )`).catch(() => {});
 
     await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_transfers (

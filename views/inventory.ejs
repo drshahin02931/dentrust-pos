@@ -147,6 +147,32 @@
           <label class="text-xs font-medium text-gray-600">الحد الأدنى للمخزون</label>
           <input id="f-min-stock" type="number" min="0" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="0"/>
         </div>
+
+        <!-- Warehouse Quick Action & Batches Preview -->
+        <div id="whQuickSection" class="col-span-2 hidden bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-lg">🏢</span>
+              <div>
+                <span class="text-xs font-bold text-gray-800 block">المستودع الرئيسي والشحنات:</span>
+                <span id="whQuickStockText" class="text-[11px] text-gray-500">المتاح بالمستودع: <strong id="whQuickAvailQty" class="text-blue-700">0</strong> قطعة</span>
+              </div>
+            </div>
+            <button type="button" onclick="openQuickWhTransfer()"
+              class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5">
+              <span>🚚</span> سحب من المستودع
+            </button>
+          </div>
+          
+          <!-- Batches Table Preview -->
+          <div id="whBatchesContainer" class="hidden space-y-1.5 border-t border-blue-200/60 pt-2.5">
+            <div class="text-[11px] font-bold text-gray-700 flex items-center justify-between">
+              <span>📦 تفصيل شحنات التكلفة وتواريخ الصلاحية:</span>
+              <span class="text-[10px] text-gray-400 font-normal">نظام FIFO التلقائي</span>
+            </div>
+            <div id="whBatchesList" class="space-y-1.5 max-h-32 overflow-y-auto"></div>
+          </div>
+        </div>
         <div class="col-span-2">
           <label class="text-xs font-medium text-gray-600">الفئة</label>
           <input id="f-category" autocomplete="off"
@@ -424,6 +450,7 @@ function openModal() {
   document.getElementById("editId").value = "";
   document.getElementById("productForm").reset();
   document.getElementById("modalError").classList.add("hidden");
+  document.getElementById("whQuickSection").classList.add("hidden");
   resetPhotos();
   resetVariants();
   cbReset();
@@ -435,9 +462,13 @@ function openModal() {
   document.getElementById("modal").classList.remove("hidden");
 }
 
+let _currentEditProd = null;
+let _whItemForEdit = null;
+
 function editProduct(id) {
   const p = productMap[id];
   if (!p) { alert("لم يتم العثور على المنتج، يرجى تحديث الصفحة والمحاولة مجدداً"); return; }
+  _currentEditProd = p;
   document.getElementById("modalTitle").textContent = "تعديل المنتج";
   document.getElementById("editId").value = p.id;
   document.getElementById("f-name").value = p.product_name;
@@ -450,6 +481,55 @@ function editProduct(id) {
   document.getElementById("f-min-stock").value = p.min_stock || 0;
   document.getElementById("f-description").value = p.description || "";
   document.getElementById("modalError").classList.add("hidden");
+
+  // Load Warehouse Quick Info & Cost Batches
+  const whSec = document.getElementById("whQuickSection");
+  whSec.classList.remove("hidden");
+  document.getElementById("whQuickAvailQty").textContent = "جارٍ الفحص...";
+  
+  fetch(`${BASE}/api/warehouse/products`)
+    .then(r => r.json())
+    .then(data => {
+      const whItem = (data.items || []).find(w => w.product_id === p.id || (w.product_name || '').toLowerCase() === p.product_name.toLowerCase());
+      _whItemForEdit = whItem;
+      const whQty = whItem ? parseInt(whItem.quantity || 0) : 0;
+      document.getElementById("whQuickAvailQty").textContent = whQty;
+    }).catch(() => {
+      document.getElementById("whQuickAvailQty").textContent = "0";
+    });
+
+  // Load Cost Batches Breakdown
+  const bContainer = document.getElementById("whBatchesContainer");
+  const bList = document.getElementById("whBatchesList");
+  fetch(`${BASE}/api/products/${p.id}/cost-batches`)
+    .then(r => r.json())
+    .then(data => {
+      const batches = data.batches || [];
+      if (!batches.length) {
+        bContainer.classList.add("hidden");
+      } else {
+        bContainer.classList.remove("hidden");
+        bList.innerHTML = batches.map((b, idx) => {
+          const isActive = idx === 0;
+          return `
+            <div class="flex items-center justify-between text-xs p-2 rounded-xl border ${isActive ? 'bg-emerald-50/80 border-emerald-200' : 'bg-white border-gray-200'}">
+              <div class="flex items-center gap-1.5">
+                <span>${isActive ? '🟢' : '⏳'}</span>
+                <span class="font-bold text-gray-800">${isActive ? 'شحنة نشطة (يصرف منها أولاً)' : 'شحنة تالية (في الانتظار)'}</span>
+              </div>
+              <div class="flex items-center gap-3 font-mono text-[11px]">
+                <span class="text-blue-700 font-bold">الكمية: ${b.remaining_quantity}</span>
+                <span class="text-amber-800 font-bold">التكلفة: ${parseFloat(b.cost_price||0).toFixed(2)} ج</span>
+                ${b.expiry_date ? `<span class="text-gray-500">صلاحية: ${b.expiry_date}</span>` : ''}
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+    }).catch(() => {
+      bContainer.classList.add("hidden");
+    });
+
   // جيب الصور للعرض فقط (read-only)
   resetPhotos();
   fetch(`${BASE}/api/products/${p.id}/photos`)
@@ -468,6 +548,43 @@ function editProduct(id) {
     document.getElementById("syncNoteText").textContent = "هذا المنتج مرتبط بـ DenTrust — التعديل سيتم تلقائياً";
   }
   document.getElementById("modal").classList.remove("hidden");
+}
+
+function openQuickWhTransfer() {
+  if (!_currentEditProd) return;
+  if (!_whItemForEdit || parseInt(_whItemForEdit.quantity || 0) <= 0) {
+    alert(`لا توجد كميات متاحة في المستودع حالياً لهذا المنتج (${_currentEditProd.product_name}).\nيمكنك إضافة شحنة جديدة من صفحة المستودع.`);
+    return;
+  }
+  const qtyStr = prompt(`المتاح بالمستودع: ${_whItemForEdit.quantity} قطعة\nأدخل الكمية المراد تحويلها وسحبها لمخزن المحل:`, "1");
+  if (!qtyStr) return;
+  const qty = parseInt(qtyStr, 10);
+  if (isNaN(qty) || qty <= 0) {
+    alert("يرجى إدخال كمية صحيحة أكبر من صفر");
+    return;
+  }
+  if (qty > parseInt(_whItemForEdit.quantity || 0)) {
+    alert(`الكمية المطلوبة (${qty}) أكبر من المتاح بالمستودع (${_whItemForEdit.quantity})`);
+    return;
+  }
+
+  fetch(`${BASE}/api/warehouse/transfer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      warehouse_item_id: _whItemForEdit.id,
+      quantity: qty,
+      note: 'تحويل سريع من شاشة تعديل المنتج بالمحل'
+    })
+  }).then(r => r.json())
+    .then(data => {
+      if (data.error) throw new Error(data.error);
+      alert(`✅ تم تحويل ${qty} قطعة من المستودع إلى المحل بنجاح!`);
+      closeModal();
+      loadProducts();
+    }).catch(e => {
+      alert("خطأ أثناء التحويل: " + e.message);
+    });
 }
 
 function closeModal() { document.getElementById("modal").classList.add("hidden"); }
