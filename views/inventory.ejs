@@ -284,13 +284,19 @@ let allProducts = [];
 const productMap = {};
 
 async function loadProducts() {
-  const res = await fetch(`${BASE}/api/products`);
-  allProducts = await res.json();
-  allProducts.forEach(p => productMap[p.id] = p);
-  document.getElementById("stat-total").textContent = allProducts.length;
-  const lowStockCount = allProducts.filter(p => (p.min_stock||0) > 0 && p.quantity <= (p.min_stock||0)).length;
-  document.getElementById("stat-low").textContent = lowStockCount;
-  document.getElementById("stat-out").textContent = allProducts.filter(p => p.quantity <= 0).length;
+  try {
+    const res = await fetch(`${BASE}/api/products`);
+    const data = await res.json();
+    allProducts = Array.isArray(data) ? data : (data.products || []);
+    allProducts.forEach(p => productMap[p.id] = p);
+    document.getElementById("stat-total").textContent = allProducts.length;
+    const lowStockCount = allProducts.filter(p => (p.min_stock||0) > 0 && p.quantity <= (p.min_stock||0)).length;
+    document.getElementById("stat-low").textContent = lowStockCount;
+    document.getElementById("stat-out").textContent = allProducts.filter(p => p.quantity <= 0).length;
+  } catch (err) {
+    console.error('Failed to load products:', err);
+    allProducts = [];
+  }
 
   // Low-stock banner
   const banner = document.getElementById("lowStockBanner");
