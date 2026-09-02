@@ -5146,15 +5146,33 @@ async function logProductMovement({
 app.get(`${BASE}/api/warehouse/products`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   try {
+    // Self-heal: ensure tables exist
+    await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_items (
+      id SERIAL PRIMARY KEY, product_id INTEGER, product_name TEXT NOT NULL,
+      barcode TEXT, category TEXT, cost_price NUMERIC DEFAULT 0, sale_price NUMERIC DEFAULT 0,
+      quantity INTEGER DEFAULT 0, variants JSONB, checkbox_values JSONB, description TEXT DEFAULT '', expiry_date TEXT DEFAULT '', notes TEXT,
+      created_at TEXT DEFAULT (NOW()::text), updated_at TEXT DEFAULT (NOW()::text)
+    )`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS expiry_date TEXT DEFAULT ''`).catch(() => {});
+    await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_batches (
+      id SERIAL PRIMARY KEY, warehouse_item_id INTEGER, product_id INTEGER, batch_number TEXT,
+      quantity INTEGER NOT NULL DEFAULT 0, cost_price NUMERIC DEFAULT 0, expiry_date TEXT, notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+
+    // Fetch warehouse items
     const { rows: items } = await posDb.query(`
       SELECT w.*, 
         p.quantity AS shop_quantity,
-        p.sale_price AS shop_sale_price,
-        p.image_url AS shop_image_url
+        p.sale_price AS shop_sale_price
       FROM warehouse_items w
       LEFT JOIN products p ON p.id = w.product_id
       ORDER BY w.id DESC
-    `);
+    `).catch(async () => {
+      const { rows } = await posDb.query('SELECT * FROM warehouse_items ORDER BY id DESC');
+      return { rows };
+    });
 
     // Fetch batches for each warehouse item
     const { rows: batches } = await posDb.query(`
@@ -5162,7 +5180,7 @@ app.get(`${BASE}/api/warehouse/products`, async (req, res) => {
     `).catch(() => ({ rows: [] }));
 
     const batchMap = {};
-    batches.forEach(b => {
+    (batches || []).forEach(b => {
       if (!batchMap[b.warehouse_item_id]) batchMap[b.warehouse_item_id] = [];
       batchMap[b.warehouse_item_id].push(b);
     });
@@ -5171,15 +5189,18 @@ app.get(`${BASE}/api/warehouse/products`, async (req, res) => {
       it.batches = batchMap[it.id] || [];
     });
 
+    // Fetch shop products
     const { rows: shop_products } = await posDb.query(
-      `SELECT id, product_name, barcode, category, sale_price, purchase_price, quantity, variants, checkbox_values, description, details, image_url
-       FROM products ORDER BY product_name`
-    );
+      `SELECT * FROM products ORDER BY product_name`
+    ).catch(async () => {
+      const { rows } = await posDb.query(`SELECT id, product_name, barcode, category, sale_price, purchase_price, quantity, variants, checkbox_values FROM products ORDER BY product_name`);
+      return { rows };
+    });
 
-    res.json({ items, shop_products });
+    res.json({ items: items || [], shop_products: shop_products || [] });
   } catch (err) {
-    console.error('Get warehouse products error:', err);
-    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
+    console.error('Get warehouse products error:', err.message);
+    res.json({ items: [], shop_products: [], error: err.message });
   }
 });
 
@@ -5188,6 +5209,12 @@ app.get(`${BASE}/api/products/:pid/cost-batches`, async (req, res, next) => {
   const pid = parseInt(req.params.pid, 10);
   if (isNaN(pid)) return next();
   try {
+    await posDb.query(`CREATE TABLE IF NOT EXISTS product_cost_batches (
+      id SERIAL PRIMARY KEY, product_id INTEGER NOT NULL, quantity INTEGER NOT NULL DEFAULT 0,
+      remaining_quantity INTEGER NOT NULL DEFAULT 0, cost_price NUMERIC DEFAULT 0, expiry_date TEXT,
+      source TEXT DEFAULT 'warehouse_transfer', reference_id INTEGER, created_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+
     const { rows } = await posDb.query(
       `SELECT * FROM product_cost_batches WHERE product_id = $1 AND remaining_quantity > 0 ORDER BY id ASC`,
       [pid]
