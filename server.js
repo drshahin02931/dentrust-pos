@@ -936,28 +936,25 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
     await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await posDb.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
-    
-    // Fetch product details safely with SELECT *
-    let p = null;
-    try {
-      const { rows } = await posDb.query('SELECT * FROM public.products WHERE id=$1', [pid]);
-      p = rows[0];
-    } catch (_) {
-      const { rows } = await posDb.query('SELECT * FROM products WHERE id=$1', [pid]);
-      p = rows[0];
+
+    // Fetch product details
+    let { rows: [p] } = await posDb.query('SELECT * FROM public.products WHERE id=$1', [pid]).catch(() => ({ rows: [] }));
+    if (!p) {
+      const resFallback = await posDb.query('SELECT * FROM products WHERE id=$1', [pid]).catch(() => ({ rows: [] }));
+      p = resFallback?.rows?.[0];
     }
     if (!p) return res.status(404).json({ error: 'المنتج غير موجود' });
 
-    const isCurrentHidden = p.is_hidden_from_website === true || p.is_hidden === true || p.hidden === true;
+    const isCurrentHidden = p.is_hidden_from_website === true || p.is_hidden_from_website === 'true' || p.is_hidden_from_website === 1 || p.is_hidden === true || p.hidden === true;
     const newState = !isCurrentHidden;
-    
-    // Update local database (try both public.products and products)
+
+    // 1. Update POS database
     await posDb.query('UPDATE public.products SET is_hidden_from_website=$1, is_hidden=$1, hidden=$1 WHERE id=$2', [newState, pid])
       .catch(async () => {
-        await posDb.query('UPDATE products SET is_hidden_from_website=$1 WHERE id=$2', [newState, pid]).catch(() => {});
+        await posDb.query('UPDATE products SET is_hidden_from_website=$1, is_hidden=$1, hidden=$1 WHERE id=$2', [newState, pid]).catch(() => {});
       });
 
-    // Sync with website database
+    // 2. Sync with website database
     if (HAS_WEBSITE_DB) {
       try {
         const client = await dentrustDb.connect();
@@ -965,11 +962,12 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
           await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
           await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
           await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+          await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS orig_section TEXT').catch(() => {});
 
           let targetWebId = p.dentrust_id;
           if (!targetWebId) {
             const { rows: [found] } = await client.query(
-              'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) OR (barcode IS NOT NULL AND barcode = $2 AND barcode != \'\') LIMIT 1',
+              'SELECT id, section FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) OR (barcode IS NOT NULL AND barcode = $2 AND barcode != \'\') LIMIT 1',
               [p.product_name || '', p.barcode || '']
             ).catch(() => ({ rows: [] }));
             if (found) {
@@ -980,11 +978,30 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
           }
 
           if (targetWebId) {
-            await client.query(
-              'UPDATE products SET is_hidden=$1, hidden=$1, is_hidden_from_website=$1 WHERE id=$2',
-              [newState, targetWebId]
-            ).catch(() => {});
-            await client.query('UPDATE products SET is_active=$1 WHERE id=$2', [!newState, targetWebId]).catch(() => {});
+            if (newState) {
+              await client.query(
+                `UPDATE products SET 
+                  orig_section = COALESCE(NULLIF(section, 'hidden'), orig_section, 'dental'),
+                  section = 'hidden',
+                  is_hidden = true,
+                  hidden = true,
+                  is_hidden_from_website = true,
+                  is_active = false
+                 WHERE id = $1`,
+                [targetWebId]
+              ).catch(() => {});
+            } else {
+              await client.query(
+                `UPDATE products SET 
+                  section = COALESCE(NULLIF(orig_section, 'hidden'), 'dental'),
+                  is_hidden = false,
+                  hidden = false,
+                  is_hidden_from_website = false,
+                  is_active = true
+                 WHERE id = $1`,
+                [targetWebId]
+              ).catch(() => {});
+            }
           }
         } finally {
           client.release();
@@ -2789,13 +2806,29 @@ async function syncUpdateProductToDentrust(pid, d) {
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS orig_section TEXT').catch(() => {});
 
-    await client.query(
-      'UPDATE products SET name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=COALESCE($5, purchase_price), variants=$6, section=$7, checkbox_values=$8, is_hidden=$9, hidden=$9, is_hidden_from_website=$9 WHERE id=$10',
-      [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
-       d.purchase_price ? String(d.purchase_price) : null, variantsJson,
-       d.section || 'dental', cbJson, isHidden, targetWebId]);
-    await client.query('UPDATE products SET is_active=$1 WHERE id=$2', [!isHidden, targetWebId]).catch(() => {});
+    if (isHidden) {
+      await client.query(
+        `UPDATE products SET 
+          name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=COALESCE($5, purchase_price), 
+          variants=$6, checkbox_values=$7, is_hidden=true, hidden=true, is_hidden_from_website=true, 
+          is_active=false, orig_section=COALESCE(NULLIF(section, 'hidden'), orig_section, $8), section='hidden' 
+         WHERE id=$9`,
+        [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
+         d.purchase_price ? String(d.purchase_price) : null, variantsJson,
+         cbJson, d.section || 'dental', targetWebId]);
+    } else {
+      await client.query(
+        `UPDATE products SET 
+          name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=COALESCE($5, purchase_price), 
+          variants=$6, section=$7, checkbox_values=$8, is_hidden=false, hidden=false, 
+          is_hidden_from_website=false, is_active=true 
+         WHERE id=$9`,
+        [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
+         d.purchase_price ? String(d.purchase_price) : null, variantsJson,
+         d.section || 'dental', cbJson, targetWebId]);
+    }
   } finally { client.release(); }
 }
 
