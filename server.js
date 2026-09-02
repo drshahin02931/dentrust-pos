@@ -658,6 +658,10 @@ const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, 
 
 app.get(`${BASE}/api/products`, async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+
     const origin = req.headers.origin || req.headers.referer || '';
     const isWebsiteOrigin = origin.includes('dentrust.site') || req.query.for_website === 'true';
 
