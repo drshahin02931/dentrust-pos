@@ -390,11 +390,7 @@ const PUBLIC_PRODUCTS_MIGRATIONS = [
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS orig_section TEXT",
-  "ALTER TABLE public.products ENABLE ROW LEVEL SECURITY",
-  "DROP POLICY IF EXISTS \"Public website can only view non-hidden products\" ON public.products",
-  "CREATE POLICY \"Public website can only view non-hidden products\" ON public.products FOR SELECT TO anon USING ((is_hidden IS NOT TRUE) AND (hidden IS NOT TRUE) AND (is_hidden_from_website IS NOT TRUE OR is_hidden_from_website IS NULL) AND (section != 'hidden' OR section IS NULL))",
-  "DROP POLICY IF EXISTS \"Full access for service role and postgres\" ON public.products",
-  "CREATE POLICY \"Full access for service role and postgres\" ON public.products FOR ALL TO postgres, service_role, authenticated USING (true) WITH CHECK (true)",
+  "ALTER TABLE public.products DISABLE ROW LEVEL SECURITY",
 ];
 
 // The VIEW that makes pos_data.products a transparent window into public.products.

@@ -6372,6 +6372,7 @@ async function main() {
   }
   try {
     await initDb();
+    await posDb.query('ALTER TABLE public.products DISABLE ROW LEVEL SECURITY').catch(() => {});
 
     // Ensure new warehouse & movement logs tables exist on posDb schema
     await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_items (
