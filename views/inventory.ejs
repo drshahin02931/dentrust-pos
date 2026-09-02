@@ -945,6 +945,7 @@ function cbLoad(raw) {
     cbData[cat][label] = { checked, disabled, reason, stock };
   });
   cbRender();
+  cbUpdateTotalQty();
 }
 
 function cbGetValues() {

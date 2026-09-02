@@ -646,7 +646,8 @@ app.get(`${BASE}/api/products/search`, async (req, res) => {
 // Columns for list endpoints — excludes heavy base64 image_url, adds has_image flag
 const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, sale_price,
   expiry_date, category, min_stock, description, variants, section, checkbox_values,
-  is_offer, original_price, is_best_seller, is_hidden_from_website,
+  is_offer, original_price, is_best_seller,
+  COALESCE(is_hidden_from_website, is_hidden, hidden, false) AS is_hidden_from_website,
   dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image,
   CASE
     WHEN image_url LIKE 'http%' THEN image_url
@@ -657,25 +658,38 @@ const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, 
 
 app.get(`${BASE}/api/products`, async (req, res) => {
   try {
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+    await posDb.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+
     const q = (req.query.q || '').trim();
     let rows;
     try {
       if (q) {
         ({ rows } = await posDb.query(
-          `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`,
+          `SELECT ${PRODUCT_LIST_COLS} FROM public.products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`,
           [q, `%${q}%`]
         ));
       } else {
-        ({ rows } = await posDb.query(`SELECT ${PRODUCT_LIST_COLS} FROM products ORDER BY product_name`));
+        ({ rows } = await posDb.query(`SELECT ${PRODUCT_LIST_COLS} FROM public.products ORDER BY product_name`));
       }
-    } catch (colErr) {
-      // Fallback: if column is missing, add it and use SELECT *
-      await posDb.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
-      await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
-      if (q) {
-        ({ rows } = await posDb.query(`SELECT * FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`, [q, `%${q}%`]));
-      } else {
-        ({ rows } = await posDb.query(`SELECT * FROM products ORDER BY product_name`));
+    } catch (pubErr) {
+      try {
+        if (q) {
+          ({ rows } = await posDb.query(
+            `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`,
+            [q, `%${q}%`]
+          ));
+        } else {
+          ({ rows } = await posDb.query(`SELECT ${PRODUCT_LIST_COLS} FROM products ORDER BY product_name`));
+        }
+      } catch (viewErr) {
+        const fallbackQuery = q
+          ? `SELECT * FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`
+          : `SELECT * FROM products ORDER BY product_name`;
+        const resObj = await posDb.query(fallbackQuery, q ? [q, `%${q}%`] : []);
+        rows = resObj.rows || [];
       }
     }
     res.json(rows || []);
