@@ -859,18 +859,40 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
   const pid = parseInt(req.params.pid, 10);
   try {
     await posDb.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
-    const { rows: [p] } = await posDb.query('SELECT is_hidden_from_website, dentrust_id FROM products WHERE id=$1', [pid]);
+    const { rows: [p] } = await posDb.query('SELECT is_hidden_from_website, dentrust_id, product_name, barcode FROM products WHERE id=$1', [pid]);
     if (!p) return res.status(404).json({ error: 'المنتج غير موجود' });
     const newState = !p.is_hidden_from_website;
     await posDb.query('UPDATE products SET is_hidden_from_website=$1 WHERE id=$2', [newState, pid]);
     
-    // Sync with website database if linked
-    if (HAS_WEBSITE_DB && p.dentrust_id) {
+    // Sync with website database (auto-link by name/barcode if dentrust_id was missing)
+    if (HAS_WEBSITE_DB) {
       try {
         const client = await dentrustDb.connect();
         try {
           await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
-          await client.query('UPDATE products SET is_hidden=$1 WHERE id=$2', [newState, p.dentrust_id]);
+          await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+          await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+          
+          let targetWebId = p.dentrust_id;
+          if (!targetWebId) {
+            // Find matching product on website by exact name or barcode
+            const { rows: [found] } = await client.query(
+              'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) OR (barcode IS NOT NULL AND barcode = $2 AND barcode != \'\') LIMIT 1',
+              [p.product_name, p.barcode || '']
+            ).catch(() => ({ rows: [] }));
+            if (found) {
+              targetWebId = found.id;
+              await posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2', [targetWebId, pid]).catch(() => {});
+            }
+          }
+
+          if (targetWebId) {
+            await client.query(
+              'UPDATE products SET is_hidden=$1, hidden=$1, is_hidden_from_website=$1 WHERE id=$2',
+              [newState, targetWebId]
+            );
+            await client.query('UPDATE products SET is_active=$1 WHERE id=$2', [!newState, targetWebId]).catch(() => {});
+          }
         } finally { client.release(); }
       } catch (err) {
         console.error('[TOGGLE VISIBILITY SYNC ERROR]', err.message);
