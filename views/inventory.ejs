@@ -370,7 +370,7 @@ function renderTable(products) {
       : `<span class="text-gray-300">—</span>`;
     const thumbCell = `<div style="width:2.75rem;height:2.75rem;border-radius:0.5rem;" class="bg-gray-100 flex items-center justify-center text-gray-300 text-xs">—</div>`;
     
-    const isHidden = p.is_hidden_from_website === true;
+    const isHidden = p.is_hidden_from_website === true || p.is_hidden_from_website === 'true' || p.is_hidden_from_website === 1 || p.is_hidden === true || p.hidden === true;
     const hideBtn = `
       <button onclick="toggleWebsiteVisibility(${p.id}, ${isHidden})" title="${isHidden ? 'المنتج مخفي حالياً من الموقع - اضغط لإظهاره' : 'المنتج معروض على الموقع - اضغط لإخفائه'}"
         class="text-xs px-2.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1 ${isHidden ? 'bg-gray-100 text-gray-500 border border-gray-300 hover:bg-gray-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'}">
@@ -514,7 +514,7 @@ function editProduct(id) {
   document.getElementById("f-category").value = p.category || "";
   document.getElementById("f-min-stock").value = p.min_stock || 0;
   document.getElementById("f-description").value = p.description || "";
-  document.getElementById("f-is-hidden-website").checked = p.is_hidden_from_website === true;
+  document.getElementById("f-is-hidden-website").checked = p.is_hidden_from_website === true || p.is_hidden_from_website === 'true' || p.is_hidden_from_website === 1 || p.is_hidden === true || p.hidden === true;
   document.getElementById("modalError").classList.add("hidden");
 
   // Load Warehouse Quick Info & Cost Batches
