@@ -1002,6 +1002,7 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
                 [targetWebId]
               ).catch(() => {});
             }
+            cacheDel('site_products');
           }
         } finally {
           client.release();
@@ -1011,6 +1012,7 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
       }
     }
 
+    cacheDel('site_products');
     res.json({ ok: true, is_hidden_from_website: newState });
   } catch (err) {
     console.error('Toggle visibility error:', err);
@@ -3806,12 +3808,17 @@ app.get('/api/products', webCors, async (req, res) => {
   try {
     const client = await dentrustDb.connect();
     try {
+      await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+      await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+      await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+
       const { rows } = await client.query(
         `SELECT p.id, p.name, p.price, p.purchase_price, p.stock,
                 p.photos[1] AS image_url, p.expiry_date, p.description,
                 c.name AS category_name, p.category_id
          FROM products p
          LEFT JOIN categories c ON c.id = p.category_id
+         WHERE (p.is_hidden IS NOT TRUE AND p.hidden IS NOT TRUE AND (p.is_hidden_from_website IS NOT TRUE OR p.is_hidden_from_website IS NULL) AND (p.section != 'hidden' OR p.section IS NULL))
          ORDER BY p.name`
       );
       // Convert relative Supabase storage paths to full public URLs
