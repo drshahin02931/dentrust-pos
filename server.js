@@ -1002,8 +1002,7 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
         section: 'hidden',
         is_hidden: true,
         hidden: true,
-        is_hidden_from_website: true,
-        is_active: false
+        is_hidden_from_website: true
       });
     } else {
       // UNHIDE PRODUCT: restore section from orig_section, is_hidden=false
@@ -1012,8 +1011,7 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
           section = COALESCE(NULLIF(orig_section, 'hidden'), 'dental'),
           is_hidden = false,
           hidden = false,
-          is_hidden_from_website = false,
-          is_active = true
+          is_hidden_from_website = false
          WHERE id = $1`,
         [pid]
       ).catch(() => {});
@@ -1023,8 +1021,7 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
           section = COALESCE(NULLIF(orig_section, 'hidden'), 'dental'),
           is_hidden = false,
           hidden = false,
-          is_hidden_from_website = false,
-          is_active = true
+          is_hidden_from_website = false
          WHERE id = $1 OR LOWER(TRIM(name)) = LOWER(TRIM($2))`,
         [p.dentrust_id || pid, p.product_name || p.name || '']
       ).catch(() => {});
@@ -1033,8 +1030,7 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
         section: p.orig_section || p.section || 'dental',
         is_hidden: false,
         hidden: false,
-        is_hidden_from_website: false,
-        is_active: true
+        is_hidden_from_website: false
       });
     }
 

@@ -370,9 +370,9 @@ function renderTable(products) {
       : `<span class="text-gray-300">—</span>`;
     const thumbCell = `<div style="width:2.75rem;height:2.75rem;border-radius:0.5rem;" class="bg-gray-100 flex items-center justify-center text-gray-300 text-xs">—</div>`;
     
-    const isHidden = p.is_hidden_from_website === true || p.is_hidden_from_website === 'true' || p.is_hidden_from_website === 1 || p.is_hidden === true || p.hidden === true;
+    const isHidden = p.is_hidden_from_website === true || p.is_hidden_from_website === 'true' || p.is_hidden_from_website === 1 || p.is_hidden === true || p.hidden === true || p.section === 'hidden';
     const hideBtn = `
-      <button onclick="toggleWebsiteVisibility(${p.id}, ${isHidden})" title="${isHidden ? 'المنتج مخفي حالياً من الموقع - اضغط لإظهاره' : 'المنتج معروض على الموقع - اضغط لإخفائه'}"
+      <button onclick="toggleWebsiteVisibility(${p.id}, ${isHidden}, this)" title="${isHidden ? 'المنتج مخفي حالياً من الموقع - اضغط لإظهاره' : 'المنتج معروض على الموقع - اضغط لإخفائه'}"
         class="text-xs px-2.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1 ${isHidden ? 'bg-gray-100 text-gray-500 border border-gray-300 hover:bg-gray-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'}">
         <span>${isHidden ? '🙈' : '🌐'}</span>
         <span>${isHidden ? 'مخفي بالموقع' : 'معروض بالموقع'}</span>
@@ -720,7 +720,12 @@ async function saveProduct(e) {
   }
 }
 
-async function toggleWebsiteVisibility(pid, isCurrentlyHidden) {
+async function toggleWebsiteVisibility(pid, isCurrentlyHidden, btnEl) {
+  if (btnEl) {
+    btnEl.disabled = true;
+    btnEl.style.opacity = '0.6';
+    btnEl.innerHTML = '<span>⏳</span> <span>جارٍ...</span>';
+  }
   try {
     const res = await fetch(`${BASE}/api/products/${pid}/toggle-website-visibility`, {
       method: 'POST',
@@ -731,11 +736,26 @@ async function toggleWebsiteVisibility(pid, isCurrentlyHidden) {
     
     // Update local state
     const p = allProducts.find(x => x.id === pid);
-    if (p) p.is_hidden_from_website = data.is_hidden_from_website;
+    if (p) {
+      p.is_hidden_from_website = data.is_hidden_from_website;
+      p.is_hidden = data.is_hidden_from_website;
+      p.hidden = data.is_hidden_from_website;
+      if (data.is_hidden_from_website) p.section = 'hidden';
+    }
+    if (productMap[pid]) {
+      productMap[pid].is_hidden_from_website = data.is_hidden_from_website;
+      productMap[pid].is_hidden = data.is_hidden_from_website;
+      productMap[pid].hidden = data.is_hidden_from_website;
+      if (data.is_hidden_from_website) productMap[pid].section = 'hidden';
+    }
     
     applyFilters();
   } catch (err) {
     alert('❌ خطأ: ' + err.message);
+    if (btnEl) {
+      btnEl.disabled = false;
+      btnEl.style.opacity = '1';
+    }
   }
 }
 
