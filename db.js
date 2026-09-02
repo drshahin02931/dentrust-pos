@@ -386,6 +386,10 @@ const PUBLIC_PRODUCTS_MIGRATIONS = [
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS stock INTEGER DEFAULT 0",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS price NUMERIC DEFAULT 0",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS expiry_date TEXT",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS orig_section TEXT",
 ];
 
 // The VIEW that makes pos_data.products a transparent window into public.products.
@@ -420,7 +424,8 @@ SELECT
   COALESCE(p.created_at::text, NOW()::text)                       AS created_at,
   COALESCE(p.is_offer, false)                                     AS is_offer,
   p.original_price,
-  COALESCE(p.is_best_seller, false)                               AS is_best_seller
+  COALESCE(p.is_best_seller, false)                               AS is_best_seller,
+  COALESCE(p.is_hidden_from_website, p.is_hidden, p.hidden, false) AS is_hidden_from_website
 FROM public.products p
 LEFT JOIN public.categories c ON c.id = p.category_id
 `;
@@ -563,7 +568,9 @@ BEGIN
     is_sold_out    = (COALESCE(NEW.quantity, 0) <= 0),
     is_offer       = COALESCE(NEW.is_offer, is_offer),
     original_price = NEW.original_price,
-    is_best_seller = COALESCE(NEW.is_best_seller, is_best_seller)
+    is_best_seller = COALESCE(NEW.is_best_seller, is_best_seller),
+    is_hidden_from_website = COALESCE(NEW.is_hidden_from_website, is_hidden_from_website),
+    is_hidden      = COALESCE(NEW.is_hidden_from_website, is_hidden)
   WHERE id = NEW.id;
 
   RETURN NEW;
