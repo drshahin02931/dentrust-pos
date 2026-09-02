@@ -5454,9 +5454,9 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
 
     // 4. Create product_cost_batches record for store inventory FIFO tracking
     await client.query(
-      `INSERT INTO product_cost_batches (product_id, quantity, remaining_quantity, cost_price, expiry_date, source, reference_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [shopProdId, transferQty, transferQty, transferCost, transferExpiry || null, 'warehouse_transfer', transRecord.id]
+      `INSERT INTO product_cost_batches (product_id, selected_option, quantity, remaining_quantity, cost_price, expiry_date, source, reference_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [shopProdId, selected_option || null, transferQty, transferQty, transferCost, transferExpiry || null, 'warehouse_transfer', transRecord.id]
     ).catch(() => {});
 
     // 5. Log Movement Audit Record
@@ -5897,6 +5897,7 @@ async function main() {
     await posDb.query(`CREATE TABLE IF NOT EXISTS product_cost_batches (
       id SERIAL PRIMARY KEY,
       product_id INTEGER NOT NULL,
+      selected_option TEXT,
       quantity INTEGER NOT NULL DEFAULT 0,
       remaining_quantity INTEGER NOT NULL DEFAULT 0,
       cost_price NUMERIC DEFAULT 0,
@@ -5905,6 +5906,7 @@ async function main() {
       reference_id INTEGER,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )`).catch(() => {});
+    await posDb.query(`ALTER TABLE product_cost_batches ADD COLUMN IF NOT EXISTS selected_option TEXT`).catch(() => {});
 
     await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_transfers (
       id SERIAL PRIMARY KEY, warehouse_item_id INTEGER, product_id INTEGER, product_name TEXT NOT NULL,

@@ -150,6 +150,17 @@
         </div>
       </div>
 
+      <!-- Variants / Options Quantity Grid -->
+      <div id="aw-variants-section" class="hidden bg-blue-50/70 border border-blue-200 rounded-2xl p-3.5 space-y-2.5">
+        <div class="flex items-center justify-between border-b border-blue-200/80 pb-2">
+          <div class="flex items-center gap-1.5 text-xs font-bold text-blue-900">
+            <span>🎨</span> حدد الكمية الموردة للمستودع من كل مقاس / خيار:
+          </div>
+          <span class="text-xs text-blue-800 font-mono">إجمالي المقاسات: <strong id="aw-var-total-sum" class="font-bold">0</strong> قطعة</span>
+        </div>
+        <div id="aw-variants-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1"></div>
+      </div>
+
       <!-- Basic Fields -->
       <div class="grid grid-cols-2 gap-3">
         <div>
@@ -609,7 +620,10 @@ function selectShopProductById(id) {
   if (prod) selectShopProduct(prod);
 }
 
+let _selectedShopProd = null;
+
 function selectShopProduct(p) {
+  _selectedShopProd = p;
   document.getElementById('aw-search-dropdown').classList.add('hidden');
   document.getElementById('aw-search-input').value = '';
   document.getElementById('aw-shop-prod-id').value = p.id;
@@ -626,12 +640,71 @@ function selectShopProduct(p) {
   if (p.purchase_price && parseFloat(p.purchase_price) > 0) {
     document.getElementById('aw-cost').value = p.purchase_price;
   }
+
+  // Render Variants Matrix if product has variants
+  const varSec = document.getElementById('aw-variants-section');
+  const varGrid = document.getElementById('aw-variants-grid');
+  varGrid.innerHTML = '';
+
+  let hasVariants = false;
+  if (p.checkbox_values) {
+    const cbv = typeof p.checkbox_values === 'string' ? JSON.parse(p.checkbox_values) : p.checkbox_values;
+    const opts = Object.keys(cbv);
+    if (opts.length > 0) {
+      hasVariants = true;
+      varGrid.innerHTML = opts.map((opt, idx) => {
+        const shopStock = cbv[opt].stock != null ? cbv[opt].stock : '—';
+        return `
+          <div class="bg-white p-2.5 rounded-xl border border-blue-100 flex items-center justify-between gap-2 shadow-sm">
+            <div>
+              <span class="text-xs font-bold text-gray-800 block">${opt}</span>
+              <span class="text-[10px] text-gray-400">بالمحل: ${shopStock}</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="text-[11px] text-blue-700 font-bold">وارد:</span>
+              <input type="number" min="0" value="0"
+                class="aw-var-qty-input w-16 text-center font-bold text-xs border border-blue-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono"
+                data-opt-key="${opt.replace(/"/g, '&quot;')}"
+                oninput="onAwVariantQtyChange()"/>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  if (hasVariants) {
+    varSec.classList.remove('hidden');
+    document.getElementById('aw-qty').readOnly = true;
+    document.getElementById('aw-qty').classList.add('bg-gray-100');
+    document.getElementById('aw-qty').value = '0';
+    document.getElementById('aw-var-total-sum').textContent = '0';
+  } else {
+    varSec.classList.add('hidden');
+    document.getElementById('aw-qty').readOnly = false;
+    document.getElementById('aw-qty').classList.remove('bg-gray-100');
+    document.getElementById('aw-qty').value = '1';
+  }
+}
+
+function onAwVariantQtyChange() {
+  const inputs = document.querySelectorAll('.aw-var-qty-input');
+  let total = 0;
+  inputs.forEach(inp => {
+    total += Math.max(0, parseInt(inp.value || 0, 10));
+  });
+  document.getElementById('aw-qty').value = total;
+  document.getElementById('aw-var-total-sum').textContent = total;
 }
 
 function clearSelectedShopProduct() {
+  _selectedShopProd = null;
   document.getElementById('aw-shop-prod-id').value = '';
   document.getElementById('aw-selected-badge').classList.add('hidden');
+  document.getElementById('aw-variants-section').classList.add('hidden');
   document.getElementById('aw-search-input').value = '';
+  document.getElementById('aw-qty').readOnly = false;
+  document.getElementById('aw-qty').classList.remove('bg-gray-100');
 }
 
 async function submitAddWarehouseItem(e) {
@@ -645,10 +718,31 @@ async function submitAddWarehouseItem(e) {
   const category = document.getElementById('aw-category').value;
   const cost = document.getElementById('aw-cost').value;
   const price = document.getElementById('aw-price').value;
-  const qty = document.getElementById('aw-qty').value;
+  const qty = parseInt(document.getElementById('aw-qty').value || 0, 10);
   const desc = document.getElementById('aw-desc').value;
   const expiry = document.getElementById('aw-expiry').value;
   const notes = document.getElementById('aw-notes').value;
+
+  if (qty <= 0) {
+    errEl.textContent = 'يرجى تحديد كمية واردة أكبر من صفر (أدخل الكميات لكل مقاس)';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  // Package variants JSON
+  let checkboxValuesJson = null;
+  if (_selectedShopProd && _selectedShopProd.checkbox_values) {
+    const baseCbv = typeof _selectedShopProd.checkbox_values === 'string' ? JSON.parse(_selectedShopProd.checkbox_values) : { ..._selectedShopProd.checkbox_values };
+    const varInputs = document.querySelectorAll('.aw-var-qty-input');
+    varInputs.forEach(inp => {
+      const k = inp.dataset.optKey;
+      const q = parseInt(inp.value || 0, 10);
+      if (baseCbv[k]) {
+        baseCbv[k] = { ...baseCbv[k], stock: q, disabled: false };
+      }
+    });
+    checkboxValuesJson = JSON.stringify(baseCbv);
+  }
 
   try {
     const res = await fetch(`${BASE}/api/warehouse/products`, {
@@ -661,7 +755,8 @@ async function submitAddWarehouseItem(e) {
         category,
         cost_price: parseFloat(cost || 0),
         sale_price: parseFloat(price || 0),
-        quantity: parseInt(qty || 0, 10),
+        quantity: qty,
+        checkbox_values_json: checkboxValuesJson,
         description: desc,
         expiry_date: expiry || null,
         notes
@@ -672,7 +767,7 @@ async function submitAddWarehouseItem(e) {
 
     closeAddWarehouseModal();
     await loadWarehouseData();
-    alert('✅ تم حفظ الصنف والشحنة في المستودع بنجاح!');
+    alert('✅ تم حفظ الصنف والشحنة في المستودع بنجاح مع توزيع كميات المقاسات!');
   } catch (err) {
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');
