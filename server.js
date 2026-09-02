@@ -5140,46 +5140,134 @@ async function logProductMovement({
   }
 }
 
-// GET /api/warehouse/products — list warehouse items and shop products
+// ── Warehouse APIs ────────────────────────────────────────────────────────────
+
+// GET /api/warehouse/products — list all warehouse items and shop products
 app.get(`${BASE}/api/warehouse/products`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   try {
-    const [whRes, shopRes] = await Promise.all([
-      posDb.query('SELECT * FROM warehouse_items ORDER BY created_at DESC, id DESC'),
-      posDb.query('SELECT id, product_name, quantity, sale_price, purchase_price, barcode, variants, checkbox_values FROM products ORDER BY product_name')
-    ]);
-    res.json({ items: whRes.rows, shop_products: shopRes.rows });
+    const { rows: items } = await posDb.query(`
+      SELECT w.*, 
+        p.quantity AS shop_quantity,
+        p.sale_price AS shop_sale_price,
+        p.image_url AS shop_image_url
+      FROM warehouse_items w
+      LEFT JOIN products p ON p.id = w.product_id
+      ORDER BY w.id DESC
+    `);
+
+    // Fetch batches for each warehouse item
+    const { rows: batches } = await posDb.query(`
+      SELECT * FROM warehouse_batches WHERE quantity > 0 ORDER BY id ASC
+    `).catch(() => ({ rows: [] }));
+
+    const batchMap = {};
+    batches.forEach(b => {
+      if (!batchMap[b.warehouse_item_id]) batchMap[b.warehouse_item_id] = [];
+      batchMap[b.warehouse_item_id].push(b);
+    });
+
+    items.forEach(it => {
+      it.batches = batchMap[it.id] || [];
+    });
+
+    const { rows: shop_products } = await posDb.query(
+      `SELECT id, product_name, barcode, category, sale_price, purchase_price, quantity, variants, checkbox_values, description, details, image_url
+       FROM products ORDER BY product_name`
+    );
+
+    res.json({ items, shop_products });
   } catch (err) {
-    console.error('Warehouse products error:', err);
-    res.status(500).json({ error: 'خطأ داخلي' });
+    console.error('Get warehouse products error:', err);
+    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
   }
 });
 
-// POST /api/warehouse/products — add new item to warehouse
+// GET /api/products/:pid/cost-batches — get cost & expiry batches for a store product
+app.get(`${BASE}/api/products/:pid/cost-batches`, async (req, res, next) => {
+  const pid = parseInt(req.params.pid, 10);
+  if (isNaN(pid)) return next();
+  try {
+    const { rows } = await posDb.query(
+      `SELECT * FROM product_cost_batches WHERE product_id = $1 AND remaining_quantity > 0 ORDER BY id ASC`,
+      [pid]
+    ).catch(() => ({ rows: [] }));
+    res.json({ batches: rows || [] });
+  } catch (err) {
+    res.json({ batches: [] });
+  }
+});
+
+// POST /api/warehouse/products — add new warehouse item or add a new batch
 app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
-  const { product_name, barcode, category, cost_price, sale_price, quantity, product_id, notes } = req.body;
-  if (!product_name || !product_name.trim()) return res.status(400).json({ error: 'اسم الصنف مطلوب' });
-  const qty = parseInt(quantity || 0, 10);
-  const cost = parseFloat(cost_price || 0);
-  const price = parseFloat(sale_price || 0);
-
   try {
-    // If linked to shop product, copy its variants if available
-    let variants = null, checkboxValues = null;
+    const { product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants_json, checkbox_values_json, notes, description, expiry_date, batch_number } = req.body;
+    if (!product_name || !product_name.trim()) {
+      return res.status(400).json({ error: 'اسم الصنف مطلوب' });
+    }
+    const qty = parseInt(quantity || 0, 10);
+    const cost = parseFloat(cost_price || 0);
+    const price = parseFloat(sale_price || 0);
+
+    let variants = variants_json ? (typeof variants_json === 'string' ? JSON.parse(variants_json) : variants_json) : null;
+    let checkboxValues = checkbox_values_json ? (typeof checkbox_values_json === 'string' ? JSON.parse(checkbox_values_json) : checkbox_values_json) : null;
+    let finalDesc = description || '';
+    let finalCategory = category || 'عام';
+    let finalBarcode = barcode || '';
+
+    // If linked to a shop product, sync metadata
     if (product_id) {
-      const { rows: [p] } = await posDb.query('SELECT variants, checkbox_values FROM products WHERE id=$1', [product_id]);
+      const { rows: [p] } = await posDb.query('SELECT variants, checkbox_values, description, details, barcode, category, sale_price FROM products WHERE id=$1', [product_id]);
       if (p) {
-        variants = p.variants;
-        checkboxValues = p.checkbox_values;
+        if (!variants) variants = p.variants;
+        if (!checkboxValues) checkboxValues = p.checkbox_values;
+        if (!finalDesc) finalDesc = p.description || p.details || '';
+        if (!finalCategory || finalCategory === 'عام') finalCategory = p.category || 'عام';
+        if (!finalBarcode) finalBarcode = p.barcode || '';
       }
     }
 
-    const { rows: [item] } = await posDb.query(
-      `INSERT INTO warehouse_items (product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants, checkbox_values, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [product_id || null, product_name.trim(), barcode || '', category || 'عام', cost, price, qty, variants, checkboxValues, notes || '']
-    );
+    // Check if item already exists in warehouse
+    let item;
+    let existingItem = null;
+    if (product_id) {
+      const { rows: [ex] } = await posDb.query('SELECT * FROM warehouse_items WHERE product_id = $1 LIMIT 1', [product_id]);
+      existingItem = ex;
+    }
+    if (!existingItem) {
+      const { rows: [exByName] } = await posDb.query('SELECT * FROM warehouse_items WHERE LOWER(product_name) = LOWER($1) LIMIT 1', [product_name.trim()]);
+      existingItem = exByName;
+    }
+
+    if (existingItem) {
+      // Add quantity to existing item and update cost & metadata
+      const { rows: [upd] } = await posDb.query(
+        `UPDATE warehouse_items 
+         SET quantity = quantity + $1, cost_price = $2, sale_price = COALESCE(NULLIF($3, 0), sale_price), 
+             checkbox_values = COALESCE($4, checkbox_values), variants = COALESCE($5, variants),
+             description = COALESCE(NULLIF($6, ''), description), expiry_date = COALESCE(NULLIF($7, ''), expiry_date),
+             category = COALESCE(NULLIF($8, ''), category), barcode = COALESCE(NULLIF($9, ''), barcode),
+             notes = COALESCE($10, notes), updated_at = NOW()::text
+         WHERE id = $11 RETURNING *`,
+        [qty, cost, price, checkboxValues ? JSON.stringify(checkboxValues) : null, variants ? JSON.stringify(variants) : null, finalDesc, expiry_date || '', finalCategory, finalBarcode, notes || '', existingItem.id]
+      );
+      item = upd;
+    } else {
+      const { rows: [ins] } = await posDb.query(
+        `INSERT INTO warehouse_items (product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants, checkbox_values, description, expiry_date, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        [product_id || null, product_name.trim(), finalBarcode, finalCategory, cost, price, qty, variants ? JSON.stringify(variants) : null, checkboxValues ? JSON.stringify(checkboxValues) : null, finalDesc, expiry_date || '', notes || '']
+      );
+      item = ins;
+    }
+
+    // Insert batch record in warehouse_batches
+    await posDb.query(
+      `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [item.id, product_id || null, batch_number || `شحنة #${Date.now().toString().slice(-6)}`, qty, cost, expiry_date || null, notes || 'توريد مستودع']
+    ).catch(() => {});
 
     // Log movement
     await logProductMovement({
@@ -5188,12 +5276,12 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
       movementType: 'warehouse_in',
       referenceTitle: `إدخال مستودع #${item.id}`,
       quantityChange: qty,
-      quantityBefore: 0,
-      quantityAfter: qty,
+      quantityBefore: existingItem ? parseInt(existingItem.quantity || 0) : 0,
+      quantityAfter: (existingItem ? parseInt(existingItem.quantity || 0) : 0) + qty,
       unitPrice: price,
       unitCost: cost,
       userName: req.session?.username || 'المدير',
-      notes: notes || 'توريد جديد للمستودع'
+      notes: notes || `توريد شحنة جديدة (صلاحية: ${expiry_date || 'غير محددة'})`
     });
 
     res.status(201).json(item);
@@ -5206,7 +5294,7 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
 // POST /api/warehouse/transfer — transfer quantity/variant from warehouse to store
 app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
-  const { warehouse_item_id, quantity, selected_option, note } = req.body;
+  const { warehouse_item_id, quantity, selected_option, batch_id, note } = req.body;
   const transferQty = parseInt(quantity || 0, 10);
   if (!warehouse_item_id || transferQty <= 0) {
     return res.status(400).json({ error: 'حدد كمية صحيحة للتحويل' });
@@ -5219,6 +5307,11 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
     if (!whItem) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'الصنف غير موجود بالمستودع' });
+    }
+
+    if (whItem.quantity < transferQty) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `الكمية المتاحة بالمستودع (${whItem.quantity}) أقل من المطلوب (${transferQty})` });
     }
 
     // 1. Deduct from warehouse
@@ -5234,44 +5327,43 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
         const totalCb = Object.values(cbv).reduce((s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
         await client.query('UPDATE warehouse_items SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(cbv), whItem.id]);
       } else {
-        if (whItem.quantity < transferQty) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: 'الكمية بالمستودع غير كافية' });
-        }
-        await client.query('UPDATE warehouse_items SET quantity = quantity - $1 WHERE id=$2', [transferQty, whItem.id]);
-      }
-    } else if (selected_option && whItem.variants) {
-      const vObj = typeof whItem.variants === 'string' ? JSON.parse(whItem.variants) : { ...whItem.variants };
-      const sIdx = (vObj.sizes || []).findIndex(s => s.label === selected_option);
-      if (sIdx >= 0) {
-        const avail = parseInt(vObj.sizes[sIdx].qty || 0);
-        if (avail < transferQty) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: `الكمية المتاحة بالمستودع للمقاس (${avail}) أقل من المطلوب (${transferQty})` });
-        }
-        vObj.sizes[sIdx].qty = Math.max(0, avail - transferQty);
-        await client.query('UPDATE warehouse_items SET variants=$1, quantity = GREATEST(0, quantity - $2) WHERE id=$3', [JSON.stringify(vObj), transferQty, whItem.id]);
-      } else {
-        if (whItem.quantity < transferQty) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: 'الكمية بالمستودع غير كافية' });
-        }
         await client.query('UPDATE warehouse_items SET quantity = quantity - $1 WHERE id=$2', [transferQty, whItem.id]);
       }
     } else {
-      if (whItem.quantity < transferQty) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'الكمية بالمستودع غير كافية' });
-      }
       await client.query('UPDATE warehouse_items SET quantity = quantity - $1 WHERE id=$2', [transferQty, whItem.id]);
     }
 
-    // 2. Add to Shop Products (and find or create shop product)
+    // Deduct from warehouse_batches (specific batch or FIFO)
+    let transferCost = parseFloat(whItem.cost_price || 0);
+    let transferExpiry = whItem.expiry_date || null;
+
+    if (batch_id) {
+      const { rows: [b] } = await client.query('SELECT * FROM warehouse_batches WHERE id=$1 FOR UPDATE', [batch_id]);
+      if (b) {
+        transferCost = parseFloat(b.cost_price || transferCost);
+        transferExpiry = b.expiry_date || transferExpiry;
+        await client.query('UPDATE warehouse_batches SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [transferQty, batch_id]);
+      }
+    } else {
+      // Deduct from oldest batch FIFO
+      const { rows: batches } = await client.query('SELECT * FROM warehouse_batches WHERE warehouse_item_id=$1 AND quantity > 0 ORDER BY id ASC FOR UPDATE', [whItem.id]);
+      let rem = transferQty;
+      for (const b of batches) {
+        if (rem <= 0) break;
+        const take = Math.min(b.quantity, rem);
+        await client.query('UPDATE warehouse_batches SET quantity = quantity - $1 WHERE id=$2', [take, b.id]);
+        transferCost = parseFloat(b.cost_price || transferCost);
+        transferExpiry = b.expiry_date || transferExpiry;
+        rem -= take;
+      }
+    }
+
+    // 2. Add to Shop Products (and sync description & category)
     let shopProdId = whItem.product_id;
     let beforeShopQty = 0;
 
     if (shopProdId) {
-      const { rows: [sp] } = await client.query('SELECT id, quantity, variants, checkbox_values FROM products WHERE id=$1', [shopProdId]);
+      const { rows: [sp] } = await client.query('SELECT id, quantity, variants, checkbox_values, purchase_price, expiry_date, description, category FROM products WHERE id=$1', [shopProdId]);
       if (sp) {
         beforeShopQty = parseInt(sp.quantity || 0);
         await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [transferQty, shopProdId]);
@@ -5286,20 +5378,28 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
             await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(scbv), shopProdId]);
           }
         }
-        if (selected_option && sp.variants) {
-          const svObj = typeof sp.variants === 'string' ? JSON.parse(sp.variants) : { ...sp.variants };
-          const sIdx = (svObj.sizes || []).findIndex(s => s.label === selected_option);
-          if (sIdx >= 0) {
-            svObj.sizes[sIdx].qty = (svObj.sizes[sIdx].qty || 0) + transferQty;
-            await client.query('UPDATE products SET variants=$1 WHERE id=$2', [JSON.stringify(svObj), shopProdId]);
-          }
+
+        // Sync description & category if shop product was missing them
+        if (whItem.description && (!sp.description || sp.description.trim() === '')) {
+          await client.query('UPDATE products SET description = $1 WHERE id=$2', [whItem.description, shopProdId]);
+        }
+        if (whItem.category && (!sp.category || sp.category === 'عام')) {
+          await client.query('UPDATE products SET category = $1 WHERE id=$2', [whItem.category, shopProdId]);
+        }
+
+        // Update purchase price and expiry if shop didn't have one
+        if (!sp.purchase_price || parseFloat(sp.purchase_price) === 0) {
+          await client.query('UPDATE products SET purchase_price = $1 WHERE id=$2', [transferCost, shopProdId]);
+        }
+        if (transferExpiry && (!sp.expiry_date || sp.expiry_date > transferExpiry)) {
+          await client.query('UPDATE products SET expiry_date = $1 WHERE id=$2', [transferExpiry, shopProdId]);
         }
       } else {
         shopProdId = null;
       }
     }
 
-    // If no linked shop product, find by name or create
+    // If no linked shop product, create one with description and category
     if (!shopProdId) {
       const { rows: [existingByName] } = await client.query('SELECT id, quantity FROM products WHERE LOWER(product_name)=LOWER($1) LIMIT 1', [whItem.product_name]);
       if (existingByName) {
@@ -5308,25 +5408,31 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
         await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [transferQty, shopProdId]);
       } else {
         const { rows: [newProd] } = await client.query(
-          `INSERT INTO products (product_name, sale_price, purchase_price, quantity, barcode, category)
-           VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-          [whItem.product_name, whItem.sale_price, whItem.cost_price, transferQty, whItem.barcode || '', whItem.category || 'عام']
+          `INSERT INTO products (product_name, sale_price, purchase_price, quantity, barcode, category, description, expiry_date)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+          [whItem.product_name, whItem.sale_price, transferCost, transferQty, whItem.barcode || '', whItem.category || 'عام', whItem.description || '', transferExpiry || null]
         );
         shopProdId = newProd.id;
         beforeShopQty = 0;
       }
-      // Link back to warehouse item
       await client.query('UPDATE warehouse_items SET product_id=$1 WHERE id=$2', [shopProdId, whItem.id]);
     }
 
-    // 3. Record transfer record
+    // 3. Record transfer record in warehouse_transfers
     const { rows: [transRecord] } = await client.query(
       `INSERT INTO warehouse_transfers (warehouse_item_id, product_id, product_name, selected_option, quantity, cost_price, sale_price, transferred_by, transferred_by_name, notes)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-      [whItem.id, shopProdId, whItem.product_name, selected_option || null, transferQty, whItem.cost_price, whItem.sale_price, req.session?.user_id || null, req.session?.username || 'المدير', note || '']
+      [whItem.id, shopProdId, whItem.product_name, selected_option || null, transferQty, transferCost, whItem.sale_price, req.session?.user_id || null, req.session?.username || 'المدير', note || '']
     );
 
-    // 4. Log Movement Audit Record
+    // 4. Create product_cost_batches record for store inventory FIFO tracking
+    await client.query(
+      `INSERT INTO product_cost_batches (product_id, quantity, remaining_quantity, cost_price, expiry_date, source, reference_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [shopProdId, transferQty, transferQty, transferCost, transferExpiry || null, 'warehouse_transfer', transRecord.id]
+    ).catch(() => {});
+
+    // 5. Log Movement Audit Record
     await logProductMovement({
       productId: shopProdId,
       productName: whItem.product_name,
@@ -5338,23 +5444,130 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       quantityBefore: beforeShopQty,
       quantityAfter: beforeShopQty + transferQty,
       unitPrice: whItem.sale_price,
-      unitCost: whItem.cost_price,
+      unitCost: transferCost,
       userName: req.session?.username || 'المدير',
-      notes: note || 'تحويل من المستودع إلى المحل'
+      notes: note || `تحويل من المستودع للمحل (تكلفة: ${transferCost} ج | صلاحية: ${transferExpiry || '—'})`
     }, client);
 
     await client.query('COMMIT');
 
-    // 5. Sync shop product with website immediately
+    // 6. Sync shop product with website immediately
     if (shopProdId) {
       syncProductsNow([shopProdId]).catch(() => {});
     }
 
-    res.json({ ok: true, transferred_qty: transferQty, product_id: shopProdId });
+    res.json({ ok: true, transferred_qty: transferQty, product_id: shopProdId, cost_price: transferCost, expiry_date: transferExpiry });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('Warehouse transfer error:', err);
     res.status(500).json({ error: 'خطأ أثناء التحويل: ' + err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/warehouse/return-from-store — return stock from shop back to warehouse
+app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  const { product_id, quantity, selected_option, reason } = req.body;
+  const returnQty = parseInt(quantity || 0, 10);
+  if (!product_id || returnQty <= 0) {
+    return res.status(400).json({ error: 'حدد منتجاً وكمية صحيحة للإرجاع' });
+  }
+
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [shopProd] } = await client.query('SELECT * FROM products WHERE id=$1 FOR UPDATE', [product_id]);
+    if (!shopProd) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'المنتج غير موجود بالمحل' });
+    }
+
+    if (shopProd.quantity < returnQty) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `الرصيد المتاح بالمحل (${shopProd.quantity}) أقل من الكمية المراد إرجاعها (${returnQty})` });
+    }
+
+    // 1. Deduct from Shop
+    let beforeShopQty = parseInt(shopProd.quantity || 0);
+    if (selected_option && shopProd.checkbox_values) {
+      const scbv = typeof shopProd.checkbox_values === 'string' ? JSON.parse(shopProd.checkbox_values) : { ...shopProd.checkbox_values };
+      if (scbv[selected_option] && typeof scbv[selected_option] === 'object') {
+        const avail = scbv[selected_option].stock != null ? parseInt(scbv[selected_option].stock) : shopProd.quantity;
+        if (avail < returnQty) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `رصيد المقاس (${selected_option}) بالمحل أقل من المطلوب` });
+        }
+        scbv[selected_option].stock = Math.max(0, avail - returnQty);
+        const totalCb = Object.values(scbv).reduce((s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
+        await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(scbv), shopProd.id]);
+      } else {
+        await client.query('UPDATE products SET quantity = quantity - $1 WHERE id=$2', [returnQty, shopProd.id]);
+      }
+    } else {
+      await client.query('UPDATE products SET quantity = quantity - $1 WHERE id=$2', [returnQty, shopProd.id]);
+    }
+
+    // 2. Add back to Warehouse item (find or create)
+    const { rows: [whItem] } = await client.query('SELECT * FROM warehouse_items WHERE product_id=$1 OR LOWER(product_name)=LOWER($2) LIMIT 1 FOR UPDATE', [shopProd.id, shopProd.product_name]);
+    let whItemId;
+    if (whItem) {
+      whItemId = whItem.id;
+      if (selected_option && whItem.checkbox_values) {
+        const wcbv = typeof whItem.checkbox_values === 'string' ? JSON.parse(whItem.checkbox_values) : { ...whItem.checkbox_values };
+        if (wcbv[selected_option] && typeof wcbv[selected_option] === 'object') {
+          wcbv[selected_option].stock = (wcbv[selected_option].stock || 0) + returnQty;
+          const totalWcb = Object.values(wcbv).reduce((s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
+          await client.query('UPDATE warehouse_items SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalWcb, JSON.stringify(wcbv), whItem.id]);
+        } else {
+          await client.query('UPDATE warehouse_items SET quantity = quantity + $1 WHERE id=$2', [returnQty, whItem.id]);
+        }
+      } else {
+        await client.query('UPDATE warehouse_items SET quantity = quantity + $1 WHERE id=$2', [returnQty, whItem.id]);
+      }
+    } else {
+      const { rows: [newWh] } = await client.query(
+        `INSERT INTO warehouse_items (product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants, checkbox_values, description, expiry_date, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+        [shopProd.id, shopProd.product_name, shopProd.barcode || '', shopProd.category || 'عام', shopProd.purchase_price || 0, shopProd.sale_price || 0, returnQty, shopProd.variants || null, shopProd.checkbox_values || null, shopProd.description || '', shopProd.expiry_date || null, 'مرتجع من المحل']
+      );
+      whItemId = newWh.id;
+    }
+
+    // Insert batch record in warehouse_batches as store return
+    await client.query(
+      `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [whItemId, shopProd.id, `مرتجع محل #${Date.now().toString().slice(-6)}`, returnQty, shopProd.purchase_price || 0, shopProd.expiry_date || null, reason || 'مرتجع من المحل إلى المستودع']
+    ).catch(() => {});
+
+    // 3. Log movement audit
+    await logProductMovement({
+      productId: shopProd.id,
+      productName: shopProd.product_name,
+      movementType: 'adjustment',
+      referenceTitle: `إرجاع للمستودع #${whItemId}`,
+      selectedOption: selected_option || null,
+      quantityChange: -returnQty,
+      quantityBefore: beforeShopQty,
+      quantityAfter: beforeShopQty - returnQty,
+      unitPrice: shopProd.sale_price,
+      unitCost: shopProd.purchase_price,
+      userName: req.session?.username || 'المدير',
+      notes: reason || 'إرجاع بضاعة من المحل إلى المستودع الرئيسي'
+    }, client);
+
+    await client.query('COMMIT');
+
+    // 4. Sync website
+    syncProductsNow([shopProd.id]).catch(() => {});
+
+    res.json({ ok: true, returned_qty: returnQty });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Return to warehouse error:', err);
+    res.status(500).json({ error: 'خطأ أثناء الإرجاع: ' + err.message });
   } finally {
     client.release();
   }
