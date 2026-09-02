@@ -947,69 +947,57 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
     }
     if (!p) return res.status(404).json({ error: 'المنتج غير موجود' });
 
-    const isCurrentHidden = p.is_hidden_from_website === true || p.is_hidden_from_website === 'true' || p.is_hidden_from_website === 1 || p.is_hidden === true || p.hidden === true;
+    const isCurrentHidden = p.is_hidden_from_website === true || p.is_hidden_from_website === 'true' || p.is_hidden_from_website === 1 || p.is_hidden === true || p.hidden === true || p.section === 'hidden';
     const newState = !isCurrentHidden;
 
-    // 1. Update POS database
-    await posDb.query('UPDATE public.products SET is_hidden_from_website=$1, is_hidden=$1, hidden=$1 WHERE id=$2', [newState, pid])
-      .catch(async () => {
-        await posDb.query('UPDATE products SET is_hidden_from_website=$1, is_hidden=$1, hidden=$1 WHERE id=$2', [newState, pid]).catch(() => {});
-      });
+    if (newState) {
+      // HIDE PRODUCT: set section='hidden', is_hidden=true, hidden=true, is_hidden_from_website=true
+      await posDb.query(
+        `UPDATE public.products SET 
+          orig_section = COALESCE(NULLIF(section, 'hidden'), orig_section, 'dental'),
+          section = 'hidden',
+          is_hidden = true,
+          hidden = true,
+          is_hidden_from_website = true,
+          is_active = false
+         WHERE id = $1`,
+        [pid]
+      ).catch(() => {});
 
-    // 2. Sync with website database
-    if (HAS_WEBSITE_DB) {
-      try {
-        const client = await dentrustDb.connect();
-        try {
-          await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
-          await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
-          await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
-          await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS orig_section TEXT').catch(() => {});
+      await dentrustDb.query(
+        `UPDATE products SET 
+          orig_section = COALESCE(NULLIF(section, 'hidden'), orig_section, 'dental'),
+          section = 'hidden',
+          is_hidden = true,
+          hidden = true,
+          is_hidden_from_website = true,
+          is_active = false
+         WHERE id = $1 OR LOWER(TRIM(name)) = LOWER(TRIM($2))`,
+        [p.dentrust_id || pid, p.product_name || p.name || '']
+      ).catch(() => {});
+    } else {
+      // UNHIDE PRODUCT: restore section from orig_section, is_hidden=false
+      await posDb.query(
+        `UPDATE public.products SET 
+          section = COALESCE(NULLIF(orig_section, 'hidden'), 'dental'),
+          is_hidden = false,
+          hidden = false,
+          is_hidden_from_website = false,
+          is_active = true
+         WHERE id = $1`,
+        [pid]
+      ).catch(() => {});
 
-          let targetWebId = p.dentrust_id || pid;
-          if (!p.dentrust_id) {
-            const { rows: [found] } = await client.query(
-              'SELECT id, section FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) OR (barcode IS NOT NULL AND barcode = $2 AND barcode != \'\') LIMIT 1',
-              [p.product_name || '', p.barcode || '']
-            ).catch(() => ({ rows: [] }));
-            if (found) {
-              targetWebId = found.id;
-              await posDb.query('UPDATE public.products SET dentrust_id=$1 WHERE id=$2', [targetWebId, pid]).catch(() => {});
-              await posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2', [targetWebId, pid]).catch(() => {});
-            }
-          }
-
-          if (newState) {
-            await client.query(
-              `UPDATE products SET 
-                orig_section = COALESCE(NULLIF(section, 'hidden'), orig_section, 'dental'),
-                section = 'hidden',
-                is_hidden = true,
-                hidden = true,
-                is_hidden_from_website = true,
-                is_active = false
-               WHERE id = $1 OR id = $2 OR LOWER(TRIM(name)) = LOWER(TRIM($3))`,
-              [targetWebId, pid, p.product_name || '']
-            ).catch(() => {});
-          } else {
-            await client.query(
-              `UPDATE products SET 
-                section = COALESCE(NULLIF(orig_section, 'hidden'), 'dental'),
-                is_hidden = false,
-                hidden = false,
-                is_hidden_from_website = false,
-                is_active = true
-               WHERE id = $1 OR id = $2 OR LOWER(TRIM(name)) = LOWER(TRIM($3))`,
-              [targetWebId, pid, p.product_name || '']
-            ).catch(() => {});
-          }
-          cacheDel('site_products');
-        } finally {
-          client.release();
-        }
-      } catch (syncErr) {
-        console.error('[TOGGLE VISIBILITY SYNC ERROR]', syncErr.message);
-      }
+      await dentrustDb.query(
+        `UPDATE products SET 
+          section = COALESCE(NULLIF(orig_section, 'hidden'), 'dental'),
+          is_hidden = false,
+          hidden = false,
+          is_hidden_from_website = false,
+          is_active = true
+         WHERE id = $1 OR LOWER(TRIM(name)) = LOWER(TRIM($2))`,
+        [p.dentrust_id || pid, p.product_name || p.name || '']
+      ).catch(() => {});
     }
 
     cacheDel('site_products');
@@ -6434,6 +6422,17 @@ async function main() {
     await posDb.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS details TEXT NOT NULL DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE products ALTER COLUMN details SET DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE`).catch(() => {});
+
+    // Sync all hidden products to section='hidden' on startup
+    await posDb.query(`
+      UPDATE public.products 
+      SET orig_section = COALESCE(NULLIF(section, 'hidden'), orig_section, 'dental'),
+          section = 'hidden',
+          is_hidden = true,
+          hidden = true,
+          is_active = false
+      WHERE (is_hidden_from_website = true OR is_hidden = true OR hidden = true) AND section != 'hidden'
+    `).catch(() => {});
 
     await posDb.query(`CREATE TABLE IF NOT EXISTS customer_manual_debts (
       id SERIAL PRIMARY KEY,

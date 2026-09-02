@@ -419,7 +419,7 @@ SELECT
   p.supplier_id,
   p.details                                                       AS description,
   p.variants,
-  COALESCE(p.section, 'dental')                                   AS section,
+  COALESCE(NULLIF(p.section, 'hidden'), p.orig_section, 'dental') AS section,
   p.checkbox_values,
   p.is_sold_out,
   COALESCE(p.created_at::text, NOW()::text)                       AS created_at,
