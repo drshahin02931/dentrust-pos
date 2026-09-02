@@ -5256,6 +5256,35 @@ app.get(`${BASE}/api/products/:pid/cost-batches`, async (req, res, next) => {
 app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   try {
+    // Ensure table & columns exist
+    await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_items (
+      id SERIAL PRIMARY KEY,
+      product_id INTEGER,
+      product_name TEXT NOT NULL,
+      barcode TEXT DEFAULT '',
+      category TEXT DEFAULT 'عام',
+      cost_price NUMERIC DEFAULT 0,
+      sale_price NUMERIC DEFAULT 0,
+      quantity INTEGER DEFAULT 0,
+      variants TEXT,
+      checkbox_values TEXT,
+      description TEXT DEFAULT '',
+      expiry_date TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS checkbox_values TEXT`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS variants TEXT`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS expiry_date TEXT DEFAULT ''`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT ''`).catch(() => {});
+    await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_batches (
+      id SERIAL PRIMARY KEY, warehouse_item_id INTEGER, product_id INTEGER, batch_number TEXT,
+      quantity INTEGER NOT NULL DEFAULT 0, cost_price NUMERIC DEFAULT 0, expiry_date TEXT, notes TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+
     const { product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants_json, checkbox_values_json, notes, description, expiry_date, batch_number } = req.body;
     if (!product_name || !product_name.trim()) {
       return res.status(400).json({ error: 'اسم الصنف مطلوب' });
@@ -5264,54 +5293,58 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
     const cost = parseFloat(cost_price || 0);
     const price = parseFloat(sale_price || 0);
 
-    let variants = variants_json ? (typeof variants_json === 'string' ? JSON.parse(variants_json) : variants_json) : null;
-    let checkboxValues = checkbox_values_json ? (typeof checkbox_values_json === 'string' ? JSON.parse(checkbox_values_json) : checkbox_values_json) : null;
     let finalDesc = description || '';
     let finalCategory = category || 'عام';
     let finalBarcode = barcode || '';
+    let finalCbv = checkbox_values_json ? (typeof checkbox_values_json === 'string' ? checkbox_values_json : JSON.stringify(checkbox_values_json)) : null;
+    let finalVars = variants_json ? (typeof variants_json === 'string' ? variants_json : JSON.stringify(variants_json)) : null;
 
     // If linked to a shop product, sync metadata
     if (product_id) {
-      const { rows: [p] } = await posDb.query('SELECT variants, checkbox_values, description, details, barcode, category, sale_price FROM products WHERE id=$1', [product_id]);
-      if (p) {
-        if (!variants) variants = p.variants;
-        if (!checkboxValues) checkboxValues = p.checkbox_values;
-        if (!finalDesc) finalDesc = p.description || p.details || '';
-        if (!finalCategory || finalCategory === 'عام') finalCategory = p.category || 'عام';
-        if (!finalBarcode) finalBarcode = p.barcode || '';
-      }
+      try {
+        const { rows: [p] } = await posDb.query('SELECT * FROM products WHERE id=$1', [product_id]);
+        if (p) {
+          if (!finalVars && p.variants) finalVars = typeof p.variants === 'string' ? p.variants : JSON.stringify(p.variants);
+          if (!finalCbv && p.checkbox_values) finalCbv = typeof p.checkbox_values === 'string' ? p.checkbox_values : JSON.stringify(p.checkbox_values);
+          if (!finalDesc) finalDesc = p.description || p.details || '';
+          if (!finalCategory || finalCategory === 'عام') finalCategory = p.category || 'عام';
+          if (!finalBarcode) finalBarcode = p.barcode || '';
+        }
+      } catch (_) {}
     }
 
     // Check if item already exists in warehouse
-    let item;
+    let item = null;
     let existingItem = null;
     if (product_id) {
-      const { rows: [ex] } = await posDb.query('SELECT * FROM warehouse_items WHERE product_id = $1 LIMIT 1', [product_id]);
-      existingItem = ex;
+      const { rows: [ex] } = await posDb.query('SELECT * FROM warehouse_items WHERE product_id = $1 LIMIT 1', [product_id]).catch(() => ({ rows: [] }));
+      existingItem = ex || null;
     }
     if (!existingItem) {
-      const { rows: [exByName] } = await posDb.query('SELECT * FROM warehouse_items WHERE LOWER(product_name) = LOWER($1) LIMIT 1', [product_name.trim()]);
-      existingItem = exByName;
+      const { rows: [exByName] } = await posDb.query('SELECT * FROM warehouse_items WHERE LOWER(product_name) = LOWER($1) LIMIT 1', [product_name.trim()]).catch(() => ({ rows: [] }));
+      existingItem = exByName || null;
     }
 
     if (existingItem) {
       // Add quantity to existing item and update cost & metadata
       const { rows: [upd] } = await posDb.query(
         `UPDATE warehouse_items 
-         SET quantity = quantity + $1, cost_price = $2, sale_price = COALESCE(NULLIF($3, 0), sale_price), 
+         SET quantity = quantity + $1, cost_price = $2, sale_price = CASE WHEN $3 > 0 THEN $3 ELSE sale_price END, 
              checkbox_values = COALESCE($4, checkbox_values), variants = COALESCE($5, variants),
-             description = COALESCE(NULLIF($6, ''), description), expiry_date = COALESCE(NULLIF($7, ''), expiry_date),
-             category = COALESCE(NULLIF($8, ''), category), barcode = COALESCE(NULLIF($9, ''), barcode),
-             notes = COALESCE($10, notes), updated_at = NOW()::text
+             description = CASE WHEN $6 != '' THEN $6 ELSE description END,
+             expiry_date = CASE WHEN $7 != '' THEN $7 ELSE expiry_date END,
+             category = CASE WHEN $8 != '' AND $8 != 'عام' THEN $8 ELSE category END,
+             barcode = CASE WHEN $9 != '' THEN $9 ELSE barcode END,
+             notes = COALESCE($10, notes), updated_at = NOW()
          WHERE id = $11 RETURNING *`,
-        [qty, cost, price, checkboxValues ? JSON.stringify(checkboxValues) : null, variants ? JSON.stringify(variants) : null, finalDesc, expiry_date || '', finalCategory, finalBarcode, notes || '', existingItem.id]
+        [qty, cost, price, finalCbv, finalVars, finalDesc, expiry_date || '', finalCategory, finalBarcode, notes || '', existingItem.id]
       );
       item = upd;
     } else {
       const { rows: [ins] } = await posDb.query(
         `INSERT INTO warehouse_items (product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants, checkbox_values, description, expiry_date, notes)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-        [product_id || null, product_name.trim(), finalBarcode, finalCategory, cost, price, qty, variants ? JSON.stringify(variants) : null, checkboxValues ? JSON.stringify(checkboxValues) : null, finalDesc, expiry_date || '', notes || '']
+        [product_id || null, product_name.trim(), finalBarcode, finalCategory, cost, price, qty, finalVars, finalCbv, finalDesc, expiry_date || '', notes || '']
       );
       item = ins;
     }
@@ -5324,19 +5357,21 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
     ).catch(() => {});
 
     // Log movement
-    await logProductMovement({
-      productId: product_id || null,
-      productName: item.product_name,
-      movementType: 'warehouse_in',
-      referenceTitle: `إدخال مستودع #${item.id}`,
-      quantityChange: qty,
-      quantityBefore: existingItem ? parseInt(existingItem.quantity || 0) : 0,
-      quantityAfter: (existingItem ? parseInt(existingItem.quantity || 0) : 0) + qty,
-      unitPrice: price,
-      unitCost: cost,
-      userName: req.session?.username || 'المدير',
-      notes: notes || `توريد شحنة جديدة (صلاحية: ${expiry_date || 'غير محددة'})`
-    });
+    try {
+      await logProductMovement({
+        productId: product_id || null,
+        productName: item.product_name,
+        movementType: 'warehouse_in',
+        referenceTitle: `إدخال مستودع #${item.id}`,
+        quantityChange: qty,
+        quantityBefore: existingItem ? parseInt(existingItem.quantity || 0) : 0,
+        quantityAfter: (existingItem ? parseInt(existingItem.quantity || 0) : 0) + qty,
+        unitPrice: price,
+        unitCost: cost,
+        userName: req.session?.username || 'المدير',
+        notes: notes || `توريد شحنة جديدة (صلاحية: ${expiry_date || 'غير محددة'})`
+      });
+    } catch (_) {}
 
     res.status(201).json(item);
   } catch (err) {
