@@ -5260,15 +5260,34 @@ app.get(`${BASE}/api/products/:pid/cost-batches`, async (req, res, next) => {
   if (isNaN(pid)) return next();
   try {
     await posDb.query(`CREATE TABLE IF NOT EXISTS product_cost_batches (
-      id SERIAL PRIMARY KEY, product_id INTEGER NOT NULL, quantity INTEGER NOT NULL DEFAULT 0,
+      id SERIAL PRIMARY KEY, product_id INTEGER NOT NULL, selected_option TEXT, quantity INTEGER NOT NULL DEFAULT 0,
       remaining_quantity INTEGER NOT NULL DEFAULT 0, cost_price NUMERIC DEFAULT 0, expiry_date TEXT,
       source TEXT DEFAULT 'warehouse_transfer', reference_id INTEGER, created_at TIMESTAMPTZ DEFAULT NOW()
     )`).catch(() => {});
+    await posDb.query(`ALTER TABLE product_cost_batches ADD COLUMN IF NOT EXISTS selected_option TEXT`).catch(() => {});
 
-    const { rows } = await posDb.query(
+    let { rows } = await posDb.query(
       `SELECT * FROM product_cost_batches WHERE product_id = $1 AND remaining_quantity > 0 ORDER BY id ASC`,
       [pid]
     ).catch(() => ({ rows: [] }));
+
+    // If no batches exist yet, but shop product has existing stock, show initial active batch
+    if (!rows || rows.length === 0) {
+      const { rows: [p] } = await posDb.query('SELECT quantity, purchase_price, expiry_date, checkbox_values FROM products WHERE id=$1', [pid]).catch(() => ({ rows: [] }));
+      if (p && parseInt(p.quantity || 0) > 0) {
+        rows = [{
+          id: 0,
+          product_id: pid,
+          selected_option: null,
+          quantity: parseInt(p.quantity),
+          remaining_quantity: parseInt(p.quantity),
+          cost_price: parseFloat(p.purchase_price || 0),
+          expiry_date: p.expiry_date || null,
+          source: 'initial_stock'
+        }];
+      }
+    }
+
     res.json({ batches: rows || [] });
   } catch (err) {
     res.json({ batches: [] });
@@ -5644,11 +5663,36 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
     );
 
     // 4. Create product_cost_batches record for store inventory FIFO tracking
-    await client.query(
-      `INSERT INTO product_cost_batches (product_id, selected_option, quantity, remaining_quantity, cost_price, expiry_date, source, reference_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [shopProdId, selected_option || null, transferQty, transferQty, transferCost, transferExpiry || null, 'warehouse_transfer', transRecord.id]
-    ).catch(() => {});
+    try {
+      await client.query(`CREATE TABLE IF NOT EXISTS product_cost_batches (
+        id SERIAL PRIMARY KEY, product_id INTEGER NOT NULL, selected_option TEXT, quantity INTEGER NOT NULL DEFAULT 0,
+        remaining_quantity INTEGER NOT NULL DEFAULT 0, cost_price NUMERIC DEFAULT 0, expiry_date TEXT,
+        source TEXT DEFAULT 'warehouse_transfer', reference_id INTEGER, created_at TIMESTAMPTZ DEFAULT NOW()
+      )`).catch(() => {});
+      await client.query(`ALTER TABLE product_cost_batches ADD COLUMN IF NOT EXISTS selected_option TEXT`).catch(() => {});
+
+      // If this shop product previously had stock before this transfer, but had no initial batch record, create initial active batch first
+      if (beforeShopQty > 0) {
+        const { rows: existingBatches } = await client.query('SELECT id FROM product_cost_batches WHERE product_id=$1 LIMIT 1', [shopProdId]).catch(() => ({ rows: [] }));
+        if (!existingBatches || existingBatches.length === 0) {
+          const { rows: [spOriginal] } = await client.query('SELECT purchase_price, expiry_date FROM products WHERE id=$1', [shopProdId]);
+          await client.query(
+            `INSERT INTO product_cost_batches (product_id, selected_option, quantity, remaining_quantity, cost_price, expiry_date, source, reference_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            [shopProdId, null, beforeShopQty, beforeShopQty, parseFloat(spOriginal?.purchase_price || transferCost), spOriginal?.expiry_date || null, 'initial_stock', null]
+          ).catch(() => {});
+        }
+      }
+
+      // Insert incoming transfer batch
+      await client.query(
+        `INSERT INTO product_cost_batches (product_id, selected_option, quantity, remaining_quantity, cost_price, expiry_date, source, reference_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [shopProdId, selected_option || null, transferQty, transferQty, transferCost, transferExpiry || null, 'warehouse_transfer', transRecord.id]
+      );
+    } catch (batchErr) {
+      console.error('[Cost Batch Insert Error]', batchErr.message);
+    }
 
     // 5. Log Movement Audit Record
     await logProductMovement({
