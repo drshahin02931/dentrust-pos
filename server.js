@@ -647,7 +647,7 @@ app.get(`${BASE}/api/products/search`, async (req, res) => {
 const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, sale_price,
   expiry_date, category, min_stock, description, variants, section, checkbox_values,
   is_offer, original_price, is_best_seller,
-  COALESCE(is_hidden_from_website, is_hidden, hidden, false) AS is_hidden_from_website,
+  COALESCE(is_hidden_from_website, false) AS is_hidden_from_website,
   dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image,
   CASE
     WHEN image_url LIKE 'http%' THEN image_url
@@ -666,7 +666,7 @@ app.get(`${BASE}/api/products`, async (req, res) => {
 
     if (isWebsiteOrigin) {
       // Public website callers: query products excluding hidden items
-      const hideCond = `(COALESCE(is_hidden_from_website, is_hidden, hidden, false) = false) AND (section != 'hidden' OR section IS NULL)`;
+      const hideCond = `(COALESCE(is_hidden_from_website, false) = false) AND (section != 'hidden' OR section IS NULL)`;
       if (q) {
         const { rows: r } = await posDb.query(
           `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE (barcode=$1 OR product_name ILIKE $2) AND ${hideCond} ORDER BY product_name`,
