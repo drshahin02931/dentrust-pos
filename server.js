@@ -1270,13 +1270,60 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
     const saleId = sale.id;
     const lowStockItemIds = [];
     for (const item of items) {
-      const { rows: [snap] } = await client.query('SELECT purchase_price FROM products WHERE id=$1', [item.product_id]);
-      const snapPp = snap ? parseFloat(snap.purchase_price || 0) : 0;
       const selOptSaved = item.selected_option || item.selectedOption || item._checkbox || item._size || item.selected_size || null;
+      let effectiveCostPrice = 0;
+      const needQty = Math.max(1, parseInt(item.quantity || 1, 10));
+
+      // Deduct from product_cost_batches using true FIFO
+      try {
+        let batchQuery = 'SELECT * FROM product_cost_batches WHERE product_id=$1 AND remaining_quantity > 0 ';
+        let batchParams = [item.product_id];
+        if (selOptSaved) {
+          const optRaw = selOptSaved.includes('::') ? selOptSaved.split('::').pop() : selOptSaved;
+          batchQuery += 'AND (selected_option=$2 OR selected_option=$3 OR selected_option IS NULL) ';
+          batchParams.push(selOptSaved, optRaw);
+        }
+        batchQuery += 'ORDER BY id ASC FOR UPDATE';
+        const { rows: cBatches } = await client.query(batchQuery, batchParams);
+
+        if (cBatches && cBatches.length > 0) {
+          let remToDeduct = needQty;
+          let totalCostForSold = 0;
+          for (const b of cBatches) {
+            if (remToDeduct <= 0) break;
+            const take = Math.min(parseInt(b.remaining_quantity || 0, 10), remToDeduct);
+            totalCostForSold += (take * parseFloat(b.cost_price || 0));
+            remToDeduct -= take;
+            await client.query('UPDATE product_cost_batches SET remaining_quantity = remaining_quantity - $1 WHERE id=$2', [take, b.id]);
+          }
+          if (needQty > 0) {
+            effectiveCostPrice = totalCostForSold / needQty;
+          }
+        }
+      } catch (e) {
+        console.error('[FIFO Sale Deduction Error]', e.message);
+      }
+
+      if (!effectiveCostPrice || effectiveCostPrice <= 0) {
+        const { rows: [snap] } = await client.query('SELECT purchase_price FROM products WHERE id=$1', [item.product_id]);
+        effectiveCostPrice = snap ? parseFloat(snap.purchase_price || 0) : 0;
+      }
+
+      // Check if all remaining batches now share the same price or if old price finished: auto-unify
+      try {
+        const { rows: remBatches } = await client.query(
+          'SELECT DISTINCT cost_price FROM product_cost_batches WHERE product_id=$1 AND remaining_quantity > 0',
+          [item.product_id]
+        );
+        if (remBatches && remBatches.length === 1) {
+          await client.query('UPDATE products SET purchase_price = $1 WHERE id=$2', [parseFloat(remBatches[0].cost_price), item.product_id]);
+        }
+      } catch (_) {}
+
       await client.query(
         `INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_purchase_price, snapshot_unit_price, selected_option)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [saleId, item.product_id, item.product_name, item.quantity, item.unit_price, snapPp, parseFloat(item.unit_price), selOptSaved]
+        [saleId, item.product_id, item.product_name, item.quantity, item.unit_price, effectiveCostPrice, parseFloat(item.unit_price), selOptSaved]
       );
       const stockUpdate = await client.query(
         'UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2 AND quantity >= $1 RETURNING id, quantity',
@@ -6232,6 +6279,9 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
         if (selected_option) {
           let scbv = sp.checkbox_values ? (typeof sp.checkbox_values === 'string' ? JSON.parse(sp.checkbox_values) : { ...sp.checkbox_values }) : {};
           const { newCbv } = updateCbvStock(scbv, selected_option, transferQty);
+          if (newCbv[selected_option] && typeof newCbv[selected_option] === 'object') {
+            newCbv[selected_option].cost_price = transferCost;
+          }
           const totalCb = sumCbvStock(newCbv);
           await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(newCbv), shopProdId]);
         } else {
@@ -6246,11 +6296,11 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
           await client.query('UPDATE products SET category = $1 WHERE id=$2', [whItem.category, shopProdId]);
         }
 
-        // Update purchase price and expiry if shop didn't have one
-        if (!sp.purchase_price || parseFloat(sp.purchase_price) === 0) {
+        // Update purchase price and expiry if shop didn't have one or if previous stock was 0
+        if (!sp.purchase_price || parseFloat(sp.purchase_price) === 0 || beforeShopQty === 0) {
           await client.query('UPDATE products SET purchase_price = $1 WHERE id=$2', [transferCost, shopProdId]);
         }
-        if (transferExpiry && (!sp.expiry_date || sp.expiry_date > transferExpiry)) {
+        if (transferExpiry && (!sp.expiry_date || sp.expiry_date > transferExpiry || beforeShopQty === 0)) {
           await client.query('UPDATE products SET expiry_date = $1 WHERE id=$2', [transferExpiry, shopProdId]);
         }
       } else {
@@ -6312,6 +6362,17 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [shopProdId, selected_option || null, transferQty, transferQty, transferCost, transferExpiry || null, 'warehouse_transfer', transRecord.id]
       );
+
+      // Check active batches for this product and auto-unify purchase_price if all share the same cost or shop was empty
+      const { rows: actBatches } = await client.query(
+        'SELECT DISTINCT cost_price FROM product_cost_batches WHERE product_id=$1 AND remaining_quantity > 0',
+        [shopProdId]
+      );
+      if (actBatches && actBatches.length === 1) {
+        await client.query('UPDATE products SET purchase_price = $1 WHERE id=$2', [parseFloat(actBatches[0].cost_price), shopProdId]);
+      } else if (beforeShopQty === 0 && transferCost > 0) {
+        await client.query('UPDATE products SET purchase_price = $1 WHERE id=$2', [transferCost, shopProdId]);
+      }
     } catch (batchErr) {
       console.error('[Cost Batch Insert Error]', batchErr.message);
     }
@@ -6801,6 +6862,20 @@ async function main() {
           hidden = true,
           is_active = false
       WHERE (is_hidden_from_website = true OR is_hidden = true OR hidden = true) AND section != 'hidden'
+    `).catch(() => {});
+
+    // Auto-sync product purchase_price from active product_cost_batches if all active batches have the same cost
+    await posDb.query(`
+      UPDATE public.products p
+      SET purchase_price = b.active_cost
+      FROM (
+        SELECT product_id, MIN(cost_price) as active_cost
+        FROM pos_data.product_cost_batches
+        WHERE remaining_quantity > 0
+        GROUP BY product_id
+        HAVING COUNT(DISTINCT cost_price) = 1
+      ) b
+      WHERE p.id = b.product_id AND b.active_cost > 0
     `).catch(() => {});
 
     await posDb.query(`CREATE TABLE IF NOT EXISTS customer_manual_debts (

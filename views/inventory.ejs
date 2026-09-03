@@ -770,6 +770,10 @@ function editProduct(id) {
         bContainer.classList.add("hidden");
       } else {
         bContainer.classList.remove("hidden");
+        const distinctCosts = Array.from(new Set(batches.map(b => parseFloat(b.cost_price||0))));
+        if (distinctCosts.length === 1 && distinctCosts[0] > 0) {
+          document.getElementById("f-purchase").value = distinctCosts[0];
+        }
         bList.innerHTML = batches.map((b, idx) => {
           const isActive = idx === 0;
           const optBadge = b.selected_option ? `<span class="bg-blue-100 text-blue-800 text-[10px] font-bold px-1.5 py-0.5 rounded-md font-mono border border-blue-200">مقاس: ${b.selected_option}</span>` : '';
