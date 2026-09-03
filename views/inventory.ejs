@@ -142,7 +142,7 @@
 
   <!-- Table -->
   <div class="bg-white rounded-2xl border shadow-sm overflow-x-auto">
-    <table class="w-full text-sm">
+    <table class="w-full text-sm min-w-[950px]">
       <thead class="bg-gray-50 border-b">
         <tr class="text-right text-gray-600 font-semibold">
           <th class="px-4 py-3">الصورة</th>
@@ -486,7 +486,7 @@ function renderTable(products) {
     const isHidden = p.is_hidden_from_website === true || p.is_hidden_from_website === 'true' || p.is_hidden_from_website === 1 || p.is_hidden === true || p.hidden === true || p.section === 'hidden';
     const hideBtn = `
       <button onclick="toggleWebsiteVisibility(${p.id}, ${isHidden}, this)" title="${isHidden ? 'المنتج مخفي حالياً من الموقع - اضغط لإظهاره' : 'المنتج معروض على الموقع - اضغط لإخفائه'}"
-        class="text-xs px-2.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1 ${isHidden ? 'bg-gray-100 text-gray-500 border border-gray-300 hover:bg-gray-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'}">
+        class="text-xs px-3 py-2 rounded-xl font-bold transition-all flex items-center gap-1.5 shadow-xs min-h-[36px] ${isHidden ? 'bg-gray-100 text-gray-600 border border-gray-300 hover:bg-gray-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'}">
         <span>${isHidden ? '🙈' : '🌐'}</span>
         <span>${isHidden ? 'مخفي بالموقع' : 'معروض بالموقع'}</span>
       </button>
@@ -503,10 +503,10 @@ function renderTable(products) {
       <td class="px-4 py-3 text-blue-700 font-semibold">${parseFloat(p.sale_price||0).toFixed(2)}</td>
       <td class="px-4 py-3 text-sm ${expStyle}">${p.expiry_date || '—'}</td>
       <td class="px-4 py-3">
-        <div class="flex items-center gap-1.5 flex-wrap">
+        <div class="flex items-center gap-2 flex-nowrap">
           ${hideBtn}
-          <button onclick="editProduct(${p.id})" class="text-xs bg-blue-50 text-blue-700 px-3 py-1.5 rounded-lg hover:bg-blue-100 font-medium">تعديل</button>
-          <button onclick="deleteProduct(${p.id})" class="text-xs bg-red-50 text-red-600 px-3 py-1.5 rounded-lg hover:bg-red-100 font-medium">حذف</button>
+          <button onclick="editProduct(${p.id})" class="text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 px-3.5 py-2 rounded-xl font-bold transition-all shadow-xs min-h-[36px]">تعديل</button>
+          <button onclick="deleteProduct(${p.id})" class="text-xs bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3.5 py-2 rounded-xl font-bold transition-all shadow-xs min-h-[36px]">حذف</button>
         </div>
       </td>
     </tr>`;

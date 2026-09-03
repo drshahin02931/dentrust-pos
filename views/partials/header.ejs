@@ -17,29 +17,42 @@
       theme: { extend: { fontFamily: { sans: ['Segoe UI', 'Arial', 'sans-serif'] } } }
     }
   </script>
-  <style>
-    @media print { .no-print { display: none !important; } }
-    .nav-link { display:flex; align-items:center; gap:0.4rem; padding:0.5rem 0.875rem; border-radius:0.75rem; font-size:0.8125rem; font-weight:500; transition:all 0.15s; white-space:nowrap; }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      overflow-x: auto !important;
+      -webkit-overflow-scrolling: touch;
+      margin: 0;
+      padding: 0;
+    }
+    html::-webkit-scrollbar, body::-webkit-scrollbar {
+      height: 8px;
+    }
+    html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb {
+      background: #93c5fd;
+      border-radius: 9999px;
+    }
+    html::-webkit-scrollbar-thumb:hover, body::-webkit-scrollbar-thumb:hover {
+      background: #3b82f6;
+    }
+    button, a.button, input[type="button"], input[type="submit"] {
+      touch-action: manipulation;
+    }
+    /* Buttons always spacious, comfortable, and never small or cramped */
+    button, .btn {
+      min-height: 38px;
+    }
+    .nav-link { display:flex; align-items:center; gap:0.4rem; padding:0.6rem 1rem; border-radius:0.75rem; font-size:0.875rem; font-weight:600; transition:all 0.15s; white-space:nowrap; min-height:40px; }
     .nav-link.active { background:white; color:#1d4ed8; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
     .nav-link:not(.active) { color:#bfdbfe; }
     .nav-link:not(.active):hover { background:rgba(255,255,255,0.15); }
     input, select, textarea { direction: rtl; }
     [dir="ltr"] input, [dir="ltr"] select, [dir="ltr"] textarea { direction: ltr; }
-
-    /* ── Mobile horizontal scroll for tables ── */
-    @media (max-width: 768px) {
-      table { min-width: 600px; }
-      .overflow-x-auto { -webkit-overflow-scrolling: touch; }
-      /* Subtle scroll hint shadow */
-      .overflow-x-auto::-webkit-scrollbar { height: 4px; }
-      .overflow-x-auto::-webkit-scrollbar-thumb { background: #93c5fd; border-radius: 99px; }
-    }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
 
   <nav class="no-print bg-blue-700 text-white shadow-lg sticky top-0 z-50">
-    <div class="max-w-screen-xl mx-auto px-4 py-2 flex items-center gap-1 overflow-x-auto">
+    <div class="max-w-screen-2xl mx-auto px-4 py-2.5 flex items-center gap-2 overflow-x-auto">
 
       <span class="text-base font-bold ml-3 whitespace-nowrap">
         <% if (typeof settings !== 'undefined' && settings && settings.store_name && settings.store_name !== 'اسم المحل') { %>
@@ -154,4 +167,4 @@
     </div>
   </nav>
 
-  <main class="max-w-screen-xl mx-auto px-4 py-6">
+  <main class="max-w-screen-2xl mx-auto px-2 sm:px-4 lg:px-6 py-4 sm:py-6 w-full">

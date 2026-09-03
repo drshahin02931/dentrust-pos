@@ -1,5 +1,5 @@
 <%- include('partials/header', Object.assign({pageTitle: 'نقطة البيع'}, locals)) %>
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 min-w-[780px] lg:min-w-0">
 
   <!-- ── Left: Product Search + Cart ─────────────────────────────────────── -->
   <div class="lg:col-span-2 space-y-3">
@@ -8,12 +8,12 @@
         <h2 class="text-lg font-bold text-gray-800" data-ar="🛒 نقطة البيع" data-en="🛒 Point of Sale">🛒 نقطة البيع</h2>
         <div class="flex gap-2">
           <button onclick="holdInvoice()" id="btn-hold"
-            class="flex items-center gap-1.5 text-xs bg-yellow-50 text-yellow-700 border border-yellow-200 px-3 py-1.5 rounded-lg hover:bg-yellow-100 font-semibold"
+            class="flex items-center gap-1.5 text-sm bg-yellow-50 text-yellow-700 border border-yellow-200 px-3.5 py-2 rounded-xl hover:bg-yellow-100 font-bold transition-all shadow-xs"
             data-ar="📌 تعليق" data-en="📌 Hold">
             📌 تعليق
           </button>
           <button onclick="newInvoice()" id="btn-new"
-            class="flex items-center gap-1.5 text-xs bg-blue-50 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-100 font-semibold"
+            class="flex items-center gap-1.5 text-sm bg-blue-50 text-blue-700 border border-blue-200 px-3.5 py-2 rounded-xl hover:bg-blue-100 font-bold transition-all shadow-xs"
             data-ar="＋ فاتورة جديدة" data-en="＋ New Invoice">
             ＋ فاتورة جديدة
           </button>
@@ -83,18 +83,18 @@
 
       <!-- Level 1: كاش / آجل / مقسّم -->
       <div>
-        <label class="text-xs font-medium text-gray-500 block mb-1.5">نوع الدفع</label>
+        <label class="text-xs font-semibold text-gray-500 block mb-2">نوع الدفع</label>
         <div class="grid grid-cols-3 gap-2">
           <button onclick="setPaymentType('cash')" id="ptype-cash"
-            class="ptype-btn border-2 border-green-500 bg-green-50 text-green-700 rounded-xl py-2.5 text-xs font-bold">
+            class="ptype-btn border-2 border-green-500 bg-green-50 text-green-700 rounded-xl py-3 text-sm font-bold shadow-xs min-h-[46px] flex items-center justify-center gap-1">
             💵 كاش
           </button>
           <button onclick="setPaymentType('credit')" id="ptype-credit"
-            class="ptype-btn border-2 border-gray-200 text-gray-500 rounded-xl py-2.5 text-xs font-bold hover:border-orange-400">
+            class="ptype-btn border-2 border-gray-200 text-gray-500 rounded-xl py-3 text-sm font-bold hover:border-orange-400 shadow-xs min-h-[46px] flex items-center justify-center gap-1">
             📋 آجل
           </button>
           <button onclick="setPaymentType('split')" id="ptype-split"
-            class="ptype-btn border-2 border-gray-200 text-gray-500 rounded-xl py-2.5 text-xs font-bold hover:border-pink-400">
+            class="ptype-btn border-2 border-gray-200 text-gray-500 rounded-xl py-3 text-sm font-bold hover:border-pink-400 shadow-xs min-h-[46px] flex items-center justify-center gap-1">
             ✂️ مقسّم
           </button>
         </div>
@@ -102,14 +102,14 @@
 
       <!-- Level 2: نقدي / انستا باي (cash only) -->
       <div id="subMethodSection">
-        <label class="text-xs font-medium text-gray-500 block mb-1.5">طريقة الاستلام</label>
+        <label class="text-xs font-semibold text-gray-500 block mb-2">طريقة الاستلام</label>
         <div class="grid grid-cols-2 gap-2">
           <button onclick="setPaymentSub('naqdi')" id="psub-naqdi"
-            class="psub-btn border-2 border-blue-500 bg-blue-50 text-blue-700 rounded-xl py-2.5 text-sm font-bold">
+            class="psub-btn border-2 border-blue-500 bg-blue-50 text-blue-700 rounded-xl py-3 text-sm font-bold shadow-xs min-h-[46px] flex items-center justify-center gap-1">
             🪙 نقدي
           </button>
           <button onclick="setPaymentSub('instapay')" id="psub-instapay"
-            class="psub-btn border-2 border-gray-200 text-gray-500 rounded-xl py-2.5 text-sm font-bold hover:border-purple-400">
+            class="psub-btn border-2 border-gray-200 text-gray-500 rounded-xl py-3 text-sm font-bold hover:border-purple-400 shadow-xs min-h-[46px] flex items-center justify-center gap-1">
             📱 انستا باي
           </button>
         </div>
@@ -230,7 +230,7 @@
       </div>
 
       <button onclick="checkout()"
-        class="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-3.5 rounded-xl text-lg transition-all active:scale-95 shadow-md"
+        class="w-full bg-blue-700 hover:bg-blue-800 text-white font-black py-4 rounded-2xl text-xl transition-all active:scale-95 shadow-lg flex items-center justify-center gap-2 min-h-[56px]"
         data-ar="✅ إتمام البيع" data-en="✅ Complete Sale">
         ✅ إتمام البيع
       </button>
