@@ -1357,18 +1357,30 @@ function selectActiveWhBatch(batchId) {
 
     // Read batch's own variants or fallback to item breakdown
     const batchFlat = b.checkbox_values ? flattenCbv(b.checkbox_values) : {};
+    const hasExplicitBatchVariants = Object.keys(batchFlat).length > 0;
+
+    // Detect non-zero variant keys in parent item
+    const nonZeroKeys = variantKeys.filter(k => (itemFlat[k]?.stock || 0) > 0);
 
     varGrid.innerHTML = variantKeys.map(displayKey => {
       const itemObj = itemFlat[displayKey] || {};
       const rawKey = itemObj.rawKey || displayKey;
       const grp = itemObj.groupName || 'عام';
       
-      // If batch has specific stock for this size, use it; otherwise fallback or 0
       let vStock = 0;
-      if (batchFlat[displayKey] && batchFlat[displayKey].stock != null) {
-        vStock = batchFlat[displayKey].stock;
-      } else if (!b.checkbox_values && _currentWhBatches.length === 1) {
-        vStock = itemObj.stock != null ? itemObj.stock : 0;
+      if (hasExplicitBatchVariants) {
+        vStock = (batchFlat[displayKey] && batchFlat[displayKey].stock != null) ? batchFlat[displayKey].stock : 0;
+      } else {
+        // Fallback for batches before per-batch variant was saved
+        if (nonZeroKeys.length === 1 && nonZeroKeys[0] === displayKey) {
+          vStock = parseInt(b.quantity || 0, 10);
+        } else if (nonZeroKeys.length === 0 && variantKeys[0] === displayKey) {
+          vStock = parseInt(b.quantity || 0, 10);
+        } else if (itemObj.stock != null && itemObj.stock > 0) {
+          vStock = Math.min(parseInt(b.quantity || 0, 10), itemObj.stock);
+        } else {
+          vStock = 0;
+        }
       }
 
       return `

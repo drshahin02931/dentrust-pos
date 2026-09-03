@@ -5814,7 +5814,7 @@ app.get(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
 
 // POST /api/warehouse/items/:id/batches — add a new batch to a warehouse item
 app.post(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req) && !hasPerm(req, 'warehouse')) return res.status(403).json({ error: 'غير مصرح' });
   const itemId = parseInt(req.params.id, 10);
   const { batch_number, quantity, cost_price, expiry_date, notes, checkbox_values_json } = req.body;
   const qty = parseInt(quantity || 0, 10);
@@ -5879,7 +5879,7 @@ app.post(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
 
 // PUT /api/warehouse/batches/:bid — update a specific batch
 app.put(`${BASE}/api/warehouse/batches/:bid`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (!isMgr(req) && !hasPerm(req, 'warehouse')) return res.status(403).json({ error: 'غير مصرح' });
   const bid = parseInt(req.params.bid, 10);
   const { batch_number, quantity, cost_price, expiry_date, notes, checkbox_values_json } = req.body;
   const qty = parseInt(quantity || 0, 10);
