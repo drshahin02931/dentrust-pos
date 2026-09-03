@@ -5795,6 +5795,152 @@ app.delete(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
   }
 });
 
+// ── Warehouse Batches Management APIs ─────────────────────────────────────────
+
+// GET /api/warehouse/items/:id/batches — get all batches for a warehouse item
+app.get(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  try {
+    const { rows } = await posDb.query(
+      'SELECT * FROM warehouse_batches WHERE warehouse_item_id=$1 ORDER BY id ASC',
+      [id]
+    );
+    res.json({ batches: rows || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/warehouse/items/:id/batches — add a new batch to a warehouse item
+app.post(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  const itemId = parseInt(req.params.id, 10);
+  const { batch_number, quantity, cost_price, expiry_date, notes } = req.body;
+  const qty = parseInt(quantity || 0, 10);
+  const cost = parseFloat(cost_price || 0);
+
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [whItem] } = await client.query('SELECT * FROM warehouse_items WHERE id=$1', [itemId]);
+    if (!whItem) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'الصنف غير موجود بالمستودع' });
+    }
+
+    const { rows: [newBatch] } = await client.query(
+      `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [itemId, whItem.product_id || null, batch_number || `شحنة #${Date.now().toString().slice(-4)}`, qty, cost, expiry_date || null, notes || '']
+    );
+
+    const { rows: [agg] } = await client.query(
+      `SELECT COALESCE(SUM(quantity), 0) AS total_qty FROM warehouse_batches WHERE warehouse_item_id = $1`,
+      [itemId]
+    );
+    const newTotalQty = parseInt(agg.total_qty || 0, 10);
+    await client.query(
+      `UPDATE warehouse_items SET quantity = $1, cost_price = $2, expiry_date = COALESCE($3, expiry_date), updated_at = NOW() WHERE id = $4`,
+      [newTotalQty, cost, expiry_date || null, itemId]
+    );
+
+    await client.query('COMMIT');
+    res.status(201).json({ ok: true, batch: newBatch, total_quantity: newTotalQty });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'خطأ أثناء إضافة الشحنة: ' + err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// PUT /api/warehouse/batches/:bid — update a specific batch
+app.put(`${BASE}/api/warehouse/batches/:bid`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  const bid = parseInt(req.params.bid, 10);
+  const { batch_number, quantity, cost_price, expiry_date, notes } = req.body;
+  const qty = parseInt(quantity || 0, 10);
+  const cost = parseFloat(cost_price || 0);
+
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [b] } = await client.query('SELECT * FROM warehouse_batches WHERE id=$1', [bid]);
+    if (!b) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'الشحنة غير موجودة' });
+    }
+
+    const { rows: [updBatch] } = await client.query(
+      `UPDATE warehouse_batches
+       SET batch_number = COALESCE(NULLIF($1, ''), batch_number),
+           quantity = $2,
+           cost_price = $3,
+           expiry_date = $4,
+           notes = $5
+       WHERE id = $6 RETURNING *`,
+      [batch_number?.trim(), qty, cost, expiry_date || null, notes || '', bid]
+    );
+
+    const { rows: [agg] } = await client.query(
+      `SELECT COALESCE(SUM(quantity), 0) AS total_qty FROM warehouse_batches WHERE warehouse_item_id = $1`,
+      [b.warehouse_item_id]
+    );
+    const newTotalQty = parseInt(agg.total_qty || 0, 10);
+    
+    await client.query(
+      `UPDATE warehouse_items 
+       SET quantity = $1, cost_price = $2, expiry_date = COALESCE($3, expiry_date), updated_at = NOW() 
+       WHERE id = $4`,
+      [newTotalQty, cost, expiry_date || null, b.warehouse_item_id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, batch: updBatch, total_quantity: newTotalQty });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'خطأ أثناء تعديل الشحنة: ' + err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/warehouse/batches/:bid — delete a specific batch
+app.delete(`${BASE}/api/warehouse/batches/:bid`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  const bid = parseInt(req.params.bid, 10);
+
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [b] } = await client.query('SELECT * FROM warehouse_batches WHERE id=$1', [bid]);
+    if (!b) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'الشحنة غير موجودة' });
+    }
+
+    await client.query('DELETE FROM warehouse_batches WHERE id=$1', [bid]);
+
+    const { rows: [agg] } = await client.query(
+      `SELECT COALESCE(SUM(quantity), 0) AS total_qty FROM warehouse_batches WHERE warehouse_item_id = $1`,
+      [b.warehouse_item_id]
+    );
+    const newTotalQty = parseInt(agg.total_qty || 0, 10);
+    await client.query(
+      `UPDATE warehouse_items SET quantity = $1, updated_at = NOW() WHERE id = $2`,
+      [newTotalQty, b.warehouse_item_id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, total_quantity: newTotalQty });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'خطأ أثناء حذف الشحنة: ' + err.message });
+  } finally {
+    client.release();
+  }
+});
+
 // Helper to update variant stock in checkbox_values (handles both grouped and flat structures)
 function updateCbvStock(cbv, optKey, changeQty) {
   if (!cbv || typeof cbv !== 'object') {
