@@ -727,16 +727,25 @@ app.get(`${BASE}/api/products/:pid/image`, async (req, res) => {
 app.post(`${BASE}/api/products`, async (req, res) => {
   const d = req.body;
   try {
-    const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
-    const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
+    const variantsJson = d.variants ? (typeof d.variants === 'string' ? d.variants : JSON.stringify(d.variants)) : null;
+    const cbJson = d.checkbox_values ? (typeof d.checkbox_values === 'string' ? d.checkbox_values : JSON.stringify(d.checkbox_values)) : null;
     const mainPhoto = (d.photos && d.photos[0]) || d.image_url || null;
+    const pPrice = (d.purchase_price !== undefined && d.purchase_price !== null && d.purchase_price !== '' && !isNaN(parseFloat(d.purchase_price)))
+      ? parseFloat(d.purchase_price)
+      : 0;
+    const sPrice = (d.sale_price !== undefined && d.sale_price !== null && d.sale_price !== '' && !isNaN(parseFloat(d.sale_price)))
+      ? parseFloat(d.sale_price)
+      : 0;
+    const qty = !isNaN(parseInt(d.quantity, 10)) ? parseInt(d.quantity, 10) : 0;
+    const minStock = !isNaN(parseInt(d.min_stock, 10)) ? parseInt(d.min_stock, 10) : 0;
+
     const { rows: [ins] } = await posDb.query(
       `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
-      [d.barcode || null, d.product_name, d.quantity || 0,
-       d.purchase_price || 0, d.sale_price || 0,
+      [d.barcode || null, d.product_name, qty,
+       pPrice, sPrice,
        d.expiry_date || null, mainPhoto,
-       d.category || null, parseInt(d.min_stock || 0, 10),
+       d.category || null, minStock,
        d.description || null, variantsJson, d.section || 'dental', cbJson]
     );
     // حفظ كل الصور (حتى 5) مباشرة في public.products.photos
@@ -746,7 +755,7 @@ app.post(`${BASE}/api/products`, async (req, res) => {
     }
     // بيرفع صورة المنتج الجديد (لو موجودة) وبينشئه على الموقع تلقائيًا
     if (HAS_WEBSITE_DB) {
-      syncNewProductToDentrust(ins.id, { ...d, image_url: mainPhoto })
+      syncNewProductToDentrust(ins.id, { ...d, image_url: mainPhoto, purchase_price: pPrice, sale_price: sPrice })
         .catch(err => console.error('[sync new product]', err.message));
     }
     res.status(201).json({ ok: true, id: ins.id });
@@ -824,10 +833,14 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
     const variantsJson = d.variants ? (typeof d.variants === 'string' ? d.variants : JSON.stringify(d.variants)) : null;
     const cbJson = d.checkbox_values ? (typeof d.checkbox_values === 'string' ? d.checkbox_values : JSON.stringify(d.checkbox_values)) : null;
     const isHidden = d.is_hidden_from_website === true || d.is_hidden_from_website === 'true';
-    const pPrice = (d.purchase_price != null && d.purchase_price !== '') ? (parseFloat(d.purchase_price) || null) : null;
-    const sPrice = parseFloat(d.sale_price || 0);
-    const qty = parseInt(d.quantity || 0, 10);
-    const minStock = parseInt(d.min_stock || 0, 10);
+    const pPrice = (d.purchase_price !== undefined && d.purchase_price !== null && d.purchase_price !== '' && !isNaN(parseFloat(d.purchase_price)))
+      ? parseFloat(d.purchase_price)
+      : 0;
+    const sPrice = (d.sale_price !== undefined && d.sale_price !== null && d.sale_price !== '' && !isNaN(parseFloat(d.sale_price)))
+      ? parseFloat(d.sale_price)
+      : 0;
+    const qty = !isNaN(parseInt(d.quantity, 10)) ? parseInt(d.quantity, 10) : 0;
+    const minStock = !isNaN(parseInt(d.min_stock, 10)) ? parseInt(d.min_stock, 10) : 0;
 
     const params = [
       d.barcode || null,
@@ -847,7 +860,7 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
     ];
 
     const updateQuery = `UPDATE products SET barcode=$1, product_name=$2, quantity=$3,
-      purchase_price=COALESCE($4, purchase_price), sale_price=$5,
+      purchase_price=$4, sale_price=$5,
       expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
       section=$11, checkbox_values=$12, is_hidden_from_website=$13 WHERE id=$14`;
 
@@ -857,14 +870,14 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
       // Fallback: update on public.products directly if view trigger has issue
       await posDb.query(
         `UPDATE public.products SET barcode=$1, product_name=$2, quantity=$3,
-         purchase_price=COALESCE($4, purchase_price), sale_price=$5,
+         purchase_price=$4, sale_price=$5,
          expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
          section=$11, checkbox_values=$12, is_hidden_from_website=$13 WHERE id=$14`,
         params
       ).catch(async () => {
         await posDb.query(
           `UPDATE products SET barcode=$1, product_name=$2, quantity=$3,
-           purchase_price=COALESCE($4, purchase_price), sale_price=$5,
+           purchase_price=$4, sale_price=$5,
            expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
            section=$11, checkbox_values=$12 WHERE id=$13`,
           params.slice(0, 12).concat([pid])
@@ -2801,10 +2814,18 @@ async function syncNewProductToDentrust(posId, d) {
         photosArr = [d.image_url];
       }
     }
+    const pPrice = (d.purchase_price !== undefined && d.purchase_price !== null && d.purchase_price !== '' && !isNaN(parseFloat(d.purchase_price)))
+      ? parseFloat(d.purchase_price)
+      : 0;
+    const sPrice = (d.sale_price !== undefined && d.sale_price !== null && d.sale_price !== '' && !isNaN(parseFloat(d.sale_price)))
+      ? parseFloat(d.sale_price)
+      : 0;
+    const qty = !isNaN(parseInt(d.quantity, 10)) ? parseInt(d.quantity, 10) : 0;
+
     const { rows: [ins] } = await client.query(
       'INSERT INTO products (name, price, purchase_price, stock, is_offer, photos, category_id, expiry_date, details, section, variants, checkbox_values) VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11) RETURNING id',
-      [d.product_name, d.sale_price || 0, d.purchase_price ? String(d.purchase_price) : null,
-       d.quantity || 0, photosArr, catRow.id, d.expiry_date || null, details,
+      [d.product_name, sPrice, pPrice,
+       qty, photosArr, catRow.id, d.expiry_date || null, details,
        d.section || 'dental', variantsJson, cbJson]
     );
     await posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2', [ins.id, posId]);
@@ -2832,6 +2853,13 @@ async function syncUpdateProductToDentrust(pid, d) {
     const variantsJson = d.variants ? JSON.stringify(d.variants) : null;
     const cbJson = d.checkbox_values ? JSON.stringify(d.checkbox_values) : null;
     const isHidden = d.is_hidden_from_website === true || d.is_hidden_from_website === 'true';
+    const pPrice = (d.purchase_price !== undefined && d.purchase_price !== null && d.purchase_price !== '' && !isNaN(parseFloat(d.purchase_price)))
+      ? parseFloat(d.purchase_price)
+      : 0;
+    const sPrice = (d.sale_price !== undefined && d.sale_price !== null && d.sale_price !== '' && !isNaN(parseFloat(d.sale_price)))
+      ? parseFloat(d.sale_price)
+      : 0;
+    const qty = !isNaN(parseInt(d.quantity, 10)) ? parseInt(d.quantity, 10) : 0;
 
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
@@ -2841,22 +2869,22 @@ async function syncUpdateProductToDentrust(pid, d) {
     if (isHidden) {
       await client.query(
         `UPDATE products SET 
-          name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=COALESCE($5, purchase_price), 
+          name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, 
           variants=$6, checkbox_values=$7, is_hidden=true, hidden=true, is_hidden_from_website=true, 
           is_active=false, orig_section=COALESCE(NULLIF(section, 'hidden'), orig_section, $8), section='hidden' 
          WHERE id=$9 OR id=$10 OR LOWER(TRIM(name))=LOWER(TRIM($1))`,
-        [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
-         d.purchase_price ? String(d.purchase_price) : null, variantsJson,
+        [d.product_name, sPrice, qty, d.expiry_date || null,
+         pPrice, variantsJson,
          cbJson, d.section || 'dental', targetWebId, pid]);
     } else {
       await client.query(
         `UPDATE products SET 
-          name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=COALESCE($5, purchase_price), 
+          name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, 
           variants=$6, section=$7, checkbox_values=$8, is_hidden=false, hidden=false, 
           is_hidden_from_website=false, is_active=true 
          WHERE id=$9 OR id=$10 OR LOWER(TRIM(name))=LOWER(TRIM($1))`,
-        [d.product_name, d.sale_price || 0, d.quantity || 0, d.expiry_date || null,
-         d.purchase_price ? String(d.purchase_price) : null, variantsJson,
+        [d.product_name, sPrice, qty, d.expiry_date || null,
+         pPrice, variantsJson,
          d.section || 'dental', cbJson, targetWebId, pid]);
     }
     cacheDel('site_products');

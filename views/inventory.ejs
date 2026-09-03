@@ -733,9 +733,9 @@ function editProduct(id) {
   document.getElementById("editId").value = p.id;
   document.getElementById("f-name").value = p.product_name;
   document.getElementById("f-barcode").value = p.barcode || "";
-  document.getElementById("f-qty").value = p.quantity;
-  document.getElementById("f-purchase").value = p.purchase_price;
-  document.getElementById("f-sale").value = p.sale_price;
+  document.getElementById("f-qty").value = p.quantity != null ? p.quantity : 0;
+  document.getElementById("f-purchase").value = (p.purchase_price !== undefined && p.purchase_price !== null) ? p.purchase_price : 0;
+  document.getElementById("f-sale").value = (p.sale_price !== undefined && p.sale_price !== null) ? p.sale_price : 0;
   document.getElementById("f-expiry").value = p.expiry_date || "";
   document.getElementById("f-category").value = p.category || "";
   document.getElementById("f-min-stock").value = p.min_stock || 0;
@@ -914,9 +914,9 @@ async function saveProduct(e) {
     const body = {
       product_name: document.getElementById("f-name").value,
       barcode: document.getElementById("f-barcode").value || null,
-      quantity: parseInt(document.getElementById("f-qty").value) || 0,
-      purchase_price: parseFloat(document.getElementById("f-purchase").value) || 0,
-      sale_price: parseFloat(document.getElementById("f-sale").value) || 0,
+      quantity: !isNaN(parseInt(document.getElementById("f-qty").value, 10)) ? parseInt(document.getElementById("f-qty").value, 10) : 0,
+      purchase_price: !isNaN(parseFloat(document.getElementById("f-purchase").value)) ? parseFloat(document.getElementById("f-purchase").value) : 0,
+      sale_price: !isNaN(parseFloat(document.getElementById("f-sale").value)) ? parseFloat(document.getElementById("f-sale").value) : 0,
       expiry_date: document.getElementById("f-expiry").value || null,
       category: document.getElementById("f-category").value.trim() || null,
       min_stock: parseInt(document.getElementById("f-min-stock").value) || 0,
