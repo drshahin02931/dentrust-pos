@@ -6485,7 +6485,7 @@ app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
     await client.query(`ALTER TABLE warehouse_batches ADD COLUMN IF NOT EXISTS checkbox_values JSONB`).catch(() => {});
 
     await client.query('BEGIN');
-    const { rows: [shopProd] } = await client.query('SELECT * FROM products WHERE id=$1 FOR UPDATE', [product_id]);
+    const { rows: [shopProd] } = await client.query('SELECT * FROM products WHERE id=$1', [product_id]);
     if (!shopProd) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'المنتج غير موجود بالمحل' });
@@ -6538,7 +6538,7 @@ app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
 
     // 2. Add back to Warehouse item (find or create)
     const { rows: [whItem] } = await client.query(
-      'SELECT * FROM warehouse_items WHERE product_id=$1 OR TRIM(LOWER(product_name))=TRIM(LOWER($2)) LIMIT 1 FOR UPDATE',
+      'SELECT * FROM warehouse_items WHERE product_id=$1 OR TRIM(LOWER(product_name))=TRIM(LOWER($2)) LIMIT 1',
       [shopProd.id, shopProd.product_name]
     );
     let whItemId;
