@@ -1418,9 +1418,9 @@ function onActiveBatchVarQtyChange() {
   if (sumEl) sumEl.textContent = total;
 }
 
-async function saveActiveBatchChanges() {
+async function saveActiveBatchChanges(silent = false) {
   const batchId = parseInt(document.getElementById('ew-active-batch-id').value, 10);
-  if (!batchId) return;
+  if (!batchId) return true;
 
   const num = document.getElementById('ew-ab-num').value.trim();
   const cost = parseFloat(document.getElementById('ew-ab-cost').value || 0);
@@ -1472,10 +1472,14 @@ async function saveActiveBatchChanges() {
       document.getElementById('ew-qty').value = data.total_quantity;
     }
     await loadWarehouseData();
-    alert('✅ تم حفظ تعديلات الشحنة والمقاسات بنجاح وتحديث إجمالي رصيد المستودع!');
-    if (_currentEditingWhItem) loadAndRenderWhBatches(_currentEditingWhItem.id);
+    if (!silent) {
+      alert('✅ تم حفظ تعديلات الشحنة والمقاسات بنجاح وتحديث إجمالي رصيد المستودع!');
+      if (_currentEditingWhItem) loadAndRenderWhBatches(_currentEditingWhItem.id);
+    }
+    return true;
   } catch (err) {
-    alert('❌ خطأ: ' + err.message);
+    if (!silent) alert('❌ خطأ: ' + err.message);
+    return false;
   }
 }
 
@@ -1569,6 +1573,14 @@ async function submitEditWarehouseItem(e) {
   const errEl = document.getElementById('ew-error');
   errEl.classList.add('hidden');
 
+  // First save active batch if present
+  const batchSaved = await saveActiveBatchChanges(true);
+  if (!batchSaved) {
+    errEl.textContent = 'تعذر حفظ بيانات الشحنة، يرجى المحاولة ثانية';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
   const itemId = _currentEditingWhItem.id;
   const name = document.getElementById('ew-name').value;
   const barcode = document.getElementById('ew-barcode').value;
@@ -1579,7 +1591,6 @@ async function submitEditWarehouseItem(e) {
   const qty = parseInt(document.getElementById('ew-qty').value || _currentEditingWhItem.quantity || 0, 10);
   const expiry = document.getElementById('ew-expiry').value || _currentEditingWhItem.expiry_date;
   const notes = _currentEditingWhItem.notes || '';
-  const checkboxValuesJson = _currentEditingWhItem.checkbox_values ? (typeof _currentEditingWhItem.checkbox_values === 'string' ? _currentEditingWhItem.checkbox_values : JSON.stringify(_currentEditingWhItem.checkbox_values)) : null;
 
   try {
     const res = await fetch(`${BASE}/api/warehouse/products/${itemId}`, {
@@ -1592,7 +1603,6 @@ async function submitEditWarehouseItem(e) {
         cost_price: parseFloat(cost || 0),
         sale_price: parseFloat(price || 0),
         quantity: qty,
-        checkbox_values_json: checkboxValuesJson,
         description: desc,
         expiry_date: expiry || null,
         notes
@@ -1603,7 +1613,7 @@ async function submitEditWarehouseItem(e) {
 
     closeEditWarehouseModal();
     await loadWarehouseData();
-    alert('✅ تم حفظ تعديلات الصنف والمقاسات بالمستودع بنجاح!');
+    alert('✅ تم حفظ كافة تعديلات الصنف والشحنات والمقاسات بنجاح!');
   } catch (err) {
     errEl.textContent = err.message;
     errEl.classList.remove('hidden');

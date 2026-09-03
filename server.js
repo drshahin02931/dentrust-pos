@@ -5471,6 +5471,51 @@ app.get(`${BASE}/api/warehouse/products`, async (req, res) => {
 
     items.forEach(it => {
       it.batches = batchMap[it.id] || [];
+      if (it.batches.length > 0) {
+        // Calculate exact total quantity from batches
+        it.quantity = it.batches.reduce((sum, b) => sum + (parseInt(b.quantity || 0, 10)), 0);
+        
+        // Calculate latest cost price from batches
+        const latestBatchWithCost = [...it.batches].reverse().find(b => parseFloat(b.cost_price || 0) > 0);
+        if (latestBatchWithCost) it.cost_price = parseFloat(latestBatchWithCost.cost_price);
+
+        // Calculate aggregated checkbox_values across batches
+        let itemBaseCbv = it.checkbox_values ? (typeof it.checkbox_values === 'string' ? JSON.parse(it.checkbox_values) : JSON.parse(JSON.stringify(it.checkbox_values))) : null;
+        let mergedCbv = null;
+        let hasAnyBatchCbv = it.batches.some(b => b.checkbox_values);
+
+        if (hasAnyBatchCbv) {
+          it.batches.forEach(b => {
+            if (b.checkbox_values) {
+              let bObj = typeof b.checkbox_values === 'string' ? JSON.parse(b.checkbox_values) : b.checkbox_values;
+              if (!mergedCbv) mergedCbv = JSON.parse(JSON.stringify(bObj));
+              else {
+                for (const [k, v] of Object.entries(bObj)) {
+                  if (typeof v === 'object' && v !== null && v.stock != null) {
+                    if (!mergedCbv[k]) mergedCbv[k] = { ...v, stock: 0 };
+                    mergedCbv[k].stock = (parseInt(mergedCbv[k].stock || 0, 10)) + (parseInt(v.stock || 0, 10));
+                  }
+                }
+              }
+            } else if (itemBaseCbv) {
+              const keys = Object.keys(itemBaseCbv);
+              if (keys.length > 0) {
+                if (!mergedCbv) mergedCbv = JSON.parse(JSON.stringify(itemBaseCbv));
+                const k = keys[0];
+                if (!mergedCbv[k]) mergedCbv[k] = { checked: true, stock: 0 };
+                mergedCbv[k].stock = (parseInt(mergedCbv[k].stock || 0, 10)) + (parseInt(b.quantity || 0, 10));
+              }
+            }
+          });
+          if (mergedCbv) it.checkbox_values = mergedCbv;
+        } else if (itemBaseCbv) {
+          const keys = Object.keys(itemBaseCbv);
+          if (keys.length === 1) {
+            itemBaseCbv[keys[0]].stock = it.quantity;
+            it.checkbox_values = itemBaseCbv;
+          }
+        }
+      }
     });
 
     // Fetch shop products
@@ -5750,11 +5795,36 @@ app.put(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   try {
     const { product_name, barcode, category, cost_price, sale_price, quantity, checkbox_values_json, variants_json, description, expiry_date, notes } = req.body;
-    const qty = parseInt(quantity || 0, 10);
-    const cost = parseFloat(cost_price || 0);
+    let qty = parseInt(quantity || 0, 10);
+    let cost = parseFloat(cost_price || 0);
     const price = parseFloat(sale_price || 0);
-    const finalCbv = checkbox_values_json !== undefined ? (typeof checkbox_values_json === 'string' ? checkbox_values_json : JSON.stringify(checkbox_values_json)) : null;
+    let finalCbv = checkbox_values_json !== undefined ? (typeof checkbox_values_json === 'string' ? checkbox_values_json : JSON.stringify(checkbox_values_json)) : null;
     const finalVars = variants_json !== undefined ? (typeof variants_json === 'string' ? variants_json : JSON.stringify(variants_json)) : null;
+
+    // If batches exist, compute accurate quantity, cost, and checkbox_values from batches
+    const { rows: batches } = await posDb.query('SELECT * FROM warehouse_batches WHERE warehouse_item_id = $1', [id]).catch(() => ({ rows: [] }));
+    if (batches && batches.length > 0) {
+      qty = batches.reduce((sum, b) => sum + (parseInt(b.quantity || 0, 10)), 0);
+      const latestBatch = [...batches].reverse().find(b => parseFloat(b.cost_price || 0) > 0);
+      if (latestBatch) cost = parseFloat(latestBatch.cost_price);
+
+      let mergedCbv = null;
+      batches.forEach(b => {
+        if (b.checkbox_values) {
+          let bObj = typeof b.checkbox_values === 'string' ? JSON.parse(b.checkbox_values) : b.checkbox_values;
+          if (!mergedCbv) mergedCbv = JSON.parse(JSON.stringify(bObj));
+          else {
+            for (const [k, v] of Object.entries(bObj)) {
+              if (typeof v === 'object' && v !== null && v.stock != null) {
+                if (!mergedCbv[k]) mergedCbv[k] = { ...v, stock: 0 };
+                mergedCbv[k].stock = (parseInt(mergedCbv[k].stock || 0, 10)) + (parseInt(v.stock || 0, 10));
+              }
+            }
+          }
+        }
+      });
+      if (mergedCbv) finalCbv = JSON.stringify(mergedCbv);
+    }
 
     const { rows: [upd] } = await posDb.query(
       `UPDATE warehouse_items
@@ -5764,8 +5834,8 @@ app.put(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
            cost_price = $4,
            sale_price = $5,
            quantity = $6,
-           checkbox_values = $7,
-           variants = $8,
+           checkbox_values = CASE WHEN $7::jsonb IS NOT NULL THEN $7::jsonb ELSE checkbox_values END,
+           variants = CASE WHEN $8::jsonb IS NOT NULL THEN $8::jsonb ELSE variants END,
            description = $9,
            expiry_date = $10,
            notes = $11,
