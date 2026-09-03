@@ -2302,6 +2302,29 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
         } catch (_cbErr) {}
       }
 
+      // Restore quantity in product_cost_batches so FIFO stays accurate
+      if (validProdId) {
+        try {
+          const costPrice = parseFloat(item.snapshot_purchase_price || 0);
+          const { rows: [existBatch] } = await client.query(
+            `SELECT id FROM product_cost_batches 
+             WHERE product_id=$1 AND (selected_option=$2 OR (selected_option IS NULL AND $2 IS NULL)) 
+               AND cost_price=$3 
+             ORDER BY id DESC LIMIT 1`,
+            [validProdId, item.selected_option || null, costPrice]
+          );
+          if (existBatch) {
+            await client.query('UPDATE product_cost_batches SET remaining_quantity = remaining_quantity + $1 WHERE id=$2', [quantity, existBatch.id]);
+          } else {
+            await client.query(
+              `INSERT INTO product_cost_batches (product_id, selected_option, quantity, remaining_quantity, cost_price, source, reference_id)
+               VALUES ($1,$2,$3,$4,$5,'customer_return',$6)`,
+              [validProdId, item.selected_option || null, quantity, quantity, costPrice, returnId]
+            );
+          }
+        } catch (_) {}
+      }
+
       // Log movement to audit log
       await logProductMovement({
         productId: validProdId,
@@ -5710,11 +5733,17 @@ app.delete(`${BASE}/api/products/:pid/cost-batches/:bid`, async (req, res) => {
           await client.query('UPDATE warehouse_items SET quantity = quantity + $1 WHERE id=$2', [remQty, whItem.id]);
         }
 
-        // Restore into warehouse_batches
+        // Restore into warehouse_batches with preserved variant/size
+        let batchCbv = null;
+        if (batch.selected_option) {
+          let scbv = {};
+          const { newCbv } = updateCbvStock(scbv, batch.selected_option, remQty);
+          batchCbv = JSON.stringify(newCbv);
+        }
         await client.query(
-          `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [whItem.id, pid, `إرجاع من المحل #${Date.now().toString().slice(-4)}`, remQty, batch.cost_price, batch.expiry_date, 'إرجاع شحنة ملغاة من المحل']
+          `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes, checkbox_values)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [whItem.id, pid, `إرجاع من المحل #${Date.now().toString().slice(-4)}`, remQty, batch.cost_price, batch.expiry_date, 'إرجاع شحنة ملغاة من المحل', batchCbv]
         ).catch(() => {});
       }
     }
