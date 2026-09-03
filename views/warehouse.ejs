@@ -384,7 +384,7 @@
           </div>
 
           <!-- Active Batch Variants Grid (Shown if item has sizes/variants) -->
-          <div id="ew-ab-variants-container" class="hidden bg-indigo-50/60 border border-indigo-200 rounded-2xl p-3 space-y-2">
+          <div id="ew-ab-variants-container" class="hidden bg-indigo-50/60 border border-indigo-200 rounded-2xl p-3 space-y-2.5">
             <div class="flex items-center justify-between border-b border-indigo-200/70 pb-1.5">
               <span class="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
                 <span>🎨</span> مقاسات وكميات هذه الشحنة تحديداً:
@@ -392,6 +392,38 @@
               <span class="text-[10px] text-indigo-700 font-mono font-bold">إجمالي مقاسات الشحنة: <strong id="ew-ab-var-sum" class="font-bold">0</strong></span>
             </div>
             <div id="ew-ab-variants-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-2 p-0.5"></div>
+
+            <!-- Form: Add New Variant / Type -->
+            <div class="bg-white/90 p-2.5 rounded-xl border border-indigo-200/80 space-y-1.5 pt-2">
+              <div class="text-[11px] font-bold text-indigo-900 flex items-center gap-1">
+                <span>➕</span> إضافة خيار أو مقاس جديد لهذا الصنف:
+              </div>
+              <div class="flex flex-wrap sm:flex-nowrap items-center gap-1.5">
+                <select id="ew-new-var-group-select" onchange="onEwNewVarGroupChange()"
+                  class="border border-indigo-200 rounded-xl px-2 py-1 text-xs font-bold bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                  <option value="المقاس">المقاس</option>
+                  <option value="__custom__">➕ نوع جديد...</option>
+                </select>
+                <input type="text" id="ew-new-var-group-custom" placeholder="اسم النوع (مثال: اللون)"
+                  class="hidden w-28 border border-indigo-300 rounded-xl px-2 py-1 text-xs font-bold bg-white text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+                <input type="text" id="ew-new-var-name" placeholder="اسم المقاس / الخيار (مثال: XL)"
+                  class="flex-1 min-w-[120px] border border-indigo-200 rounded-xl px-2 py-1 text-xs font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"/>
+                <input type="number" id="ew-new-var-qty" min="0" value="0" placeholder="الكمية"
+                  class="w-16 text-center border border-indigo-200 rounded-xl py-1 text-xs font-black font-mono text-blue-800 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
+                <button type="button" onclick="addNewVariantToActiveBatch()"
+                  class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow-xs transition-all flex items-center gap-1 flex-shrink-0">
+                  <span>➕</span> إضافة
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Button to enable variants if item has none -->
+          <div id="ew-enable-variants-box" class="hidden text-center p-2.5 bg-indigo-50/40 rounded-xl border border-dashed border-indigo-200">
+            <button type="button" onclick="enableVariantsForCurrentItem()"
+              class="text-xs font-bold text-indigo-700 hover:text-indigo-900 flex items-center justify-center gap-1.5 mx-auto">
+              <span>🎨</span> تفعيل نظام المقاسات والخيارات لهذا الصنف (إضافة مقاسات)
+            </button>
           </div>
 
           <div>
@@ -1408,6 +1440,7 @@ function selectActiveWhBatch(batchId) {
 
   // Render Variants for this Active Batch if parent item has variants
   const varContainer = document.getElementById('ew-ab-variants-container');
+  const enableBox = document.getElementById('ew-enable-variants-box');
   const varGrid = document.getElementById('ew-ab-variants-grid');
   const qtyInp = document.getElementById('ew-ab-qty');
 
@@ -1416,8 +1449,17 @@ function selectActiveWhBatch(batchId) {
 
   if (variantKeys.length > 0 && varContainer && varGrid) {
     varContainer.classList.remove('hidden');
+    if (enableBox) enableBox.classList.add('hidden');
     qtyInp.readOnly = true;
     qtyInp.classList.add('bg-gray-100', 'cursor-not-allowed');
+
+    // Populate Groups Dropdown
+    const distinctGroups = Array.from(new Set(Object.values(itemFlat).map(v => v.groupName).filter(g => g && g !== 'عام')));
+    if (!distinctGroups.includes('المقاس')) distinctGroups.unshift('المقاس');
+    const grpSelect = document.getElementById('ew-new-var-group-select');
+    if (grpSelect) {
+      grpSelect.innerHTML = distinctGroups.map(g => `<option value="${g}">${g}</option>`).join('') + '<option value="__custom__">➕ نوع / عنوان جديد...</option>';
+    }
 
     // Read batch's own variants or initialize cleanly
     let batchFlat = b.checkbox_values ? flattenCbv(b.checkbox_values) : null;
@@ -1439,7 +1481,7 @@ function selectActiveWhBatch(batchId) {
       return `
         <div class="bg-white p-2 rounded-xl border border-indigo-200 flex items-center justify-between gap-1.5 shadow-xs">
           <div class="flex items-center gap-1 min-w-0">
-            ${grp !== 'عام' ? `<span class="px-1 py-0.5 bg-indigo-100 text-indigo-800 rounded text-[9px] font-bold">${grp}</span>` : ''}
+            ${grp !== 'عام' ? `<span class="px-1.5 py-0.5 bg-indigo-100 text-indigo-900 rounded text-[9px] font-black">${grp}</span>` : ''}
             <span class="text-xs font-bold text-gray-800 truncate">${rawKey}</span>
           </div>
           <input type="number" min="0" value="${vStock}"
@@ -1452,11 +1494,120 @@ function selectActiveWhBatch(batchId) {
     }).join('');
 
     onActiveBatchVarQtyChange();
-  } else if (varContainer) {
-    varContainer.classList.add('hidden');
+  } else {
+    if (varContainer) varContainer.classList.add('hidden');
+    if (enableBox) enableBox.classList.remove('hidden');
     qtyInp.readOnly = false;
     qtyInp.classList.remove('bg-gray-100', 'cursor-not-allowed');
   }
+}
+
+function onEwNewVarGroupChange() {
+  const sel = document.getElementById('ew-new-var-group-select');
+  const custInp = document.getElementById('ew-new-var-group-custom');
+  if (sel && custInp) {
+    if (sel.value === '__custom__') {
+      custInp.classList.remove('hidden');
+      custInp.focus();
+    } else {
+      custInp.classList.add('hidden');
+    }
+  }
+}
+
+function enableVariantsForCurrentItem() {
+  if (!_currentEditingWhItem) return;
+  const currentQty = parseInt(document.getElementById('ew-qty').value || _currentEditingWhItem.quantity || 10, 10);
+  _currentEditingWhItem.checkbox_values = {
+    'المقاس': {
+      'الأساسي': { checked: true, stock: currentQty, disabled: false }
+    }
+  };
+  if (_activeBatchId) {
+    const b = _currentWhBatches.find(x => x.id === _activeBatchId);
+    if (b) {
+      b.checkbox_values = {
+        'المقاس': {
+          'الأساسي': { checked: true, stock: b.quantity || currentQty, disabled: false }
+        }
+      };
+    }
+  }
+  selectActiveWhBatch(_activeBatchId);
+}
+
+function addNewVariantToActiveBatch() {
+  if (!_currentEditingWhItem || !_activeBatchId) return;
+  const sel = document.getElementById('ew-new-var-group-select');
+  const custInp = document.getElementById('ew-new-var-group-custom');
+  const nameInp = document.getElementById('ew-new-var-name');
+  const qtyInp = document.getElementById('ew-new-var-qty');
+
+  let grp = (sel.value === '__custom__' ? (custInp.value || '').trim() : sel.value) || 'المقاس';
+  const optName = (nameInp.value || '').trim();
+  const optQty = Math.max(0, parseInt(qtyInp.value || 0, 10));
+
+  if (!optName) {
+    nameInp.focus();
+    return;
+  }
+
+  // Ensure parent item has checkbox_values structure
+  let itemCbv = _currentEditingWhItem.checkbox_values;
+  if (!itemCbv || typeof itemCbv !== 'object') {
+    itemCbv = typeof itemCbv === 'string' ? JSON.parse(itemCbv) : {};
+  }
+  if (!itemCbv[grp] || typeof itemCbv[grp] !== 'object' || 'stock' in itemCbv[grp]) {
+    const oldFlat = { ...itemCbv };
+    itemCbv = {};
+    if (Object.keys(oldFlat).length > 0) {
+      itemCbv['المقاس'] = oldFlat;
+    }
+    if (!itemCbv[grp]) itemCbv[grp] = {};
+  }
+
+  // Add to item checkbox_values
+  if (!itemCbv[grp]) itemCbv[grp] = {};
+  itemCbv[grp][optName] = { checked: true, stock: 0, disabled: false };
+  _currentEditingWhItem.checkbox_values = itemCbv;
+
+  // Add to active batch checkbox_values
+  const b = _currentWhBatches.find(x => x.id === _activeBatchId);
+  if (b) {
+    let bCbv = b.checkbox_values;
+    if (!bCbv || typeof bCbv !== 'object') {
+      bCbv = typeof bCbv === 'string' ? JSON.parse(bCbv) : {};
+    }
+    if (!bCbv[grp] || typeof bCbv[grp] !== 'object' || 'stock' in bCbv[grp]) {
+      const oldBFlat = { ...bCbv };
+      bCbv = {};
+      if (Object.keys(oldBFlat).length > 0) {
+        bCbv['المقاس'] = oldBFlat;
+      }
+      if (!bCbv[grp]) bCbv[grp] = {};
+    }
+    if (!bCbv[grp]) bCbv[grp] = {};
+    bCbv[grp][optName] = { checked: true, stock: optQty, disabled: false };
+    b.checkbox_values = bCbv;
+  }
+
+  nameInp.value = '';
+  qtyInp.value = '0';
+  if (custInp) custInp.value = '';
+  if (sel) sel.value = grp;
+
+  // Re-render
+  selectActiveWhBatch(_activeBatchId);
+
+  // Focus on newly added input
+  setTimeout(() => {
+    const createdInp = document.querySelector(`.ew-ab-var-inp[data-group-name="${grp}"][data-opt-key="${optName}"]`);
+    if (createdInp) {
+      createdInp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      createdInp.focus();
+      createdInp.select();
+    }
+  }, 100);
 }
 
 function onActiveBatchVarQtyChange() {
