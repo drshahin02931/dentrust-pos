@@ -2032,7 +2032,7 @@ app.get(`${BASE}/api/expiry-alerts`, async (req, res) => {
   const days = months * 30;
   try {
     const { rows } = await posDb.query(
-      `SELECT * FROM products WHERE expiry_date IS NOT NULL AND expiry_date::date <= CURRENT_DATE + ($1 || ' days')::interval ORDER BY expiry_date`,
+      `SELECT * FROM products WHERE expiry_date IS NOT NULL AND quantity > 0 AND expiry_date::date <= CURRENT_DATE + ($1 || ' days')::interval ORDER BY expiry_date`,
       [days]
     );
     const today = new Date().toISOString().substring(0, 10);
@@ -5460,7 +5460,7 @@ async function checkExpiryAndNotify() {
   try {
     const { rows } = await posDb.query(
       `SELECT product_name, expiry_date FROM products
-       WHERE expiry_date IS NOT NULL AND expiry_date::date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '3 months'
+       WHERE expiry_date IS NOT NULL AND quantity > 0 AND expiry_date::date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '3 months'
        ORDER BY expiry_date`
     );
     if (!rows.length) return;
