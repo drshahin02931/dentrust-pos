@@ -101,7 +101,7 @@ const OPEN_API = [
   '/api/sync/order-placed', '/api/stats', '/api/sync/confirm-online-order',
   '/api/sync/upsert-product', '/api/sync/upsert-customer', '/api/settings',
   '/api/ai/fashion-chat', '/api/ai/fashion-chat-stream', '/api/ai/fashion-tryon',
-  '/api/ai/stylebot', '/api/ai/generate-tryon', '/api/products',
+  '/api/ai/stylebot', '/api/products',
   '/api/admin/price-tracker',
   '/api/push/vapid-public-key',
   '/api/website-orders/alerts/count',
@@ -4525,25 +4525,6 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
   }
 });
 
-// POST /api/ai/generate-tryon  (Generate realistic AI Try-On photo)
-app.post('/api/ai/generate-tryon', webCors, async (req, res) => {
-  try {
-    const { product_name = 'Medical Scrub', color = '', gender = 'doctor' } = req.body;
-    const colorDesc = color ? `${color} colored` : 'professional';
-    const prompt = `A professional ${gender} dentist doctor wearing a high quality ${colorDesc} ${product_name}, clean modern dental clinic background, portrait, realistic lighting, 8k resolution, elegant medical wear fit`;
-    const seed = Math.floor(Math.random() * 1000000);
-    const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=640&height=800&seed=${seed}&nologo=true`;
-
-    return res.json({
-      ok: true,
-      imageUrl,
-      prompt,
-    });
-  } catch (err) {
-    console.error('[AI] generate-tryon error:', err.message);
-    res.status(500).json({ error: 'Failed to generate try-on image' });
-  }
-});
 
 // POST /api/ai/fashion-chat-stream  (SSE streaming)
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
