@@ -4394,6 +4394,7 @@ function buildGeminiPayload(messages = [], systemPrompt = '', maxTokens = 1000) 
     generationConfig: {
       temperature: 0.7,
       maxOutputTokens: Math.min(Number(maxTokens) || 1000, 2048),
+      thinkingConfig: { thinkingBudget: 0 }
     }
   };
 
