@@ -316,32 +316,7 @@
       <input type="hidden" id="ew-cost" value="0.00"/>
       <input type="hidden" id="ew-expiry" value=""/>
 
-      <!-- Variants & Sizes Manager Section -->
-      <div id="ew-variants-section" class="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-3">
-        <div class="flex items-center justify-between border-b border-amber-200 pb-2">
-          <div class="flex items-center gap-1.5 text-xs font-bold text-amber-900">
-            <span>🎨</span> إدارة مقاسات المستودع (عدّل الرصيد أو احذف المقاسات غير المرغوبة):
-          </div>
-          <span class="text-xs text-amber-800 font-mono">إجمالي المقاسات: <strong id="ew-var-total-sum" class="font-bold">0</strong></span>
-        </div>
-        
-        <!-- Editable Variants Grid -->
-        <div id="ew-variants-grid" class="space-y-2 max-h-48 overflow-y-auto p-1"></div>
 
-        <!-- Add New Variant Inside Edit -->
-        <div class="flex items-center gap-2 pt-2 border-t border-amber-200">
-          <input type="text" id="ew-new-var-name" placeholder="➕ إضافة مقاس جديد..."
-            class="flex-1 border border-amber-300 rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-            onkeydown="if(event.key==='Enter'){event.preventDefault();addNewEwVariant();}"/>
-          <input type="number" id="ew-new-var-qty" placeholder="الكمية" min="0" value="0"
-            class="w-16 border border-amber-300 rounded-xl px-2 py-1.5 text-xs text-center font-bold font-mono focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-            onkeydown="if(event.key==='Enter'){event.preventDefault();addNewEwVariant();}"/>
-          <button type="button" onclick="addNewEwVariant()"
-            class="bg-amber-700 hover:bg-amber-800 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-sm transition-all whitespace-nowrap flex items-center gap-1">
-            <span>+</span> إضافة
-          </button>
-        </div>
-      </div>
 
       <!-- ════════════════ Batches Selector & Interactive Editor ════════════════ -->
       <div id="ew-batches-master-section" class="bg-gradient-to-br from-indigo-50/90 via-blue-50/70 to-purple-50/90 border-2 border-indigo-200 rounded-3xl p-4 space-y-3.5 shadow-sm">
@@ -448,11 +423,8 @@
           class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"></textarea>
       </div>
 
-      <div>
-        <label class="text-xs font-bold text-gray-700 block mb-1">ملاحظات (اختياري)</label>
-        <input id="ew-notes" type="text" placeholder="ملاحظات الصنف بالمستودع..."
-          class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"/>
-      </div>
+      <!-- Hidden notes input to maintain form compatibility -->
+      <input type="hidden" id="ew-notes" value=""/>
 
       <p id="ew-error" class="hidden text-xs text-red-600 bg-red-50 rounded-xl p-2.5 text-center font-bold"></p>
 
@@ -1240,46 +1212,6 @@ function openEditWarehouseModal(itemId) {
   document.getElementById('ew-error').classList.add('hidden');
   _activeBatchId = null;
 
-  // Render Variants in Edit Modal
-  const grid = document.getElementById('ew-variants-grid');
-  grid.innerHTML = '';
-
-  const whFlat = flattenCbv(item.checkbox_values);
-  const keys = Object.keys(whFlat);
-
-  if (keys.length > 0) {
-    grid.innerHTML = keys.map(displayKey => {
-      const obj = whFlat[displayKey] || {};
-      const rawKey = obj.rawKey || displayKey;
-      const grp = obj.groupName || 'عام';
-      const stock = obj.stock != null ? obj.stock : 0;
-      return `
-        <div class="ew-var-row bg-white p-2.5 rounded-xl border border-amber-200 flex items-center justify-between gap-2 shadow-sm">
-          <div class="flex items-center gap-1.5">
-            ${grp !== 'عام' ? `<span class="px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded text-[10px] font-mono font-bold">${grp}</span>` : ''}
-            <span class="text-xs font-bold text-gray-800">${rawKey}</span>
-          </div>
-          <div class="flex items-center gap-2">
-            <span class="text-[11px] text-gray-500 font-bold">رصيد:</span>
-            <input type="number" min="0" value="${stock}"
-              class="ew-var-qty-input w-16 text-center font-bold text-xs border border-amber-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-amber-400 font-mono bg-white"
-              data-group-name="${grp.replace(/"/g, '&quot;')}"
-              data-opt-key="${rawKey.replace(/"/g, '&quot;')}"
-              oninput="onEwVariantQtyChange()"/>
-            <button type="button" onclick="this.closest('div.ew-var-row').remove(); onEwVariantQtyChange();"
-              class="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg text-xs font-bold transition-colors" title="حذف هذا المقاس من المستودع">
-              🗑️ حذف
-            </button>
-          </div>
-        </div>
-      `;
-    }).join('');
-    onEwVariantQtyChange();
-  } else {
-    grid.innerHTML = `<div class="p-3 text-xs text-gray-400 text-center">لا توجد مقاسات مسجلة لهذا الصنف (يمكنك إضافة مقاس أدناه)</div>`;
-    document.getElementById('ew-var-total-sum').textContent = item.quantity || 0;
-  }
-
   document.getElementById('editWhModal').classList.remove('hidden');
   loadAndRenderWhBatches(item.id);
 }
@@ -1489,60 +1421,6 @@ async function addNewWhBatch() {
   }
 }
 
-function addNewEwVariant() {
-  const nameInp = document.getElementById('ew-new-var-name');
-  const qtyInp = document.getElementById('ew-new-var-qty');
-  const optName = (nameInp.value || '').trim();
-  const optQty = Math.max(0, parseInt(qtyInp.value || 0, 10));
-
-  if (!optName) {
-    nameInp.focus();
-    return;
-  }
-
-  const grid = document.getElementById('ew-variants-grid');
-  // Clear placeholder if present
-  if (grid.innerHTML.includes('لا توجد مقاسات مسجلة')) grid.innerHTML = '';
-
-  const card = document.createElement('div');
-  card.className = 'ew-var-row bg-emerald-50/70 p-2.5 rounded-xl border border-emerald-300 flex items-center justify-between gap-2 shadow-sm animate-in fade-in duration-150';
-  card.innerHTML = `
-    <div class="flex items-center gap-1.5">
-      <span class="text-xs font-bold text-emerald-900 flex items-center gap-1">✨ ${optName}</span>
-      <span class="text-[10px] text-emerald-700 font-semibold">(جديد)</span>
-    </div>
-    <div class="flex items-center gap-2">
-      <span class="text-[11px] text-gray-500 font-bold">رصيد:</span>
-      <input type="number" min="0" value="${optQty}"
-        class="ew-var-qty-input w-16 text-center font-bold text-xs border border-emerald-400 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-emerald-400 font-mono bg-white"
-        data-group-name="عام"
-        data-opt-key="${optName.replace(/"/g, '&quot;')}"
-        oninput="onEwVariantQtyChange()"/>
-      <button type="button" onclick="this.closest('div.ew-var-row').remove(); onEwVariantQtyChange();"
-        class="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg text-xs font-bold transition-colors" title="حذف هذا المقاس">
-        🗑️ حذف
-      </button>
-    </div>
-  `;
-  grid.appendChild(card);
-
-  nameInp.value = '';
-  onEwVariantQtyChange();
-}
-
-function onEwVariantQtyChange() {
-  const inputs = document.querySelectorAll('.ew-var-qty-input');
-  if (inputs.length === 0) {
-    return;
-  }
-  let total = 0;
-  inputs.forEach(inp => {
-    total += Math.max(0, parseInt(inp.value || 0, 10));
-  });
-  document.getElementById('ew-qty').value = total;
-  document.getElementById('ew-var-total-sum').textContent = total;
-}
-
 async function submitEditWarehouseItem(e) {
   e.preventDefault();
   if (!_currentEditingWhItem) return;
@@ -1553,36 +1431,13 @@ async function submitEditWarehouseItem(e) {
   const name = document.getElementById('ew-name').value;
   const barcode = document.getElementById('ew-barcode').value;
   const category = document.getElementById('ew-category').value;
-  const cost = document.getElementById('ew-cost').value;
   const price = document.getElementById('ew-price').value;
-  const qty = parseInt(document.getElementById('ew-qty').value || 0, 10);
   const desc = document.getElementById('ew-desc').value;
-  const expiry = document.getElementById('ew-expiry').value;
-  const notes = document.getElementById('ew-notes').value;
-
-  // Package remaining variants (excluding deleted ones!)
-  let checkboxValuesJson = null;
-  const varInputs = document.querySelectorAll('.ew-var-qty-input');
-  if (varInputs.length > 0) {
-    let baseCbv = {};
-    const isGrouped = Array.from(varInputs).some(i => i.dataset.groupName && i.dataset.groupName !== 'عام');
-    if (isGrouped) {
-      varInputs.forEach(inp => {
-        const grp = inp.dataset.groupName || 'عام';
-        const k = inp.dataset.optKey;
-        const q = parseInt(inp.value || 0, 10);
-        if (!baseCbv[grp]) baseCbv[grp] = {};
-        baseCbv[grp][k] = { checked: true, stock: q, disabled: false };
-      });
-    } else {
-      varInputs.forEach(inp => {
-        const k = inp.dataset.optKey;
-        const q = parseInt(inp.value || 0, 10);
-        baseCbv[k] = { checked: true, stock: q, disabled: false };
-      });
-    }
-    checkboxValuesJson = JSON.stringify(baseCbv);
-  }
+  const cost = document.getElementById('ew-cost').value || _currentEditingWhItem.cost_price;
+  const qty = parseInt(document.getElementById('ew-qty').value || _currentEditingWhItem.quantity || 0, 10);
+  const expiry = document.getElementById('ew-expiry').value || _currentEditingWhItem.expiry_date;
+  const notes = _currentEditingWhItem.notes || '';
+  const checkboxValuesJson = _currentEditingWhItem.checkbox_values ? (typeof _currentEditingWhItem.checkbox_values === 'string' ? _currentEditingWhItem.checkbox_values : JSON.stringify(_currentEditingWhItem.checkbox_values)) : null;
 
   try {
     const res = await fetch(`${BASE}/api/warehouse/products/${itemId}`, {
