@@ -542,17 +542,33 @@ app.post(`${BASE}/api/upload-image`, upload.single('file'), async (req, res) => 
   // Upload directly to Supabase Storage if key is available — only the URL is stored in DB
   if (SUPABASE_SERVICE_KEY) {
     try {
-      const ext = req.file.mimetype.split('/')[1]?.replace('jpeg','jpg') || 'jpg';
+      let uploadBuf = req.file.buffer;
+      let uploadMime = req.file.mimetype;
+      let ext = req.file.mimetype.split('/')[1]?.replace('jpeg','jpg') || 'jpg';
+
+      // Automatic WebP conversion and resizing for lightning-fast loads
+      try {
+        const sharp = require('sharp');
+        uploadBuf = await sharp(req.file.buffer)
+          .resize({ width: 700, height: 700, fit: 'inside', withoutEnlargement: true })
+          .webp({ quality: 80 })
+          .toBuffer();
+        uploadMime = 'image/webp';
+        ext = 'webp';
+      } catch (sharpErr) {
+        console.warn('[Upload Image] sharp optimization skipped, using original:', sharpErr.message);
+      }
+
       const filename = `uploads/${uuidv4()}.${ext}`;
       const uploadUrl = `${SUPABASE_BASE}/storage/v1/object/products/${filename}`;
       const resp = await fetch(uploadUrl, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-          'Content-Type': req.file.mimetype,
+          'Content-Type': uploadMime,
           'x-upsert': 'true',
         },
-        body: req.file.buffer,
+        body: uploadBuf,
       });
       if (resp.ok) {
         const publicUrl = `${SUPABASE_BASE}/storage/v1/object/public/products/${filename}`;
@@ -679,9 +695,10 @@ const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, 
   COALESCE(is_hidden_from_website, false) AS is_hidden_from_website,
   dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image,
   CASE
+    WHEN image_url LIKE '%/objects/uploads/%' THEN REPLACE(image_url, '/objects/uploads/', '/products/uploads/')
     WHEN image_url LIKE 'http%' THEN image_url
-    WHEN image_url LIKE '/objects/%' THEN 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public' || image_url
-    WHEN image_url LIKE 'objects/%'  THEN 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/' || image_url
+    WHEN image_url LIKE '/objects/%' THEN 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/products/' || SUBSTRING(image_url FROM 10)
+    WHEN image_url LIKE 'objects/%'  THEN 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/products/' || SUBSTRING(image_url FROM 9)
     ELSE NULL
   END AS image_url`;
 
@@ -4007,10 +4024,14 @@ app.get('/api/products', webCors, async (req, res) => {
       // Convert relative Supabase storage paths to full public URLs & sanitize for website
       for (const row of rows) {
         delete row.purchase_price;
-        if (row.image_url && row.image_url.startsWith('/objects/')) {
-          row.image_url = 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public' + row.image_url;
-        } else if (row.image_url && row.image_url.startsWith('objects/')) {
-          row.image_url = 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/' + row.image_url;
+        if (row.image_url) {
+          if (row.image_url.includes('/objects/uploads/')) {
+            row.image_url = row.image_url.replace('/objects/uploads/', '/products/uploads/');
+          } else if (row.image_url.startsWith('/objects/')) {
+            row.image_url = 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/products/' + row.image_url.slice(9);
+          } else if (row.image_url.startsWith('objects/')) {
+            row.image_url = 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/products/' + row.image_url.slice(8);
+          }
         }
         // Sanitize checkbox_values: strictly remove cost_price, preserve stock and sale_price
         if (row.checkbox_values) {
