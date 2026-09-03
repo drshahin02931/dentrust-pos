@@ -311,26 +311,10 @@
         </div>
       </div>
 
-      <!-- Cost, Quantity & Expiry -->
-      <div class="bg-gray-50 border rounded-2xl p-3.5 space-y-3">
-        <div class="grid grid-cols-3 gap-2">
-          <div>
-            <label class="text-xs font-bold text-gray-700 block mb-1">إجمالي رصيد المستودع *</label>
-            <input id="ew-qty" type="number" min="0" value="0" required
-              class="w-full border rounded-xl px-3 py-2 text-sm text-center font-bold text-blue-700 focus:outline-none focus:ring-2 focus:ring-amber-400 font-mono"/>
-          </div>
-          <div>
-            <label class="text-xs font-bold text-gray-700 block mb-1">سعر التكلفة (EGP) *</label>
-            <input id="ew-cost" type="number" min="0" step="0.01" value="0.00" required
-              class="w-full border rounded-xl px-3 py-2 text-sm text-center font-mono font-bold text-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-400"/>
-          </div>
-          <div>
-            <label class="text-xs font-bold text-gray-700 block mb-1">الصلاحية (اختياري)</label>
-            <input id="ew-expiry" type="date"
-              class="w-full border rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"/>
-          </div>
-        </div>
-      </div>
+      <!-- Hidden inputs for cost, qty, expiry to maintain form compatibility -->
+      <input type="hidden" id="ew-qty" value="0"/>
+      <input type="hidden" id="ew-cost" value="0.00"/>
+      <input type="hidden" id="ew-expiry" value=""/>
 
       <!-- Variants & Sizes Manager Section -->
       <div id="ew-variants-section" class="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-3">
@@ -1243,13 +1227,9 @@ function openEditWarehouseModal(itemId) {
         </div>
       `;
     }).join('');
-    document.getElementById('ew-qty').readOnly = true;
-    document.getElementById('ew-qty').classList.add('bg-gray-100');
     onEwVariantQtyChange();
   } else {
     grid.innerHTML = `<div class="p-3 text-xs text-gray-400 text-center">لا توجد مقاسات مسجلة لهذا الصنف (يمكنك إضافة مقاس أدناه)</div>`;
-    document.getElementById('ew-qty').readOnly = false;
-    document.getElementById('ew-qty').classList.remove('bg-gray-100');
     document.getElementById('ew-var-total-sum').textContent = item.quantity || 0;
   }
 
@@ -1469,16 +1449,12 @@ function addNewEwVariant() {
   grid.appendChild(card);
 
   nameInp.value = '';
-  document.getElementById('ew-qty').readOnly = true;
-  document.getElementById('ew-qty').classList.add('bg-gray-100');
   onEwVariantQtyChange();
 }
 
 function onEwVariantQtyChange() {
   const inputs = document.querySelectorAll('.ew-var-qty-input');
   if (inputs.length === 0) {
-    document.getElementById('ew-qty').readOnly = false;
-    document.getElementById('ew-qty').classList.remove('bg-gray-100');
     return;
   }
   let total = 0;
