@@ -805,9 +805,10 @@ function parseVariants(p) {
               if (!checked || disabled) return;
               const stock = subVal.stock != null ? parseInt(subVal.stock) : (p.quantity || 0);
               const costPrice = (subVal.cost_price != null && parseFloat(subVal.cost_price) > 0)
-                ? parseFloat(subVal.cost_price)
-                : parseFloat(p.purchase_price || 0);
-              sizes.push({ label: subKey, qty: stock, cost_price: costPrice, _cbKey: `${key}::${subKey}`, group: key });
+              const salePrice = (subVal.sale_price != null && parseFloat(subVal.sale_price) > 0)
+                ? parseFloat(subVal.sale_price)
+                : parseFloat(p.sale_price || 0);
+              sizes.push({ label: subKey, qty: stock, cost_price: costPrice, sale_price: salePrice, _cbKey: `${key}::${subKey}`, group: key });
             }
           });
           return;
@@ -825,7 +826,10 @@ function parseVariants(p) {
         const costPrice = (typeof val === 'object' && val?.cost_price != null && parseFloat(val.cost_price) > 0)
           ? parseFloat(val.cost_price)
           : parseFloat(p.purchase_price || 0);
-        sizes.push({ label, qty: stock, cost_price: costPrice, _cbKey: key, group });
+        const salePrice = (typeof val === 'object' && val?.sale_price != null && parseFloat(val.sale_price) > 0)
+          ? parseFloat(val.sale_price)
+          : parseFloat(p.sale_price || 0);
+        sizes.push({ label, qty: stock, cost_price: costPrice, sale_price: salePrice, _cbKey: key, group });
       });
       if (sizes.length > 0) return { sizes };
     } catch(e) {}
@@ -931,6 +935,11 @@ function selectVPSize(key) {
   const s = (_vpVariants.sizes || []).find(x => (x._cbKey || x.label) === key);
   _vpSelCbKey = s?._cbKey || null;  // track full checkbox key for checkbox-based options
   if (s) {
+    if (s.sale_price && parseFloat(s.sale_price) > 0) {
+      document.getElementById("vp-price").textContent = parseFloat(s.sale_price).toFixed(2) + " جنيه";
+    } else {
+      document.getElementById("vp-price").textContent = parseFloat(_vpProduct.sale_price || 0).toFixed(2) + " جنيه";
+    }
     const info = document.getElementById("vp-stock-info");
     const lowS  = s.qty <= 2;
     if (lowS) {
@@ -1009,7 +1018,7 @@ function confirmVariantAdd() {
       selected_size: _vpSelSize,
       selected_option: _vpSelCbKey || null,
       _color:        _vpSelColor || null,
-      unit_price:    _vpProduct.sale_price,
+      unit_price:    (sizeObj && sizeObj.sale_price != null && parseFloat(sizeObj.sale_price) > 0) ? parseFloat(sizeObj.sale_price) : _vpProduct.sale_price,
       purchase_price: variantCost,
       quantity:      qty,
       max_qty:       maxQty

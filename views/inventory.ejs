@@ -1284,18 +1284,36 @@ function cbLoad(raw) {
   cbData = {};
   let cv = {};
   try { cv = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {}; } catch(e) {}
-  // Parse flat "Cat::Label" format into nested
+  
   Object.entries(cv).forEach(([key, val]) => {
+    if (typeof val === 'object' && val !== null && !key.includes('::') && val.stock == null && (val.checked == null || typeof val.checked === 'object')) {
+      const cat = key;
+      if (!cbData[cat]) cbData[cat] = {};
+      Object.entries(val).forEach(([subLabel, subVal]) => {
+        if (typeof subVal === 'object' && subVal !== null) {
+          const checked    = subVal.checked ?? true;
+          const disabled   = subVal.disabled ?? false;
+          const reason     = subVal.reason ?? "";
+          const stock      = subVal.stock !== undefined ? subVal.stock : null;
+          const cost_price = subVal.cost_price != null ? parseFloat(subVal.cost_price) : null;
+          const sale_price = subVal.sale_price != null ? parseFloat(subVal.sale_price) : null;
+          cbData[cat][subLabel] = { checked, disabled, reason, stock, cost_price, sale_price };
+        }
+      });
+      return;
+    }
     const sep = key.indexOf("::");
     if (sep === -1) return;
     const cat = key.slice(0, sep);
     const label = key.slice(sep + 2);
     if (!cbData[cat]) cbData[cat] = {};
-    const checked  = typeof val === 'boolean' ? val : (val?.checked ?? false);
-    const disabled = typeof val === 'object' ? (val?.disabled ?? false) : false;
-    const reason   = typeof val === 'object' ? (val?.reason ?? "") : "";
-    const stock    = typeof val === 'object' && val?.stock !== undefined ? val.stock : null;
-    cbData[cat][label] = { checked, disabled, reason, stock };
+    const checked    = typeof val === 'boolean' ? val : (val?.checked ?? false);
+    const disabled   = typeof val === 'object' ? (val?.disabled ?? false) : false;
+    const reason     = typeof val === 'object' ? (val?.reason ?? "") : "";
+    const stock      = typeof val === 'object' && val?.stock !== undefined ? val.stock : null;
+    const cost_price = typeof val === 'object' && val?.cost_price != null ? parseFloat(val.cost_price) : null;
+    const sale_price = typeof val === 'object' && val?.sale_price != null ? parseFloat(val.sale_price) : null;
+    cbData[cat][label] = { checked, disabled, reason, stock, cost_price, sale_price };
   });
   cbRender();
   cbUpdateTotalQty();
@@ -1307,17 +1325,34 @@ function cbGetValues() {
     Object.entries(opts).forEach(([label, v]) => {
       const key = `${cat}::${label}`;
       const hasStock = v.stock !== null && v.stock !== undefined;
-      if (!v.disabled && !hasStock) {
+      const hasCost  = v.cost_price !== null && v.cost_price !== undefined && !isNaN(v.cost_price);
+      const hasPrice = v.sale_price !== null && v.sale_price !== undefined && !isNaN(v.sale_price);
+
+      if (!v.disabled && !hasStock && !hasCost && !hasPrice) {
         out[key] = v.checked;
       } else {
         const obj = { checked: v.checked };
         if (v.disabled) { obj.disabled = true; if (v.reason) obj.reason = v.reason; }
         if (hasStock) obj.stock = v.stock;
+        if (hasCost) obj.cost_price = parseFloat(v.cost_price);
+        if (hasPrice) obj.sale_price = parseFloat(v.sale_price);
         out[key] = obj;
       }
     });
   });
   return Object.keys(out).length > 0 ? out : null;
+}
+
+function cbSetCost(cat, label, val) {
+  if (cbData[cat]?.[label]) {
+    cbData[cat][label].cost_price = val === "" ? null : Math.max(0, parseFloat(val) || 0);
+  }
+}
+
+function cbSetSalePrice(cat, label, val) {
+  if (cbData[cat]?.[label]) {
+    cbData[cat][label].sale_price = val === "" ? null : Math.max(0, parseFloat(val) || 0);
+  }
 }
 
 function cbAddCategory() {
@@ -1346,7 +1381,7 @@ function cbAddOption(cat) {
   if (!label) { inp.focus(); return; }
   if (!cbData[cat]) cbData[cat] = {};
   if (cbData[cat][label]) { inp.value = ""; return; }
-  cbData[cat][label] = { checked: true, disabled: false, reason: "", stock: null };
+  cbData[cat][label] = { checked: true, disabled: false, reason: "", stock: null, cost_price: null, sale_price: null };
   inp.value = "";
   cbRender();
   setTimeout(() => { const el = document.getElementById(`cb-opt-inp-${CSS.escape(cat)}`); if (el) el.focus(); }, 30);
@@ -1422,22 +1457,53 @@ function cbRender() {
       const isSoldOut = o.stock !== null && o.stock <= 0;
       const isDisabled = o.disabled || isSoldOut;
       const stockVal = o.stock !== null ? o.stock : "";
-      return `<div class="flex flex-wrap items-center gap-2 px-2 py-1.5 rounded-lg border ${isDisabled ? 'border-red-200 bg-red-50' : 'border-transparent bg-white'}">
-        <input type="checkbox" ${o.checked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''}
-          onchange="cbToggleChecked('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}') "
-          class="w-4 h-4 accent-blue-700 flex-shrink-0 disabled:opacity-40"/>
-        <span class="text-sm flex-1 ${isDisabled ? 'line-through text-gray-400' : 'text-gray-800'}">${label}</span>
-        <span class="text-xs text-gray-400">كمية:</span>
-        <input type="number" min="0" placeholder="∞" value="${stockVal}"
-          onchange="cbSetStock('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}',this.value)"
-          class="w-14 border border-gray-200 rounded-lg px-1.5 py-0.5 text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white"/>
-        ${isDisabled ? `<span class="text-[10px] font-bold text-red-500 bg-red-100 px-1.5 py-0.5 rounded-full">${isSoldOut ? 'نفذ' : 'غير متاح'}</span>` : ''}
-        <button type="button" title="${isDisabled ? 'تفعيل' : 'تعطيل'}"
-          onclick="cbToggleDisabled('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}') "
-          class="text-gray-300 hover:text-red-500 transition-colors flex-shrink-0 text-base leading-none">${isDisabled ? '✅' : '🚫'}</button>
-        <button type="button" onclick="cbRemoveOption('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}') "
-          class="text-gray-300 hover:text-red-500 text-lg leading-none flex-shrink-0">×</button>
-        ${o.disabled && !isSoldOut ? `<div class="w-full mt-1">
+      const costVal = o.cost_price !== null && o.cost_price !== undefined ? o.cost_price : "";
+      const saleVal = o.sale_price !== null && o.sale_price !== undefined ? o.sale_price : "";
+      return `<div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl border ${isDisabled ? 'border-red-200 bg-red-50/50' : 'border-gray-200 bg-white shadow-xs'}">
+        <div class="flex items-center gap-2 min-w-[120px]">
+          <input type="checkbox" ${o.checked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''}
+            onchange="cbToggleChecked('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}')"
+            class="w-4 h-4 accent-blue-700 flex-shrink-0 disabled:opacity-40 cursor-pointer"/>
+          <span class="text-sm font-bold ${isDisabled ? 'line-through text-gray-400' : 'text-gray-800'}">${label}</span>
+          ${isDisabled ? `<span class="text-[10px] font-bold text-red-500 bg-red-100 px-1.5 py-0.5 rounded-full">${isSoldOut ? 'نفذ' : 'غير متاح'}</span>` : ''}
+        </div>
+
+        <div class="flex items-center gap-2 text-xs">
+          <!-- Stock -->
+          <div class="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1" title="رصيد هذا المقاس بالمحل">
+            <span class="text-[11px] text-gray-500 font-bold">الكمية:</span>
+            <input type="number" min="0" placeholder="0" value="${stockVal}"
+              onchange="cbSetStock('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}',this.value)"
+              class="w-14 border border-gray-300 rounded px-1.5 py-0.5 text-xs text-center font-bold font-mono focus:ring-1 focus:ring-blue-400 bg-white"/>
+          </div>
+
+          <!-- Cost Price -->
+          <div class="flex items-center gap-1 bg-amber-50/80 border border-amber-200 rounded-lg px-2 py-1" title="سعر الشراء / التكلفة لهذا المقاس تحديداً">
+            <span class="text-[11px] text-amber-800 font-bold">شراء:</span>
+            <input type="number" min="0" step="0.01" placeholder="تكلفة" value="${costVal}"
+              onchange="cbSetCost('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}',this.value)"
+              class="w-16 border border-amber-300 rounded px-1 py-0.5 text-xs text-center font-mono font-bold text-amber-900 bg-white focus:ring-1 focus:ring-amber-400"/>
+            <span class="text-[10px] text-amber-700 font-bold">ج</span>
+          </div>
+
+          <!-- Sale Price -->
+          <div class="flex items-center gap-1 bg-blue-50/80 border border-blue-200 rounded-lg px-2 py-1" title="سعر بيع خاص بهذا المقاس (اختياري - اتركه فارغاً ليأخذ السعر الأساسي)">
+            <span class="text-[11px] text-blue-800 font-bold">بيع:</span>
+            <input type="number" min="0" step="0.01" placeholder="افتراضي" value="${saleVal}"
+              onchange="cbSetSalePrice('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}',this.value)"
+              class="w-16 border border-blue-300 rounded px-1 py-0.5 text-xs text-center font-mono font-bold text-blue-900 bg-white focus:ring-1 focus:ring-blue-400"/>
+            <span class="text-[10px] text-blue-700 font-bold">ج</span>
+          </div>
+
+          <button type="button" title="${isDisabled ? 'تفعيل' : 'تعطيل'}"
+            onclick="cbToggleDisabled('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}')"
+            class="text-gray-400 hover:text-red-500 transition-colors flex-shrink-0 text-sm p-1 rounded hover:bg-gray-100 cursor-pointer">${isDisabled ? '✅' : '🚫'}</button>
+          <button type="button" title="حذف هذا الخيار"
+            onclick="cbRemoveOption('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}')"
+            class="text-gray-400 hover:text-red-600 text-base leading-none p-1 rounded hover:bg-red-50 cursor-pointer">✕</button>
+        </div>
+
+        ${o.disabled && !isSoldOut ? `<div class="w-full mt-1.5">
           <input type="text" placeholder="سبب التعطيل..." value="${(o.reason||'').replace(/"/g,'&quot;')}"
             oninput="cbSetReason('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}',this.value)"
             class="w-full border border-red-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-red-300 text-red-600 placeholder-red-300 bg-white"/>

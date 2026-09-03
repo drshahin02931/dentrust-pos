@@ -915,12 +915,29 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
         const cbv = typeof d.checkbox_values === 'string' ? JSON.parse(d.checkbox_values) : d.checkbox_values;
         for (const [key, val] of Object.entries(cbv)) {
           const vStock = (typeof val === 'object' && val !== null && val.stock != null) ? parseInt(val.stock, 10) : (typeof val === 'number' ? val : 0);
+          const vCost = (typeof val === 'object' && val !== null && val.cost_price != null && parseFloat(val.cost_price) > 0) ? parseFloat(val.cost_price) : null;
+          const shortKey = key.includes('::') ? key.split('::').pop() : key;
+
           if (vStock <= 0) {
-            const shortKey = key.includes('::') ? key.split('::').pop() : key;
             await posDb.query(
               `UPDATE product_cost_batches SET remaining_quantity = 0 WHERE product_id = $1 AND (selected_option = $2 OR selected_option = $3)`,
               [pid, key, shortKey]
             ).catch(() => {});
+          } else if (vCost !== null) {
+            const { rows: existB } = await posDb.query(
+              `SELECT id FROM product_cost_batches WHERE product_id = $1 AND (selected_option = $2 OR selected_option = $3) AND remaining_quantity > 0 ORDER BY id DESC LIMIT 1`,
+              [pid, key, shortKey]
+            ).catch(() => ({ rows: [] }));
+
+            if (existB && existB.length > 0) {
+              await posDb.query('UPDATE product_cost_batches SET cost_price = $1 WHERE id = $2', [vCost, existB[0].id]).catch(() => {});
+            } else {
+              await posDb.query(
+                `INSERT INTO product_cost_batches (product_id, selected_option, quantity, remaining_quantity, cost_price, source)
+                 VALUES ($1, $2, $3, $4, $5, 'manual_variant_price')`,
+                [pid, key, vStock, vStock, vCost]
+              ).catch(() => {});
+            }
           }
         }
       } catch (_) {}
