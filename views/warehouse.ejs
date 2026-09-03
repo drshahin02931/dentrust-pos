@@ -481,6 +481,10 @@
           class="w-full border rounded-xl px-3 py-2 text-xs font-medium bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
           <option value="">⚡ تلقائي (الأقرب صلاحية والأقدم - FIFO)</option>
         </select>
+        <div id="tr-batch-info-badge" class="bg-indigo-50/70 border border-indigo-200 rounded-xl px-3 py-2 text-xs flex items-center justify-between font-bold text-indigo-950">
+          <span>💵 سعر الشراء: <strong id="tr-batch-cost-val" class="font-mono text-amber-700 font-black">0.00</strong> ج</span>
+          <span>📅 تاريخ الصلاحية: <strong id="tr-batch-exp-val" class="font-mono text-indigo-800 font-black">بدون (0)</strong></span>
+        </div>
       </div>
 
       <!-- Current Stock Status Cards -->
@@ -1747,7 +1751,12 @@ function openTransferModal(itemId, initialBatchId = null) {
   const bSelect = document.getElementById('tr-batch-select');
   const batches = item.batches || [];
   bSelect.innerHTML = '<option value="">⚡ تلقائي (الأقرب صلاحية والأقدم - FIFO)</option>' +
-    batches.map(b => `<option value="${b.id}">📦 ${b.batch_number || 'شحنة'} (متاح: ${b.quantity} | تكلفة: ${parseFloat(b.cost_price||0).toFixed(2)} ج ${b.expiry_date ? '| صلاحية: ' + b.expiry_date : ''})</option>`).join('');
+    batches.map(b => {
+      const expStr = b.expiry_date ? `صلاحية: ${b.expiry_date}` : 'صلاحية: بدون (0)';
+      const costStr = `${parseFloat(b.cost_price || 0).toFixed(2)} ج`;
+      const numStr = b.batch_number || `شحنة #${b.id}`;
+      return `<option value="${b.id}">📦 ${numStr} (متاح: ${b.quantity} | تكلفة: ${costStr} | ${expStr})</option>`;
+    }).join('');
 
   if (initialBatchId && batches.some(b => String(b.id) === String(initialBatchId))) {
     bSelect.value = String(initialBatchId);
@@ -1779,57 +1788,72 @@ function onBatchSelectChange() {
   const bId = document.getElementById('tr-batch-select').value;
   const vContainer = document.getElementById('tr-variants-container');
   const vList = document.getElementById('tr-variants-list');
+  const costValEl = document.getElementById('tr-batch-cost-val');
+  const expValEl = document.getElementById('tr-batch-exp-val');
   
-  let targetCbv = _currentTrItem.checkbox_values;
+  let targetCbv = null;
   let availQty = parseInt(_currentTrItem.quantity || 0, 10);
+
+  const itemFlat = flattenCbv(_currentTrItem.checkbox_values);
+  const variantKeys = Object.keys(itemFlat);
 
   if (bId) {
     const b = (_currentTrItem.batches || []).find(x => String(x.id) === String(bId));
     if (b) {
       availQty = parseInt(b.quantity || 0, 10);
+      if (costValEl) costValEl.textContent = parseFloat(b.cost_price || 0).toFixed(2);
+      if (expValEl) expValEl.textContent = b.expiry_date ? b.expiry_date : 'بدون (0)';
+
       if (b.checkbox_values) {
         targetCbv = b.checkbox_values;
-      } else {
+      } else if (variantKeys.length > 0) {
         targetCbv = {};
-        const itemFlat = flattenCbv(_currentTrItem.checkbox_values);
-        const keys = Object.keys(itemFlat);
-        keys.forEach((k, idx) => {
+        variantKeys.forEach((k, idx) => {
           targetCbv[k] = { stock: (idx === 0 ? availQty : 0) };
         });
       }
     }
+  } else {
+    // FIFO selection
+    if (costValEl) costValEl.textContent = parseFloat(_currentTrItem.cost_price || 0).toFixed(2) + ' (تلقائي)';
+    if (expValEl) expValEl.textContent = _currentTrItem.expiry_date ? _currentTrItem.expiry_date : 'الأقدم (FIFO)';
+    targetCbv = _currentTrItem.checkbox_values;
   }
 
   // Render variants corresponding strictly to this batch / item
   let hasVariants = false;
   vList.innerHTML = '';
 
-  if (targetCbv) {
+  if (targetCbv && variantKeys.length > 0) {
     const flat = flattenCbv(targetCbv);
-    const opts = Object.keys(flat);
+    const opts = variantKeys;
     if (opts.length > 0) {
       hasVariants = true;
-      vList.innerHTML = opts.map((opt, idx) => {
-        const itemObj = flat[opt] || {};
-        const stock = itemObj.stock != null ? parseInt(itemObj.stock) : 0;
-        const rawKey = itemObj.rawKey || opt;
-        const isSelected = _currentTrSizeKey ? (_currentTrSizeKey === rawKey || _currentTrSizeKey === opt) : (idx === 0);
+      
+      // Auto-select first variant or active variant
+      let activeOptKey = _currentTrSizeKey || opts[0];
+      let foundVal = flat[activeOptKey] || Object.values(flat).find(v => v.rawKey === activeOptKey);
+      if (!foundVal) {
+        activeOptKey = opts[0];
+        foundVal = flat[opts[0]] || {};
+      }
+      _currentTrSizeKey = foundVal.rawKey || activeOptKey;
+      _maxAvailTr = foundVal.stock != null ? parseInt(foundVal.stock) : 0;
+
+      vList.innerHTML = opts.map((displayKey, idx) => {
+        const itemObj = flat[displayKey] || itemFlat[displayKey] || {};
+        const stock = (flat[displayKey] && flat[displayKey].stock != null) ? parseInt(flat[displayKey].stock) : 0;
+        const rawKey = itemObj.rawKey || displayKey;
+        const isSelected = (_currentTrSizeKey === rawKey || _currentTrSizeKey === displayKey);
         return `
           <button type="button" onclick="selectTrVariant('${rawKey.replace(/'/g, "\\'")}', ${stock})" id="tr-opt-${idx}"
             data-opt-key="${rawKey.replace(/"/g, '&quot;')}"
-            class="tr-opt-btn px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${isSelected ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-gray-50 text-gray-700 border-gray-200 hover:border-blue-400'}">
+            class="tr-opt-btn px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${isSelected ? 'bg-blue-600 text-white border-blue-600 shadow-sm ring-2 ring-blue-200' : 'bg-gray-50 text-gray-700 border-gray-200 hover:border-blue-400'}">
             ${rawKey} <span class="text-[11px] font-mono opacity-80">(${stock})</span>
           </button>
         `;
       }).join('');
 
-      // Auto-select first variant or active variant
-      let activeOptKey = _currentTrSizeKey || opts[0];
-      let foundVal = flat[activeOptKey] || Object.values(flat).find(v => v.rawKey === activeOptKey);
-      if (!foundVal) foundVal = flat[opts[0]];
-      
-      _currentTrSizeKey = foundVal.rawKey || opts[0];
-      _maxAvailTr = foundVal.stock != null ? parseInt(foundVal.stock) : 0;
       document.getElementById('tr-avail-wh').textContent = _maxAvailTr;
     }
   }
