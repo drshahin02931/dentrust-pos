@@ -363,22 +363,22 @@
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
             <div>
               <label class="text-[10px] font-bold text-gray-600 block mb-1">عنوان / رقم الشحنة *</label>
-              <input type="text" id="ew-ab-num" placeholder="اسم الشحنة"
+              <input type="text" id="ew-ab-num" placeholder="اسم الشحنة" oninput="syncActiveBatchToMemory()"
                 class="w-full border-2 border-gray-200 rounded-xl px-2.5 py-2 text-xs font-bold text-gray-800 focus:outline-none focus:border-indigo-500 bg-gray-50/40"/>
             </div>
             <div>
               <label class="text-[10px] font-bold text-gray-600 block mb-1">سعر شراء الشحنة (EGP) *</label>
-              <input type="number" id="ew-ab-cost" min="0" step="0.01" value="0.00"
+              <input type="number" id="ew-ab-cost" min="0" step="0.01" value="0.00" oninput="syncActiveBatchToMemory()"
                 class="w-full border-2 border-amber-300 rounded-xl px-2.5 py-2 text-xs text-center font-black font-mono text-amber-700 focus:outline-none focus:border-amber-500 bg-amber-50/20"/>
             </div>
             <div>
               <label class="text-[10px] font-bold text-gray-600 block mb-1">الكمية المتاحة بالشحنة *</label>
-              <input type="number" id="ew-ab-qty" min="0" value="0"
+              <input type="number" id="ew-ab-qty" min="0" value="0" oninput="syncActiveBatchToMemory()"
                 class="w-full border-2 border-blue-300 rounded-xl px-2.5 py-2 text-xs text-center font-black font-mono text-blue-800 focus:outline-none focus:border-blue-500 bg-blue-50/20"/>
             </div>
             <div>
               <label class="text-[10px] font-bold text-gray-600 block mb-1">تاريخ الصلاحية (إن وجد)</label>
-              <input type="date" id="ew-ab-exp"
+              <input type="date" id="ew-ab-exp" onchange="syncActiveBatchToMemory()"
                 class="w-full border-2 border-gray-200 rounded-xl px-2 py-1.5 text-xs focus:outline-none focus:border-indigo-500 bg-gray-50/40"/>
             </div>
           </div>
@@ -396,7 +396,7 @@
 
           <div>
             <label class="text-[10px] font-bold text-gray-600 block mb-1">ملاحظات هذه الشحنة (مثال: اسم المورد، الفاتورة...)</label>
-            <input type="text" id="ew-ab-notes" placeholder="ملاحظات الشحنة..."
+            <input type="text" id="ew-ab-notes" placeholder="ملاحظات الشحنة..." oninput="syncActiveBatchToMemory()"
               class="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs text-gray-700 focus:outline-none focus:border-indigo-500 bg-gray-50/40"/>
           </div>
         </div>
@@ -1318,7 +1318,67 @@ function renderWhBatchesUI(batches) {
   selectActiveWhBatch(_activeBatchId);
 }
 
+function syncActiveBatchToMemory() {
+  if (!_activeBatchId) return;
+  const b = _currentWhBatches.find(x => x.id === _activeBatchId);
+  if (!b) return;
+
+  b.batch_number = document.getElementById('ew-ab-num').value.trim();
+  b.cost_price = parseFloat(document.getElementById('ew-ab-cost').value || 0);
+  b.quantity = parseInt(document.getElementById('ew-ab-qty').value || 0, 10);
+  b.expiry_date = document.getElementById('ew-ab-exp').value;
+  b.notes = document.getElementById('ew-ab-notes').value.trim();
+
+  // Package variant values for this batch
+  const varInputs = document.querySelectorAll('.ew-ab-var-inp');
+  if (varInputs.length > 0) {
+    let cbvObj = {};
+    const isGrouped = Array.from(varInputs).some(i => i.dataset.groupName && i.dataset.groupName !== 'عام');
+    if (isGrouped) {
+      varInputs.forEach(inp => {
+        const grp = inp.dataset.groupName || 'عام';
+        const k = inp.dataset.optKey;
+        const q = parseInt(inp.value || 0, 10);
+        if (!cbvObj[grp]) cbvObj[grp] = {};
+        cbvObj[grp][k] = { checked: true, stock: q, disabled: false };
+      });
+    } else {
+      varInputs.forEach(inp => {
+        const k = inp.dataset.optKey;
+        const q = parseInt(inp.value || 0, 10);
+        cbvObj[k] = { checked: true, stock: q, disabled: false };
+      });
+    }
+    b.checkbox_values = cbvObj;
+  }
+
+  // Update tab pill UI in real time
+  const pillBtn = document.getElementById(`batch-tab-btn-${b.id}`);
+  if (pillBtn) {
+    const isLatest = _currentWhBatches[_currentWhBatches.length - 1]?.id === b.id;
+    const bNum = b.batch_number || `شحنة #${b.id}`;
+    const bNotes = b.notes ? b.notes.slice(0, 25) : '';
+    const bQty = b.quantity || 0;
+    const bCost = parseFloat(b.cost_price || 0).toFixed(2);
+    pillBtn.innerHTML = `
+      <div class="flex items-center gap-1.5 justify-between">
+        <span class="font-bold text-gray-900">${isLatest ? '🟢' : '📦'} ${bNum}</span>
+        <span class="text-[10px] font-mono font-black px-1.5 py-0.5 rounded-lg bg-indigo-100 text-indigo-800">${bQty} قطعة</span>
+      </div>
+      <div class="flex items-center gap-2 text-[10px] text-gray-500 pt-0.5">
+        <span class="font-bold text-amber-700 font-mono">${bCost} ج</span>
+        ${bNotes ? `<span class="truncate max-w-[120px] text-gray-600 bg-gray-100 px-1 rounded">📝 ${bNotes}</span>` : ''}
+      </div>
+    `;
+  }
+}
+
 function selectActiveWhBatch(batchId) {
+  // Sync changes of currently selected batch before switching
+  if (_activeBatchId && _activeBatchId !== batchId) {
+    syncActiveBatchToMemory();
+  }
+
   _activeBatchId = batchId;
   const b = _currentWhBatches.find(x => x.id === batchId);
   if (!b) return;
@@ -1355,33 +1415,22 @@ function selectActiveWhBatch(batchId) {
     qtyInp.readOnly = true;
     qtyInp.classList.add('bg-gray-100', 'cursor-not-allowed');
 
-    // Read batch's own variants or fallback to item breakdown
-    const batchFlat = b.checkbox_values ? flattenCbv(b.checkbox_values) : {};
-    const hasExplicitBatchVariants = Object.keys(batchFlat).length > 0;
-
-    // Detect non-zero variant keys in parent item
-    const nonZeroKeys = variantKeys.filter(k => (itemFlat[k]?.stock || 0) > 0);
+    // Read batch's own variants or initialize cleanly
+    let batchFlat = b.checkbox_values ? flattenCbv(b.checkbox_values) : null;
+    if (!batchFlat) {
+      // Initialize batch with clean isolation
+      batchFlat = {};
+      const bTotal = parseInt(b.quantity || 0, 10);
+      variantKeys.forEach((k, idx) => {
+        batchFlat[k] = { stock: (idx === 0 ? bTotal : 0) };
+      });
+    }
 
     varGrid.innerHTML = variantKeys.map(displayKey => {
       const itemObj = itemFlat[displayKey] || {};
       const rawKey = itemObj.rawKey || displayKey;
       const grp = itemObj.groupName || 'عام';
-      
-      let vStock = 0;
-      if (hasExplicitBatchVariants) {
-        vStock = (batchFlat[displayKey] && batchFlat[displayKey].stock != null) ? batchFlat[displayKey].stock : 0;
-      } else {
-        // Fallback for batches before per-batch variant was saved
-        if (nonZeroKeys.length === 1 && nonZeroKeys[0] === displayKey) {
-          vStock = parseInt(b.quantity || 0, 10);
-        } else if (nonZeroKeys.length === 0 && variantKeys[0] === displayKey) {
-          vStock = parseInt(b.quantity || 0, 10);
-        } else if (itemObj.stock != null && itemObj.stock > 0) {
-          vStock = Math.min(parseInt(b.quantity || 0, 10), itemObj.stock);
-        } else {
-          vStock = 0;
-        }
-      }
+      const vStock = (batchFlat[displayKey] && batchFlat[displayKey].stock != null) ? batchFlat[displayKey].stock : 0;
 
       return `
         <div class="bg-white p-2 rounded-xl border border-indigo-200 flex items-center justify-between gap-1.5 shadow-xs">
@@ -1416,64 +1465,33 @@ function onActiveBatchVarQtyChange() {
   document.getElementById('ew-ab-qty').value = total;
   const sumEl = document.getElementById('ew-ab-var-sum');
   if (sumEl) sumEl.textContent = total;
+  syncActiveBatchToMemory();
 }
 
 async function saveActiveBatchChanges(silent = false) {
-  const batchId = parseInt(document.getElementById('ew-active-batch-id').value, 10);
-  if (!batchId) return true;
+  syncActiveBatchToMemory();
 
-  const num = document.getElementById('ew-ab-num').value.trim();
-  const cost = parseFloat(document.getElementById('ew-ab-cost').value || 0);
-  const qty = parseInt(document.getElementById('ew-ab-qty').value || 0, 10);
-  const exp = document.getElementById('ew-ab-exp').value;
-  const notes = document.getElementById('ew-ab-notes').value.trim();
-
-  // Package batch-specific variants if present
-  let batchCbvJson = null;
-  const varInputs = document.querySelectorAll('.ew-ab-var-inp');
-  if (varInputs.length > 0) {
-    let cbvObj = {};
-    const isGrouped = Array.from(varInputs).some(i => i.dataset.groupName && i.dataset.groupName !== 'عام');
-    if (isGrouped) {
-      varInputs.forEach(inp => {
-        const grp = inp.dataset.groupName || 'عام';
-        const k = inp.dataset.optKey;
-        const q = parseInt(inp.value || 0, 10);
-        if (!cbvObj[grp]) cbvObj[grp] = {};
-        cbvObj[grp][k] = { checked: true, stock: q, disabled: false };
-      });
-    } else {
-      varInputs.forEach(inp => {
-        const k = inp.dataset.optKey;
-        const q = parseInt(inp.value || 0, 10);
-        cbvObj[k] = { checked: true, stock: q, disabled: false };
-      });
-    }
-    batchCbvJson = cbvObj;
-  }
-
+  // Save all in-memory batches to server to ensure 100% sync
   try {
-    const res = await fetch(`${BASE}/api/warehouse/batches/${batchId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        batch_number: num,
-        quantity: qty,
-        cost_price: cost,
-        expiry_date: exp,
-        notes,
-        checkbox_values_json: batchCbvJson
-      })
+    const savePromises = _currentWhBatches.map(b => {
+      return fetch(`${BASE}/api/warehouse/batches/${b.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          batch_number: b.batch_number,
+          quantity: b.quantity,
+          cost_price: b.cost_price,
+          expiry_date: b.expiry_date,
+          notes: b.notes,
+          checkbox_values_json: b.checkbox_values
+        })
+      });
     });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'فشل حفظ تعديل الشحنة');
 
-    if (data.total_quantity != null) {
-      document.getElementById('ew-qty').value = data.total_quantity;
-    }
+    await Promise.all(savePromises);
     await loadWarehouseData();
     if (!silent) {
-      alert('✅ تم حفظ تعديلات الشحنة والمقاسات بنجاح وتحديث إجمالي رصيد المستودع!');
+      alert('✅ تم حفظ تعديلات الشحنات والمقاسات بنجاح!');
       if (_currentEditingWhItem) loadAndRenderWhBatches(_currentEditingWhItem.id);
     }
     return true;
@@ -1573,7 +1591,7 @@ async function submitEditWarehouseItem(e) {
   const errEl = document.getElementById('ew-error');
   errEl.classList.add('hidden');
 
-  // First save active batch if present
+  // First save all in-memory batches
   const batchSaved = await saveActiveBatchChanges(true);
   if (!batchSaved) {
     errEl.textContent = 'تعذر حفظ بيانات الشحنة، يرجى المحاولة ثانية';
@@ -1587,8 +1605,6 @@ async function submitEditWarehouseItem(e) {
   const category = document.getElementById('ew-category').value;
   const price = document.getElementById('ew-price').value;
   const desc = document.getElementById('ew-desc').value;
-  const cost = document.getElementById('ew-cost').value || _currentEditingWhItem.cost_price;
-  const qty = parseInt(document.getElementById('ew-qty').value || _currentEditingWhItem.quantity || 0, 10);
   const expiry = document.getElementById('ew-expiry').value || _currentEditingWhItem.expiry_date;
   const notes = _currentEditingWhItem.notes || '';
 
@@ -1600,9 +1616,7 @@ async function submitEditWarehouseItem(e) {
         product_name: name,
         barcode,
         category,
-        cost_price: parseFloat(cost || 0),
         sale_price: parseFloat(price || 0),
-        quantity: qty,
         description: desc,
         expiry_date: expiry || null,
         notes
