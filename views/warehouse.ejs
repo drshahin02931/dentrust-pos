@@ -404,7 +404,14 @@
 
               <!-- Row 1: Attribute Group Selection & Custom Name -->
               <div class="space-y-1">
-                <label class="text-[11px] font-bold text-gray-700 block">📁 نوع الخاصية / التصنيف:</label>
+                <div class="flex items-center justify-between">
+                  <label class="text-[11px] font-bold text-gray-700 block">📁 نوع الخاصية / التصنيف:</label>
+                  <button type="button" id="ew-del-group-btn" onclick="deleteCurrentVariantGroup()"
+                    class="text-[10px] text-red-600 hover:text-red-800 font-bold px-2 py-0.5 rounded-lg border border-red-200 hover:bg-red-50 transition-all flex items-center gap-1 cursor-pointer"
+                    title="حذف هذا النوع وكافة مقاساته التابعة له">
+                    <span>🗑️</span> حذف هذا النوع بالكامل
+                  </button>
+                </div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <select id="ew-new-var-group-select" onchange="onEwNewVarGroupChange()"
                     class="w-full border-2 border-indigo-200 rounded-xl px-3 py-2 text-xs font-bold bg-indigo-50/40 text-indigo-950 focus:outline-none focus:ring-2 focus:ring-indigo-400">
@@ -1499,16 +1506,21 @@ function selectActiveWhBatch(batchId) {
       const vStock = (batchFlat[displayKey] && batchFlat[displayKey].stock != null) ? batchFlat[displayKey].stock : 0;
 
       return `
-        <div class="bg-white p-2 rounded-xl border border-indigo-200 flex items-center justify-between gap-1.5 shadow-xs">
+        <div class="bg-white p-2 rounded-xl border border-indigo-200 flex items-center justify-between gap-1.5 shadow-xs group">
           <div class="flex items-center gap-1 min-w-0">
             ${grp !== 'عام' ? `<span class="px-1.5 py-0.5 bg-indigo-100 text-indigo-900 rounded text-[9px] font-black">${grp}</span>` : ''}
             <span class="text-xs font-bold text-gray-800 truncate">${rawKey}</span>
           </div>
-          <input type="number" min="0" value="${vStock}"
-            class="ew-ab-var-inp w-16 text-center font-bold text-xs border border-indigo-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-indigo-400 font-mono bg-white flex-shrink-0"
-            data-group-name="${grp.replace(/"/g, '&quot;')}"
-            data-opt-key="${rawKey.replace(/"/g, '&quot;')}"
-            oninput="onActiveBatchVarQtyChange()"/>
+          <div class="flex items-center gap-1.5 flex-shrink-0">
+            <input type="number" min="0" value="${vStock}"
+              class="ew-ab-var-inp w-16 text-center font-bold text-xs border border-indigo-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-indigo-400 font-mono bg-white flex-shrink-0"
+              data-group-name="${grp.replace(/"/g, '&quot;')}"
+              data-opt-key="${rawKey.replace(/"/g, '&quot;')}"
+              oninput="onActiveBatchVarQtyChange()"/>
+            <button type="button" onclick="deleteVariantFromItem('${grp.replace(/'/g, "\\'")}', '${rawKey.replace(/'/g, "\\'")}')"
+              class="w-6 h-6 rounded-lg text-gray-300 hover:text-red-600 hover:bg-red-50 flex items-center justify-center font-bold text-xs transition-all cursor-pointer"
+              title="حذف هذا المقاس (${rawKey})">✕</button>
+          </div>
         </div>
       `;
     }).join('');
@@ -1525,14 +1537,88 @@ function selectActiveWhBatch(batchId) {
 function onEwNewVarGroupChange() {
   const sel = document.getElementById('ew-new-var-group-select');
   const custInp = document.getElementById('ew-new-var-group-custom');
-  if (sel && custInp) {
+  const delBtn = document.getElementById('ew-del-group-btn');
+  if (sel) {
     if (sel.value === '__custom__') {
-      custInp.classList.remove('hidden');
-      custInp.focus();
+      if (custInp) { custInp.classList.remove('hidden'); custInp.focus(); }
+      if (delBtn) delBtn.classList.add('hidden');
     } else {
-      custInp.classList.add('hidden');
+      if (custInp) custInp.classList.add('hidden');
+      if (delBtn) delBtn.classList.remove('hidden');
     }
   }
+}
+
+function deleteVariantFromItem(groupName, optKey) {
+  if (!_currentEditingWhItem) return;
+  if (!confirm(`هل أنت متأكد من حذف الخيار (${optKey}) من هذا الصنف؟`)) return;
+
+  // 1. Remove from parent item checkbox_values
+  if (_currentEditingWhItem.checkbox_values) {
+    let cbv = typeof _currentEditingWhItem.checkbox_values === 'string' ? JSON.parse(_currentEditingWhItem.checkbox_values) : _currentEditingWhItem.checkbox_values;
+    if (cbv[groupName] && typeof cbv[groupName] === 'object') {
+      delete cbv[groupName][optKey];
+      if (Object.keys(cbv[groupName]).length === 0) delete cbv[groupName];
+    }
+    if (cbv[optKey]) delete cbv[optKey];
+    if (cbv[`[${groupName}] ${optKey}`]) delete cbv[`[${groupName}] ${optKey}`];
+    if (cbv[`${groupName}::${optKey}`]) delete cbv[`${groupName}::${optKey}`];
+
+    if (Object.keys(cbv).length === 0) _currentEditingWhItem.checkbox_values = null;
+    else _currentEditingWhItem.checkbox_values = cbv;
+  }
+
+  // 2. Remove from all batches
+  _currentWhBatches.forEach(b => {
+    if (b.checkbox_values) {
+      let bCbv = typeof b.checkbox_values === 'string' ? JSON.parse(b.checkbox_values) : b.checkbox_values;
+      if (bCbv[groupName] && typeof bCbv[groupName] === 'object') {
+        delete bCbv[groupName][optKey];
+        if (Object.keys(bCbv[groupName]).length === 0) delete bCbv[groupName];
+      }
+      if (bCbv[optKey]) delete bCbv[optKey];
+      if (bCbv[`[${groupName}] ${optKey}`]) delete bCbv[`[${groupName}] ${optKey}`];
+      if (bCbv[`${groupName}::${optKey}`]) delete bCbv[`${groupName}::${optKey}`];
+
+      if (Object.keys(bCbv).length === 0) b.checkbox_values = null;
+      else b.checkbox_values = bCbv;
+    }
+  });
+
+  selectActiveWhBatch(_activeBatchId);
+}
+
+function deleteCurrentVariantGroup() {
+  if (!_currentEditingWhItem) return;
+  const sel = document.getElementById('ew-new-var-group-select');
+  if (!sel || !sel.value || sel.value === '__custom__') return;
+  const grp = sel.value;
+
+  if (!confirm(`هل أنت متأكد من حذف نوع (${grp}) بالكامل وكافة مقاساته من هذا الصنف؟`)) return;
+
+  if (_currentEditingWhItem.checkbox_values) {
+    let cbv = typeof _currentEditingWhItem.checkbox_values === 'string' ? JSON.parse(_currentEditingWhItem.checkbox_values) : _currentEditingWhItem.checkbox_values;
+    if (cbv[grp]) delete cbv[grp];
+    Object.keys(cbv).forEach(k => {
+      if (k.startsWith(`[${grp}]`) || k.startsWith(`${grp}::`)) delete cbv[k];
+    });
+    if (Object.keys(cbv).length === 0) _currentEditingWhItem.checkbox_values = null;
+    else _currentEditingWhItem.checkbox_values = cbv;
+  }
+
+  _currentWhBatches.forEach(b => {
+    if (b.checkbox_values) {
+      let bCbv = typeof b.checkbox_values === 'string' ? JSON.parse(b.checkbox_values) : b.checkbox_values;
+      if (bCbv[grp]) delete bCbv[grp];
+      Object.keys(bCbv).forEach(k => {
+        if (k.startsWith(`[${grp}]`) || k.startsWith(`${grp}::`)) delete bCbv[k];
+      });
+      if (Object.keys(bCbv).length === 0) b.checkbox_values = null;
+      else b.checkbox_values = bCbv;
+    }
+  });
+
+  selectActiveWhBatch(_activeBatchId);
 }
 
 function enableVariantsForCurrentItem() {
