@@ -5442,8 +5442,9 @@ app.get(`${BASE}/api/warehouse/products`, async (req, res) => {
     await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_batches (
       id SERIAL PRIMARY KEY, warehouse_item_id INTEGER, product_id INTEGER, batch_number TEXT,
       quantity INTEGER NOT NULL DEFAULT 0, cost_price NUMERIC DEFAULT 0, expiry_date TEXT, notes TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      checkbox_values JSONB, created_at TIMESTAMPTZ DEFAULT NOW()
     )`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_batches ADD COLUMN IF NOT EXISTS checkbox_values JSONB`).catch(() => {});
 
     // Fetch warehouse items
     const { rows: items } = await posDb.query(`
@@ -5815,9 +5816,10 @@ app.get(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
 app.post(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   const itemId = parseInt(req.params.id, 10);
-  const { batch_number, quantity, cost_price, expiry_date, notes } = req.body;
+  const { batch_number, quantity, cost_price, expiry_date, notes, checkbox_values_json } = req.body;
   const qty = parseInt(quantity || 0, 10);
   const cost = parseFloat(cost_price || 0);
+  const cbv = checkbox_values_json !== undefined ? (typeof checkbox_values_json === 'string' ? checkbox_values_json : JSON.stringify(checkbox_values_json)) : null;
 
   const client = await posDb.connect();
   try {
@@ -5829,9 +5831,9 @@ app.post(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
     }
 
     const { rows: [newBatch] } = await client.query(
-      `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [itemId, whItem.product_id || null, batch_number || `شحنة #${Date.now().toString().slice(-4)}`, qty, cost, expiry_date || null, notes || '']
+      `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes, checkbox_values)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [itemId, whItem.product_id || null, batch_number || `شحنة #${Date.now().toString().slice(-4)}`, qty, cost, expiry_date || null, notes || '', cbv]
     );
 
     const { rows: [agg] } = await client.query(
@@ -5839,9 +5841,30 @@ app.post(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
       [itemId]
     );
     const newTotalQty = parseInt(agg.total_qty || 0, 10);
+
+    // Merge variants across all active batches if applicable
+    const { rows: allBatches } = await client.query('SELECT checkbox_values FROM warehouse_batches WHERE warehouse_item_id=$1', [itemId]);
+    let mergedCbv = null;
+    allBatches.forEach(bRow => {
+      if (bRow.checkbox_values) {
+        let bObj = typeof bRow.checkbox_values === 'string' ? JSON.parse(bRow.checkbox_values) : bRow.checkbox_values;
+        if (!mergedCbv) mergedCbv = JSON.parse(JSON.stringify(bObj));
+        else {
+          for (const [k, v] of Object.entries(bObj)) {
+            if (typeof v === 'object' && v !== null && v.stock != null) {
+              if (!mergedCbv[k]) mergedCbv[k] = { ...v, stock: 0 };
+              mergedCbv[k].stock = (parseInt(mergedCbv[k].stock || 0, 10)) + (parseInt(v.stock || 0, 10));
+            }
+          }
+        }
+      }
+    });
+
+    const finalWhCbv = mergedCbv ? JSON.stringify(mergedCbv) : (whItem.checkbox_values ? (typeof whItem.checkbox_values === 'string' ? whItem.checkbox_values : JSON.stringify(whItem.checkbox_values)) : null);
+
     await client.query(
-      `UPDATE warehouse_items SET quantity = $1, cost_price = $2, expiry_date = COALESCE($3, expiry_date), updated_at = NOW() WHERE id = $4`,
-      [newTotalQty, cost, expiry_date || null, itemId]
+      `UPDATE warehouse_items SET quantity = $1, cost_price = $2, expiry_date = COALESCE($3, expiry_date), checkbox_values = $4, updated_at = NOW() WHERE id = $5`,
+      [newTotalQty, cost, expiry_date || null, finalWhCbv, itemId]
     );
 
     await client.query('COMMIT');
@@ -5858,9 +5881,10 @@ app.post(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
 app.put(`${BASE}/api/warehouse/batches/:bid`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   const bid = parseInt(req.params.bid, 10);
-  const { batch_number, quantity, cost_price, expiry_date, notes } = req.body;
+  const { batch_number, quantity, cost_price, expiry_date, notes, checkbox_values_json } = req.body;
   const qty = parseInt(quantity || 0, 10);
   const cost = parseFloat(cost_price || 0);
+  const cbv = checkbox_values_json !== undefined ? (typeof checkbox_values_json === 'string' ? checkbox_values_json : JSON.stringify(checkbox_values_json)) : null;
 
   const client = await posDb.connect();
   try {
@@ -5877,9 +5901,10 @@ app.put(`${BASE}/api/warehouse/batches/:bid`, async (req, res) => {
            quantity = $2,
            cost_price = $3,
            expiry_date = $4,
-           notes = $5
-       WHERE id = $6 RETURNING *`,
-      [batch_number?.trim(), qty, cost, expiry_date || null, notes || '', bid]
+           notes = $5,
+           checkbox_values = CASE WHEN $6::jsonb IS NOT NULL THEN $6::jsonb ELSE checkbox_values END
+       WHERE id = $7 RETURNING *`,
+      [batch_number?.trim(), qty, cost, expiry_date || null, notes || '', cbv, bid]
     );
 
     const { rows: [agg] } = await client.query(
@@ -5887,12 +5912,33 @@ app.put(`${BASE}/api/warehouse/batches/:bid`, async (req, res) => {
       [b.warehouse_item_id]
     );
     const newTotalQty = parseInt(agg.total_qty || 0, 10);
+
+    // Merge variants across all active batches
+    const { rows: allBatches } = await client.query('SELECT checkbox_values FROM warehouse_batches WHERE warehouse_item_id=$1', [b.warehouse_item_id]);
+    let mergedCbv = null;
+    allBatches.forEach(bRow => {
+      if (bRow.checkbox_values) {
+        let bObj = typeof bRow.checkbox_values === 'string' ? JSON.parse(bRow.checkbox_values) : bRow.checkbox_values;
+        if (!mergedCbv) mergedCbv = JSON.parse(JSON.stringify(bObj));
+        else {
+          for (const [k, v] of Object.entries(bObj)) {
+            if (typeof v === 'object' && v !== null && v.stock != null) {
+              if (!mergedCbv[k]) mergedCbv[k] = { ...v, stock: 0 };
+              mergedCbv[k].stock = (parseInt(mergedCbv[k].stock || 0, 10)) + (parseInt(v.stock || 0, 10));
+            }
+          }
+        }
+      }
+    });
+
+    const { rows: [whItem] } = await client.query('SELECT checkbox_values FROM warehouse_items WHERE id=$1', [b.warehouse_item_id]);
+    const finalWhCbv = mergedCbv ? JSON.stringify(mergedCbv) : (whItem?.checkbox_values ? (typeof whItem.checkbox_values === 'string' ? whItem.checkbox_values : JSON.stringify(whItem.checkbox_values)) : null);
     
     await client.query(
       `UPDATE warehouse_items 
-       SET quantity = $1, cost_price = $2, expiry_date = COALESCE($3, expiry_date), updated_at = NOW() 
-       WHERE id = $4`,
-      [newTotalQty, cost, expiry_date || null, b.warehouse_item_id]
+       SET quantity = $1, cost_price = $2, expiry_date = COALESCE($3, expiry_date), checkbox_values = $4, updated_at = NOW() 
+       WHERE id = $5`,
+      [newTotalQty, cost, expiry_date || null, finalWhCbv, b.warehouse_item_id]
     );
 
     await client.query('COMMIT');

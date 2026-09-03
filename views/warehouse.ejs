@@ -383,6 +383,17 @@
             </div>
           </div>
 
+          <!-- Active Batch Variants Grid (Shown if item has sizes/variants) -->
+          <div id="ew-ab-variants-container" class="hidden bg-indigo-50/60 border border-indigo-200 rounded-2xl p-3 space-y-2">
+            <div class="flex items-center justify-between border-b border-indigo-200/70 pb-1.5">
+              <span class="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+                <span>🎨</span> مقاسات وكميات هذه الشحنة تحديداً:
+              </span>
+              <span class="text-[10px] text-indigo-700 font-mono font-bold">إجمالي مقاسات الشحنة: <strong id="ew-ab-var-sum" class="font-bold">0</strong></span>
+            </div>
+            <div id="ew-ab-variants-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-2 p-0.5"></div>
+          </div>
+
           <div>
             <label class="text-[10px] font-bold text-gray-600 block mb-1">ملاحظات هذه الشحنة (مثال: اسم المورد، الفاتورة...)</label>
             <input type="text" id="ew-ab-notes" placeholder="ملاحظات الشحنة..."
@@ -1330,6 +1341,69 @@ function selectActiveWhBatch(batchId) {
   document.getElementById('ew-ab-qty').value = parseInt(b.quantity || 0, 10);
   document.getElementById('ew-ab-exp').value = b.expiry_date || '';
   document.getElementById('ew-ab-notes').value = b.notes || '';
+
+  // Render Variants for this Active Batch if parent item has variants
+  const varContainer = document.getElementById('ew-ab-variants-container');
+  const varGrid = document.getElementById('ew-ab-variants-grid');
+  const qtyInp = document.getElementById('ew-ab-qty');
+
+  const itemFlat = flattenCbv(_currentEditingWhItem?.checkbox_values);
+  const variantKeys = Object.keys(itemFlat);
+
+  if (variantKeys.length > 0 && varContainer && varGrid) {
+    varContainer.classList.remove('hidden');
+    qtyInp.readOnly = true;
+    qtyInp.classList.add('bg-gray-100', 'cursor-not-allowed');
+
+    // Read batch's own variants or fallback to item breakdown
+    const batchFlat = b.checkbox_values ? flattenCbv(b.checkbox_values) : {};
+
+    varGrid.innerHTML = variantKeys.map(displayKey => {
+      const itemObj = itemFlat[displayKey] || {};
+      const rawKey = itemObj.rawKey || displayKey;
+      const grp = itemObj.groupName || 'عام';
+      
+      // If batch has specific stock for this size, use it; otherwise fallback or 0
+      let vStock = 0;
+      if (batchFlat[displayKey] && batchFlat[displayKey].stock != null) {
+        vStock = batchFlat[displayKey].stock;
+      } else if (!b.checkbox_values && _currentWhBatches.length === 1) {
+        vStock = itemObj.stock != null ? itemObj.stock : 0;
+      }
+
+      return `
+        <div class="bg-white p-2 rounded-xl border border-indigo-200 flex items-center justify-between gap-1.5 shadow-xs">
+          <div class="flex items-center gap-1 min-w-0">
+            ${grp !== 'عام' ? `<span class="px-1 py-0.5 bg-indigo-100 text-indigo-800 rounded text-[9px] font-bold">${grp}</span>` : ''}
+            <span class="text-xs font-bold text-gray-800 truncate">${rawKey}</span>
+          </div>
+          <input type="number" min="0" value="${vStock}"
+            class="ew-ab-var-inp w-16 text-center font-bold text-xs border border-indigo-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-indigo-400 font-mono bg-white flex-shrink-0"
+            data-group-name="${grp.replace(/"/g, '&quot;')}"
+            data-opt-key="${rawKey.replace(/"/g, '&quot;')}"
+            oninput="onActiveBatchVarQtyChange()"/>
+        </div>
+      `;
+    }).join('');
+
+    onActiveBatchVarQtyChange();
+  } else if (varContainer) {
+    varContainer.classList.add('hidden');
+    qtyInp.readOnly = false;
+    qtyInp.classList.remove('bg-gray-100', 'cursor-not-allowed');
+  }
+}
+
+function onActiveBatchVarQtyChange() {
+  const inputs = document.querySelectorAll('.ew-ab-var-inp');
+  if (inputs.length === 0) return;
+  let total = 0;
+  inputs.forEach(inp => {
+    total += Math.max(0, parseInt(inp.value || 0, 10));
+  });
+  document.getElementById('ew-ab-qty').value = total;
+  const sumEl = document.getElementById('ew-ab-var-sum');
+  if (sumEl) sumEl.textContent = total;
 }
 
 async function saveActiveBatchChanges() {
@@ -1342,11 +1416,42 @@ async function saveActiveBatchChanges() {
   const exp = document.getElementById('ew-ab-exp').value;
   const notes = document.getElementById('ew-ab-notes').value.trim();
 
+  // Package batch-specific variants if present
+  let batchCbvJson = null;
+  const varInputs = document.querySelectorAll('.ew-ab-var-inp');
+  if (varInputs.length > 0) {
+    let cbvObj = {};
+    const isGrouped = Array.from(varInputs).some(i => i.dataset.groupName && i.dataset.groupName !== 'عام');
+    if (isGrouped) {
+      varInputs.forEach(inp => {
+        const grp = inp.dataset.groupName || 'عام';
+        const k = inp.dataset.optKey;
+        const q = parseInt(inp.value || 0, 10);
+        if (!cbvObj[grp]) cbvObj[grp] = {};
+        cbvObj[grp][k] = { checked: true, stock: q, disabled: false };
+      });
+    } else {
+      varInputs.forEach(inp => {
+        const k = inp.dataset.optKey;
+        const q = parseInt(inp.value || 0, 10);
+        cbvObj[k] = { checked: true, stock: q, disabled: false };
+      });
+    }
+    batchCbvJson = cbvObj;
+  }
+
   try {
     const res = await fetch(`${BASE}/api/warehouse/batches/${batchId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ batch_number: num, quantity: qty, cost_price: cost, expiry_date: exp, notes })
+      body: JSON.stringify({
+        batch_number: num,
+        quantity: qty,
+        cost_price: cost,
+        expiry_date: exp,
+        notes,
+        checkbox_values_json: batchCbvJson
+      })
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'فشل حفظ تعديل الشحنة');
@@ -1355,7 +1460,7 @@ async function saveActiveBatchChanges() {
       document.getElementById('ew-qty').value = data.total_quantity;
     }
     await loadWarehouseData();
-    alert('✅ تم حفظ تعديلات الشحنة بنجاح وتحديث إجمالي رصيد المستودع!');
+    alert('✅ تم حفظ تعديلات الشحنة والمقاسات بنجاح وتحديث إجمالي رصيد المستودع!');
     if (_currentEditingWhItem) loadAndRenderWhBatches(_currentEditingWhItem.id);
   } catch (err) {
     alert('❌ خطأ: ' + err.message);
