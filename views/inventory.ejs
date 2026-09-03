@@ -229,10 +229,16 @@
                 <span id="whQuickStockText" class="text-[11px] text-gray-500">المتاح بالمستودع: <strong id="whQuickAvailQty" class="text-blue-700">0</strong> قطعة</span>
               </div>
             </div>
-            <button type="button" onclick="openQuickWhTransfer()"
-              class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5">
-              <span>🚚</span> سحب من المستودع
-            </button>
+            <div class="flex items-center gap-2">
+              <button type="button" onclick="openQuickWhTransfer()"
+                class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5 cursor-pointer">
+                <span>🚚</span> سحب من المخزن
+              </button>
+              <button type="button" onclick="openTransferToWhModal()"
+                class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5 cursor-pointer">
+                <span>📦</span> تحويل إلى المخزن
+              </button>
+            </div>
           </div>
           
           <!-- Batches Table Preview -->
@@ -790,6 +796,12 @@ function editProduct(id) {
                   <span class="text-amber-800 font-bold">التكلفة: ${parseFloat(b.cost_price||0).toFixed(2)} ج</span>
                   ${b.expiry_date ? `<span class="text-gray-500">صلاحية: ${b.expiry_date}</span>` : ''}
                 </div>
+                ${b.id > 0 ? `
+                  <button type="button" onclick="returnCostBatchToWh(${p.id}, ${b.id}, ${b.remaining_quantity}, '${(b.selected_option||'').replace(/'/g, "\\'")}', ${parseFloat(b.cost_price||0)})"
+                    class="text-amber-700 hover:text-amber-900 hover:bg-amber-50 px-2 py-1 rounded-lg text-xs font-bold transition-colors border border-amber-200 flex items-center gap-1 cursor-pointer" title="إرجاع هذه الشحنة إلى المخزن">
+                    <span>↩️</span> إرجاع للمخزن
+                  </button>
+                ` : ''}
               </div>
             </div>
           `;
@@ -897,6 +909,103 @@ function openQuickWhTransfer() {
     }).catch(e => {
       alert("خطأ أثناء التحويل: " + e.message);
     });
+}
+
+async function openTransferToWhModal() {
+  if (!_currentEditProd) {
+    alert("يرجى اختيار الصنف أولاً");
+    return;
+  }
+  const p = _currentEditProd;
+  const currentTotal = parseInt(p.quantity || 0, 10);
+  if (currentTotal <= 0) {
+    alert("رصيد هذا الصنف بالمحل صفر، لا توجد كمية للتحويل إلى المخزن.");
+    return;
+  }
+
+  let shopOpts = [];
+  if (p.checkbox_values) {
+    try {
+      const cbv = typeof p.checkbox_values === 'string' ? JSON.parse(p.checkbox_values) : p.checkbox_values;
+      for (const [k, v] of Object.entries(cbv)) {
+        if (typeof v === 'object' && v !== null && v.checked !== false) {
+          const s = parseInt(v.stock || 0, 10);
+          shopOpts.push({ key: k, stock: s, cost: parseFloat(v.cost_price || p.purchase_price || 0) });
+        }
+      }
+    } catch (_) {}
+  }
+
+  let selectedOpt = null;
+  let maxAvail = currentTotal;
+
+  if (shopOpts.length > 0) {
+    const listStr = shopOpts.map((o, i) => `${i + 1}. ${o.key} (متاح بالمحل: ${o.stock} قطعة | تكلفة: ${o.cost} ج)`).join('\n');
+    const choice = prompt(`اختر رقم المقاس المراد تحويله من المحل إلى المخزن:\n${listStr}\n\n(أدخل رقم المقاس):`, "1");
+    if (!choice) return;
+    const idx = parseInt(choice, 10) - 1;
+    if (isNaN(idx) || idx < 0 || idx >= shopOpts.length) {
+      alert("رقم المقاس غير صحيح");
+      return;
+    }
+    selectedOpt = shopOpts[idx].key;
+    maxAvail = shopOpts[idx].stock;
+    if (maxAvail <= 0) {
+      alert(`المقاس (${selectedOpt}) رصيده صفر بالمحل حالياً.`);
+      return;
+    }
+  }
+
+  const qtyStr = prompt(`المتاح بالمحل (${selectedOpt ? 'لمقاس ' + selectedOpt : 'للصنف'}): ${maxAvail} قطعة\nأدخل الكمية المراد نقلها وتخزينها في المخزن:`, "1");
+  if (!qtyStr) return;
+  const qty = parseInt(qtyStr, 10);
+  if (isNaN(qty) || qty <= 0) {
+    alert("يرجى إدخال كمية صحيحة أكبر من صفر");
+    return;
+  }
+  if (qty > maxAvail) {
+    alert(`الكمية المطلوبة (${qty}) أكبر من المتاح بالمحل (${maxAvail})`);
+    return;
+  }
+
+  try {
+    const res = await fetch(`${BASE}/api/warehouse/return-from-store`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        product_id: p.id,
+        quantity: qty,
+        selected_option: selectedOpt,
+        reason: 'تحويل وتخزين من المحل إلى المخزن'
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'فشل التحويل إلى المخزن');
+    alert(`✅ تم تحويل ${qty} قطعة ${selectedOpt ? '(مقاس: ' + selectedOpt + ')' : ''} بنجاح إلى المخزن الرئيسي بتكلفتها المحددة!`);
+    closeModal();
+    loadProducts();
+  } catch (err) {
+    alert('❌ خطأ أثناء التحويل للمخزن: ' + err.message);
+  }
+}
+
+async function returnCostBatchToWh(pid, bid, qty, opt, cost) {
+  const isReturn = confirm(`هل أنت متأكد من إرجاع هذه الشحنة (${qty} قطعة${opt ? ' لمقاس ' + opt : ''} بتكلفة ${cost} ج) من المحل إلى المخزن؟\n\nستتم إعادتها إلى شحنات المخزن بنفس مقاسها وتكلفتها بدقة.`);
+  if (!isReturn) return;
+
+  try {
+    const res = await fetch(`${BASE}/api/products/${pid}/cost-batches/${bid}?return_to_wh=true`, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'فشل إرجاع الشحنة للمخزن');
+
+    alert(`✅ تم إرجاع الشحنة (${qty} قطعة) بنجاح إلى المخزن الرئيسي بنفس مقاسها وتكلفتها!`);
+    closeModal();
+    loadProducts();
+  } catch (err) {
+    alert('❌ خطأ: ' + err.message);
+  }
 }
 
 function closeModal() { document.getElementById("modal").classList.add("hidden"); }

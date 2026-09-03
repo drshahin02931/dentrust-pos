@@ -6506,20 +6506,48 @@ app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
       await client.query('UPDATE products SET quantity = quantity - $1 WHERE id=$2', [returnQty, shopProd.id]);
     }
 
+    // 1.5 Deduct from product_cost_batches in shop and get exact batch cost
+    let retCost = parseFloat(shopProd.purchase_price || 0);
+    let retExp = shopProd.expiry_date || null;
+    try {
+      let bQuery = 'SELECT * FROM product_cost_batches WHERE product_id=$1 AND remaining_quantity > 0 ';
+      let bParams = [shopProd.id];
+      if (selected_option) {
+        bQuery += 'AND (selected_option=$2 OR selected_option IS NULL) ';
+        bParams.push(selected_option);
+      }
+      bQuery += 'ORDER BY id DESC FOR UPDATE';
+      const { rows: actB } = await client.query(bQuery, bParams);
+      if (actB && actB.length > 0) {
+        retCost = parseFloat(actB[0].cost_price || retCost);
+        retExp = actB[0].expiry_date || retExp;
+        let remToDeduct = returnQty;
+        for (const b of actB) {
+          if (remToDeduct <= 0) break;
+          const take = Math.min(parseInt(b.remaining_quantity, 10), remToDeduct);
+          remToDeduct -= take;
+          await client.query('UPDATE product_cost_batches SET remaining_quantity = remaining_quantity - $1 WHERE id=$2', [take, b.id]);
+        }
+      }
+    } catch (_) {}
+
     // 2. Add back to Warehouse item (find or create)
     const { rows: [whItem] } = await client.query('SELECT * FROM warehouse_items WHERE product_id=$1 OR LOWER(product_name)=LOWER($2) LIMIT 1 FOR UPDATE', [shopProd.id, shopProd.product_name]);
     let whItemId;
+    let retBatchCbv = null;
+    if (selected_option) {
+      let bscbv = {};
+      const { newCbv } = updateCbvStock(bscbv, selected_option, returnQty);
+      retBatchCbv = JSON.stringify(newCbv);
+    }
+
     if (whItem) {
       whItemId = whItem.id;
       if (selected_option && whItem.checkbox_values) {
-        const wcbv = typeof whItem.checkbox_values === 'string' ? JSON.parse(whItem.checkbox_values) : { ...whItem.checkbox_values };
-        if (wcbv[selected_option] && typeof wcbv[selected_option] === 'object') {
-          wcbv[selected_option].stock = (wcbv[selected_option].stock || 0) + returnQty;
-          const totalWcb = Object.values(wcbv).reduce((s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
-          await client.query('UPDATE warehouse_items SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalWcb, JSON.stringify(wcbv), whItem.id]);
-        } else {
-          await client.query('UPDATE warehouse_items SET quantity = quantity + $1 WHERE id=$2', [returnQty, whItem.id]);
-        }
+        let wcbv = typeof whItem.checkbox_values === 'string' ? JSON.parse(whItem.checkbox_values) : { ...whItem.checkbox_values };
+        const { newCbv } = updateCbvStock(wcbv, selected_option, returnQty);
+        const totalWcb = sumCbvStock(newCbv);
+        await client.query('UPDATE warehouse_items SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalWcb, JSON.stringify(newCbv), whItem.id]);
       } else {
         await client.query('UPDATE warehouse_items SET quantity = quantity + $1 WHERE id=$2', [returnQty, whItem.id]);
       }
@@ -6527,16 +6555,16 @@ app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
       const { rows: [newWh] } = await client.query(
         `INSERT INTO warehouse_items (product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants, checkbox_values, description, expiry_date, notes)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-        [shopProd.id, shopProd.product_name, shopProd.barcode || '', shopProd.category || 'عام', shopProd.purchase_price || 0, shopProd.sale_price || 0, returnQty, shopProd.variants || null, shopProd.checkbox_values || null, shopProd.description || '', shopProd.expiry_date || null, 'مرتجع من المحل']
+        [shopProd.id, shopProd.product_name, shopProd.barcode || '', shopProd.category || 'عام', retCost, shopProd.sale_price || 0, returnQty, shopProd.variants || null, retBatchCbv || shopProd.checkbox_values || null, shopProd.description || '', retExp, 'محول من المحل']
       );
       whItemId = newWh.id;
     }
 
-    // Insert batch record in warehouse_batches as store return
+    // Insert batch record in warehouse_batches with preserved variant and cost
     await client.query(
-      `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [whItemId, shopProd.id, `مرتجع محل #${Date.now().toString().slice(-6)}`, returnQty, shopProd.purchase_price || 0, shopProd.expiry_date || null, reason || 'مرتجع من المحل إلى المستودع']
+      `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes, checkbox_values)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [whItemId, shopProd.id, `محول من المحل #${Date.now().toString().slice(-4)}`, returnQty, retCost, retExp, reason || 'تحويل بضاعة من المحل إلى المخزن الرئيسي', retBatchCbv]
     ).catch(() => {});
 
     // 3. Log movement audit
