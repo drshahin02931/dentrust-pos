@@ -6141,31 +6141,33 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       return res.status(400).json({ error: `الكمية المتاحة بالمستودع (${whItem.quantity}) أقل من المطلوب (${transferQty})` });
     }
 
-    // 1. Deduct from warehouse
-    if (selected_option && whItem.checkbox_values) {
-      const cbv = typeof whItem.checkbox_values === 'string' ? JSON.parse(whItem.checkbox_values) : { ...whItem.checkbox_values };
-      const { updated, newCbv } = updateCbvStock(cbv, selected_option, -transferQty);
-      if (updated) {
-        const totalCb = sumCbvStock(newCbv);
-        await client.query('UPDATE warehouse_items SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(newCbv), whItem.id]);
-      } else {
-        await client.query('UPDATE warehouse_items SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [transferQty, whItem.id]);
-      }
-    } else {
-      await client.query('UPDATE warehouse_items SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [transferQty, whItem.id]);
-    }
-
     // Deduct from warehouse_batches (specific batch or FIFO)
     let transferCost = parseFloat(whItem.cost_price || 0);
     let transferExpiry = whItem.expiry_date || null;
 
     if (batch_id) {
       const { rows: [b] } = await client.query('SELECT * FROM warehouse_batches WHERE id=$1 FOR UPDATE', [batch_id]);
-      if (b) {
-        transferCost = parseFloat(b.cost_price || transferCost);
-        transferExpiry = b.expiry_date || transferExpiry;
-        await client.query('UPDATE warehouse_batches SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [transferQty, batch_id]);
+      if (!b) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'الشحنة المحددة غير موجودة' });
       }
+      if (parseInt(b.quantity || 0, 10) < transferQty) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `الكمية المتاحة بالشحنة المحددة (${b.quantity}) أقل من الكمية المطلوبة للتحويل (${transferQty})` });
+      }
+      transferCost = parseFloat(b.cost_price || transferCost);
+      transferExpiry = b.expiry_date || transferExpiry;
+
+      let newBatchCbv = b.checkbox_values ? (typeof b.checkbox_values === 'string' ? JSON.parse(b.checkbox_values) : { ...b.checkbox_values }) : null;
+      if (selected_option && newBatchCbv) {
+        const { newCbv } = updateCbvStock(newBatchCbv, selected_option, -transferQty);
+        newBatchCbv = newCbv;
+      }
+
+      await client.query(
+        'UPDATE warehouse_batches SET quantity = GREATEST(0, quantity - $1), checkbox_values = $2 WHERE id = $3',
+        [transferQty, newBatchCbv ? JSON.stringify(newBatchCbv) : null, batch_id]
+      );
     } else {
       // Deduct from oldest batch FIFO
       const { rows: batches } = await client.query('SELECT * FROM warehouse_batches WHERE warehouse_item_id=$1 AND quantity > 0 ORDER BY id ASC FOR UPDATE', [whItem.id]);
@@ -6173,11 +6175,48 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       for (const b of batches) {
         if (rem <= 0) break;
         const take = Math.min(b.quantity, rem);
-        await client.query('UPDATE warehouse_batches SET quantity = quantity - $1 WHERE id=$2', [take, b.id]);
+        let bCbv = b.checkbox_values ? (typeof b.checkbox_values === 'string' ? JSON.parse(b.checkbox_values) : { ...b.checkbox_values }) : null;
+        if (selected_option && bCbv) {
+          const { newCbv } = updateCbvStock(bCbv, selected_option, -take);
+          bCbv = newCbv;
+        }
+        await client.query(
+          'UPDATE warehouse_batches SET quantity = quantity - $1, checkbox_values = $2 WHERE id = $3',
+          [take, bCbv ? JSON.stringify(bCbv) : null, b.id]
+        );
         transferCost = parseFloat(b.cost_price || transferCost);
         transferExpiry = b.expiry_date || transferExpiry;
         rem -= take;
       }
+    }
+
+    // Recompute total warehouse_items quantity and checkbox_values across all batches
+    const { rows: allBatches } = await client.query('SELECT * FROM warehouse_batches WHERE warehouse_item_id=$1', [whItem.id]);
+    const newTotalWhQty = allBatches.reduce((sum, b) => sum + parseInt(b.quantity || 0, 10), 0);
+    let mergedWhCbv = null;
+    allBatches.forEach(b => {
+      if (b.checkbox_values) {
+        let bObj = typeof b.checkbox_values === 'string' ? JSON.parse(b.checkbox_values) : b.checkbox_values;
+        if (!mergedWhCbv) mergedWhCbv = JSON.parse(JSON.stringify(bObj));
+        else {
+          for (const [k, v] of Object.entries(bObj)) {
+            if (typeof v === 'object' && v !== null && v.stock != null) {
+              if (!mergedWhCbv[k]) mergedWhCbv[k] = { ...v, stock: 0 };
+              mergedWhCbv[k].stock = (parseInt(mergedWhCbv[k].stock || 0, 10)) + (parseInt(v.stock || 0, 10));
+            }
+          }
+        }
+      }
+    });
+
+    if (mergedWhCbv) {
+      await client.query('UPDATE warehouse_items SET quantity = $1, checkbox_values = $2 WHERE id = $3', [newTotalWhQty, JSON.stringify(mergedWhCbv), whItem.id]);
+    } else if (selected_option && whItem.checkbox_values) {
+      const cbv = typeof whItem.checkbox_values === 'string' ? JSON.parse(whItem.checkbox_values) : { ...whItem.checkbox_values };
+      const { newCbv } = updateCbvStock(cbv, selected_option, -transferQty);
+      await client.query('UPDATE warehouse_items SET quantity = $1, checkbox_values = $2 WHERE id = $3', [newTotalWhQty, JSON.stringify(newCbv), whItem.id]);
+    } else {
+      await client.query('UPDATE warehouse_items SET quantity = $1 WHERE id = $2', [newTotalWhQty, whItem.id]);
     }
 
     // 2. Add to Shop Products (and sync description & category)

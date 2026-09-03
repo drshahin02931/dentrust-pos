@@ -1531,16 +1531,7 @@ function transferActiveBatchToShop() {
   const whItemId = _currentEditingWhItem.id;
   
   closeEditWarehouseModal();
-  openTransferModal(whItemId);
-
-  // Pre-select this specific batch in the transfer modal
-  setTimeout(() => {
-    const batchSel = document.getElementById('tr-batch-select');
-    if (batchSel && batchId) {
-      batchSel.value = String(batchId);
-      if (typeof onBatchSelectChange === 'function') onBatchSelectChange();
-    }
-  }, 100);
+  openTransferModal(whItemId, batchId);
 }
 
 async function addNewWhBatch() {
@@ -1738,16 +1729,15 @@ function openVariantCompareModal(itemId) {
 }
 
 // ── Transfer Modal ────────────────────────────────────────────────────────────
-function openTransferModal(itemId) {
+function openTransferModal(itemId, initialBatchId = null) {
   const item = _warehouseItems.find(i => i.id === itemId);
   if (!item) return;
 
   _currentTrItem = item;
   _currentTrSizeKey = null;
-  _maxAvailTr = parseInt(item.quantity || 0);
+  _maxAvailTr = parseInt(item.quantity || 0, 10);
 
   document.getElementById('tr-prod-name').textContent = item.product_name;
-  document.getElementById('tr-avail-wh').textContent = _maxAvailTr;
   document.getElementById('tr-current-shop').textContent = item.shop_quantity != null ? item.shop_quantity : 0;
   document.getElementById('trQuantityInput').value = '1';
   document.getElementById('trNoteInput').value = '';
@@ -1759,37 +1749,14 @@ function openTransferModal(itemId) {
   bSelect.innerHTML = '<option value="">⚡ تلقائي (الأقرب صلاحية والأقدم - FIFO)</option>' +
     batches.map(b => `<option value="${b.id}">📦 ${b.batch_number || 'شحنة'} (متاح: ${b.quantity} | تكلفة: ${parseFloat(b.cost_price||0).toFixed(2)} ج ${b.expiry_date ? '| صلاحية: ' + b.expiry_date : ''})</option>`).join('');
 
-  // Handle Variants
-  const vContainer = document.getElementById('tr-variants-container');
-  const vList = document.getElementById('tr-variants-list');
-
-  let hasVariants = false;
-  vList.innerHTML = '';
-
-  if (item.checkbox_values) {
-    const cbv = typeof item.checkbox_values === 'string' ? JSON.parse(item.checkbox_values) : item.checkbox_values;
-    const opts = Object.keys(cbv);
-    if (opts.length > 0) {
-      hasVariants = true;
-      vList.innerHTML = opts.map((opt, idx) => {
-        const stock = cbv[opt].stock != null ? parseInt(cbv[opt].stock) : 0;
-        return `
-          <button type="button" onclick="selectTrVariant('${opt}', ${stock})" id="tr-opt-${idx}"
-            class="tr-opt-btn px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${idx === 0 ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 text-gray-700 border-gray-200 hover:border-blue-400'}">
-            ${opt} <span class="text-[11px] font-mono opacity-80">(${stock})</span>
-          </button>
-        `;
-      }).join('');
-      if (opts.length > 0) {
-        _currentTrSizeKey = opts[0];
-        _maxAvailTr = cbv[opts[0]].stock != null ? parseInt(cbv[opts[0]].stock) : 0;
-        document.getElementById('tr-avail-wh').textContent = _maxAvailTr;
-      }
-    }
+  if (initialBatchId && batches.some(b => String(b.id) === String(initialBatchId))) {
+    bSelect.value = String(initialBatchId);
+  } else {
+    bSelect.value = "";
   }
 
-  if (hasVariants) vContainer.classList.remove('hidden');
-  else vContainer.classList.add('hidden');
+  // Update variants and quantities strictly for the selected batch / item
+  onBatchSelectChange();
 
   document.getElementById('transferModal').classList.remove('hidden');
 }
@@ -1799,20 +1766,84 @@ function selectTrVariant(optKey, stock) {
   _maxAvailTr = stock;
   document.getElementById('tr-avail-wh').textContent = stock;
   document.querySelectorAll('.tr-opt-btn').forEach(b => {
-    b.className = b.textContent.includes(optKey) 
-      ? 'tr-opt-btn px-3 py-1.5 rounded-xl border text-xs font-bold transition-all bg-blue-600 text-white border-blue-600'
+    const isThis = b.dataset.optKey === optKey || b.textContent.includes(optKey);
+    b.className = isThis 
+      ? 'tr-opt-btn px-3 py-1.5 rounded-xl border text-xs font-bold transition-all bg-blue-600 text-white border-blue-600 shadow-sm'
       : 'tr-opt-btn px-3 py-1.5 rounded-xl border text-xs font-bold transition-all bg-gray-50 text-gray-700 border-gray-200 hover:border-blue-400';
   });
+  validateTrQtyInput();
 }
 
 function onBatchSelectChange() {
+  if (!_currentTrItem) return;
   const bId = document.getElementById('tr-batch-select').value;
-  if (!bId || !_currentTrItem) return;
-  const b = (_currentTrItem.batches || []).find(x => String(x.id) === String(bId));
-  if (b && !_currentTrSizeKey) {
-    _maxAvailTr = parseInt(b.quantity || 0);
+  const vContainer = document.getElementById('tr-variants-container');
+  const vList = document.getElementById('tr-variants-list');
+  
+  let targetCbv = _currentTrItem.checkbox_values;
+  let availQty = parseInt(_currentTrItem.quantity || 0, 10);
+
+  if (bId) {
+    const b = (_currentTrItem.batches || []).find(x => String(x.id) === String(bId));
+    if (b) {
+      availQty = parseInt(b.quantity || 0, 10);
+      if (b.checkbox_values) {
+        targetCbv = b.checkbox_values;
+      } else {
+        targetCbv = {};
+        const itemFlat = flattenCbv(_currentTrItem.checkbox_values);
+        const keys = Object.keys(itemFlat);
+        keys.forEach((k, idx) => {
+          targetCbv[k] = { stock: (idx === 0 ? availQty : 0) };
+        });
+      }
+    }
+  }
+
+  // Render variants corresponding strictly to this batch / item
+  let hasVariants = false;
+  vList.innerHTML = '';
+
+  if (targetCbv) {
+    const flat = flattenCbv(targetCbv);
+    const opts = Object.keys(flat);
+    if (opts.length > 0) {
+      hasVariants = true;
+      vList.innerHTML = opts.map((opt, idx) => {
+        const itemObj = flat[opt] || {};
+        const stock = itemObj.stock != null ? parseInt(itemObj.stock) : 0;
+        const rawKey = itemObj.rawKey || opt;
+        const isSelected = _currentTrSizeKey ? (_currentTrSizeKey === rawKey || _currentTrSizeKey === opt) : (idx === 0);
+        return `
+          <button type="button" onclick="selectTrVariant('${rawKey.replace(/'/g, "\\'")}', ${stock})" id="tr-opt-${idx}"
+            data-opt-key="${rawKey.replace(/"/g, '&quot;')}"
+            class="tr-opt-btn px-3 py-1.5 rounded-xl border text-xs font-bold transition-all ${isSelected ? 'bg-blue-600 text-white border-blue-600 shadow-sm' : 'bg-gray-50 text-gray-700 border-gray-200 hover:border-blue-400'}">
+            ${rawKey} <span class="text-[11px] font-mono opacity-80">(${stock})</span>
+          </button>
+        `;
+      }).join('');
+
+      // Auto-select first variant or active variant
+      let activeOptKey = _currentTrSizeKey || opts[0];
+      let foundVal = flat[activeOptKey] || Object.values(flat).find(v => v.rawKey === activeOptKey);
+      if (!foundVal) foundVal = flat[opts[0]];
+      
+      _currentTrSizeKey = foundVal.rawKey || opts[0];
+      _maxAvailTr = foundVal.stock != null ? parseInt(foundVal.stock) : 0;
+      document.getElementById('tr-avail-wh').textContent = _maxAvailTr;
+    }
+  }
+
+  if (hasVariants) {
+    vContainer.classList.remove('hidden');
+  } else {
+    vContainer.classList.add('hidden');
+    _currentTrSizeKey = null;
+    _maxAvailTr = availQty;
     document.getElementById('tr-avail-wh').textContent = _maxAvailTr;
   }
+
+  validateTrQtyInput();
 }
 
 function closeTransferModal() {
