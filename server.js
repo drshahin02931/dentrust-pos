@@ -618,10 +618,33 @@ app.get(`${BASE}/api/products/low-stock`, async (req, res) => {
 app.get(`${BASE}/api/products/financial-summary`, async (req, res) => {
   try {
     const { rows: [r] } = await posDb.query(
-      `SELECT COALESCE(SUM(purchase_price * quantity), 0) AS total_cost,
-              COALESCE(SUM(sale_price * quantity), 0) AS total_revenue,
-              COALESCE(SUM((sale_price - purchase_price) * quantity), 0) AS total_profit
-       FROM products`
+      `WITH batch_sums AS (
+         SELECT product_id, 
+                SUM(remaining_quantity * cost_price) as batch_cost,
+                SUM(remaining_quantity) as batch_qty
+         FROM pos_data.product_cost_batches
+         WHERE remaining_quantity > 0
+         GROUP BY product_id
+       )
+       SELECT 
+         COALESCE(SUM(
+           CASE 
+             WHEN b.product_id IS NOT NULL AND b.batch_qty > 0 
+               THEN b.batch_cost + (GREATEST(0, p.quantity - b.batch_qty) * p.purchase_price)
+             ELSE p.purchase_price * p.quantity 
+           END
+         ), 0) AS total_cost,
+         COALESCE(SUM(p.sale_price * p.quantity), 0) AS total_revenue,
+         COALESCE(SUM(
+           (p.sale_price * p.quantity) - 
+           CASE 
+             WHEN b.product_id IS NOT NULL AND b.batch_qty > 0 
+               THEN b.batch_cost + (GREATEST(0, p.quantity - b.batch_qty) * p.purchase_price)
+             ELSE p.purchase_price * p.quantity 
+           END
+         ), 0) AS total_profit
+       FROM products p
+       LEFT JOIN batch_sums b ON b.product_id = p.id`
     );
     res.json(r);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
