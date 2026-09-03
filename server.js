@@ -1328,8 +1328,24 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
       }
 
       if (!effectiveCostPrice || effectiveCostPrice <= 0) {
-        const { rows: [snap] } = await client.query('SELECT purchase_price FROM products WHERE id=$1', [item.product_id]);
-        effectiveCostPrice = snap ? parseFloat(snap.purchase_price || 0) : 0;
+        if (item.purchase_price != null && parseFloat(item.purchase_price) > 0) {
+          effectiveCostPrice = parseFloat(item.purchase_price);
+        } else if (selOptSaved) {
+          try {
+            const { rows: [pCbv] } = await client.query('SELECT checkbox_values FROM products WHERE id=$1', [item.product_id]);
+            if (pCbv?.checkbox_values) {
+              const cbv = typeof pCbv.checkbox_values === 'string' ? JSON.parse(pCbv.checkbox_values) : pCbv.checkbox_values;
+              const optVal = cbv[selOptSaved] || (selOptSaved.includes('::') ? null : Object.values(cbv).find(v => v && typeof v === 'object' && v[selOptSaved]));
+              if (optVal && optVal.cost_price) {
+                effectiveCostPrice = parseFloat(optVal.cost_price);
+              }
+            }
+          } catch (_) {}
+        }
+        if (!effectiveCostPrice || effectiveCostPrice <= 0) {
+          const { rows: [snap] } = await client.query('SELECT purchase_price FROM products WHERE id=$1', [item.product_id]);
+          effectiveCostPrice = snap ? parseFloat(snap.purchase_price || 0) : 0;
+        }
       }
 
       // Check if all remaining batches now share the same price or if old price finished: auto-unify

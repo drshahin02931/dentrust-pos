@@ -797,6 +797,21 @@ function parseVariants(p) {
       const cv = typeof p.checkbox_values === 'string' ? JSON.parse(p.checkbox_values) : p.checkbox_values;
       const sizes = [];
       Object.entries(cv).forEach(([key, val]) => {
+        if (typeof val === 'object' && val !== null && !key.includes('::') && val.stock == null) {
+          Object.entries(val).forEach(([subKey, subVal]) => {
+            if (typeof subVal === 'object' && subVal !== null) {
+              const checked = subVal.checked ?? true;
+              const disabled = subVal.disabled ?? false;
+              if (!checked || disabled) return;
+              const stock = subVal.stock != null ? parseInt(subVal.stock) : (p.quantity || 0);
+              const costPrice = (subVal.cost_price != null && parseFloat(subVal.cost_price) > 0)
+                ? parseFloat(subVal.cost_price)
+                : parseFloat(p.purchase_price || 0);
+              sizes.push({ label: subKey, qty: stock, cost_price: costPrice, _cbKey: `${key}::${subKey}`, group: key });
+            }
+          });
+          return;
+        }
         const sep = key.indexOf('::');
         if (sep === -1) return;
         const group    = key.slice(0, sep);
@@ -807,7 +822,10 @@ function parseVariants(p) {
         const stock = (typeof val === 'object' && val?.stock !== null && val?.stock !== undefined)
           ? parseInt(val.stock)
           : (p.quantity || 0);
-        sizes.push({ label, qty: stock, _cbKey: key, group });
+        const costPrice = (typeof val === 'object' && val?.cost_price != null && parseFloat(val.cost_price) > 0)
+          ? parseFloat(val.cost_price)
+          : parseFloat(p.purchase_price || 0);
+        sizes.push({ label, qty: stock, cost_price: costPrice, _cbKey: key, group });
       });
       if (sizes.length > 0) return { sizes };
     } catch(e) {}
@@ -979,6 +997,9 @@ function confirmVariantAdd() {
     existing.quantity = newTotal;
   } else {
     const label = (sizeObj?.label || _vpSelSize) + (_vpSelColor ? ` · ${_vpSelColor}` : "");
+    const variantCost = (sizeObj && sizeObj.cost_price != null && parseFloat(sizeObj.cost_price) > 0)
+      ? parseFloat(sizeObj.cost_price)
+      : parseFloat(_vpProduct.purchase_price || 0);
     cart.push({
       _cartKey:      cartKey,
       product_id:    _vpProduct.id,
@@ -989,7 +1010,7 @@ function confirmVariantAdd() {
       selected_option: _vpSelCbKey || null,
       _color:        _vpSelColor || null,
       unit_price:    _vpProduct.sale_price,
-      purchase_price: _vpProduct.purchase_price || 0,
+      purchase_price: variantCost,
       quantity:      qty,
       max_qty:       maxQty
     });
