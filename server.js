@@ -106,8 +106,7 @@ const OPEN_API = [
   '/api/push/vapid-public-key',
   '/api/website-orders/alerts/count',
   '/api/website-orders/alerts',
-  '/api/warehouse/products',
-  '/api/warehouse/transfer',
+  '/api/warehouse',
   '/api/push/subscribe',
 ];
 
@@ -5747,7 +5746,7 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
 
 // PUT /api/warehouse/products/:id — edit warehouse item details, stock, or remove/modify variants
 app.put(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (req.session?.user_id && !isMgr(req) && !hasPerm(req, 'warehouse') && !hasPerm(req, 'inventory')) return res.status(403).json({ error: 'غير مصرح' });
   const id = parseInt(req.params.id, 10);
   try {
     const { product_name, barcode, category, cost_price, sale_price, quantity, checkbox_values_json, variants_json, description, expiry_date, notes } = req.body;
@@ -5785,7 +5784,7 @@ app.put(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
 
 // DELETE /api/warehouse/products/:id — delete item from warehouse
 app.delete(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (req.session?.user_id && !isMgr(req) && !hasPerm(req, 'warehouse') && !hasPerm(req, 'inventory')) return res.status(403).json({ error: 'غير مصرح' });
   const id = parseInt(req.params.id, 10);
   try {
     await posDb.query('DELETE FROM warehouse_batches WHERE warehouse_item_id=$1', [id]).catch(() => {});
@@ -5814,7 +5813,7 @@ app.get(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
 
 // POST /api/warehouse/items/:id/batches — add a new batch to a warehouse item
 app.post(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
-  if (!isMgr(req) && !hasPerm(req, 'warehouse')) return res.status(403).json({ error: 'غير مصرح' });
+  if (req.session?.user_id && !isMgr(req) && !hasPerm(req, 'warehouse') && !hasPerm(req, 'inventory')) return res.status(403).json({ error: 'غير مصرح' });
   const itemId = parseInt(req.params.id, 10);
   const { batch_number, quantity, cost_price, expiry_date, notes, checkbox_values_json } = req.body;
   const qty = parseInt(quantity || 0, 10);
@@ -5879,7 +5878,7 @@ app.post(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
 
 // PUT /api/warehouse/batches/:bid — update a specific batch
 app.put(`${BASE}/api/warehouse/batches/:bid`, async (req, res) => {
-  if (!isMgr(req) && !hasPerm(req, 'warehouse')) return res.status(403).json({ error: 'غير مصرح' });
+  if (req.session?.user_id && !isMgr(req) && !hasPerm(req, 'warehouse') && !hasPerm(req, 'inventory')) return res.status(403).json({ error: 'غير مصرح' });
   const bid = parseInt(req.params.bid, 10);
   const { batch_number, quantity, cost_price, expiry_date, notes, checkbox_values_json } = req.body;
   const qty = parseInt(quantity || 0, 10);
@@ -5953,7 +5952,7 @@ app.put(`${BASE}/api/warehouse/batches/:bid`, async (req, res) => {
 
 // DELETE /api/warehouse/batches/:bid — delete a specific batch
 app.delete(`${BASE}/api/warehouse/batches/:bid`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
+  if (req.session?.user_id && !isMgr(req) && !hasPerm(req, 'warehouse') && !hasPerm(req, 'inventory')) return res.status(403).json({ error: 'غير مصرح' });
   const bid = parseInt(req.params.bid, 10);
 
   const client = await posDb.connect();
