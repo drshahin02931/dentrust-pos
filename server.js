@@ -695,10 +695,7 @@ const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, 
   COALESCE(is_hidden_from_website, false) AS is_hidden_from_website,
   dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image,
   CASE
-    WHEN image_url LIKE '%/objects/uploads/%' THEN REPLACE(image_url, '/objects/uploads/', '/products/uploads/')
-    WHEN image_url LIKE 'http%' THEN image_url
-    WHEN image_url LIKE '/objects/%' THEN 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/products/' || SUBSTRING(image_url FROM 10)
-    WHEN image_url LIKE 'objects/%'  THEN 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/products/' || SUBSTRING(image_url FROM 9)
+    WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp'
     ELSE NULL
   END AS image_url`;
 
@@ -4025,13 +4022,7 @@ app.get('/api/products', webCors, async (req, res) => {
       for (const row of rows) {
         delete row.purchase_price;
         if (row.image_url) {
-          if (row.image_url.includes('/objects/uploads/')) {
-            row.image_url = row.image_url.replace('/objects/uploads/', '/products/uploads/');
-          } else if (row.image_url.startsWith('/objects/')) {
-            row.image_url = 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/products/' + row.image_url.slice(9);
-          } else if (row.image_url.startsWith('objects/')) {
-            row.image_url = 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/products/' + row.image_url.slice(8);
-          }
+          row.image_url = `https://dentrust.site/products_opt/${row.id}.webp`;
         }
         // Sanitize checkbox_values: strictly remove cost_price, preserve stock and sale_price
         if (row.checkbox_values) {
