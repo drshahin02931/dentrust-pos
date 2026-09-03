@@ -6465,7 +6465,6 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
 
 // POST /api/warehouse/return-from-store — return stock from shop back to warehouse
 app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'غير مصرح' });
   const { product_id, quantity, selected_option, reason } = req.body;
   const returnQty = parseInt(quantity || 0, 10);
   if (!product_id || returnQty <= 0) {
@@ -6474,6 +6473,17 @@ app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
 
   const client = await posDb.connect();
   try {
+    // Ensure tables & columns exist before transaction
+    await client.query(`CREATE TABLE IF NOT EXISTS warehouse_items (
+      id SERIAL PRIMARY KEY, product_id INTEGER, product_name TEXT NOT NULL,
+      barcode TEXT DEFAULT '', category TEXT DEFAULT 'عام', cost_price NUMERIC DEFAULT 0,
+      sale_price NUMERIC DEFAULT 0, quantity INTEGER DEFAULT 0, variants TEXT,
+      checkbox_values TEXT, description TEXT DEFAULT '', expiry_date TEXT DEFAULT '',
+      notes TEXT DEFAULT '', created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+    await client.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS checkbox_values TEXT`).catch(() => {});
+    await client.query(`ALTER TABLE warehouse_batches ADD COLUMN IF NOT EXISTS checkbox_values JSONB`).catch(() => {});
+
     await client.query('BEGIN');
     const { rows: [shopProd] } = await client.query('SELECT * FROM products WHERE id=$1 FOR UPDATE', [product_id]);
     if (!shopProd) {
@@ -6490,15 +6500,10 @@ app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
     let beforeShopQty = parseInt(shopProd.quantity || 0);
     if (selected_option && shopProd.checkbox_values) {
       const scbv = typeof shopProd.checkbox_values === 'string' ? JSON.parse(shopProd.checkbox_values) : { ...shopProd.checkbox_values };
-      if (scbv[selected_option] && typeof scbv[selected_option] === 'object') {
-        const avail = scbv[selected_option].stock != null ? parseInt(scbv[selected_option].stock) : shopProd.quantity;
-        if (avail < returnQty) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: `رصيد المقاس (${selected_option}) بالمحل أقل من المطلوب` });
-        }
-        scbv[selected_option].stock = Math.max(0, avail - returnQty);
-        const totalCb = Object.values(scbv).reduce((s, v) => s + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
-        await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(scbv), shopProd.id]);
+      const { newCbv, updated } = updateCbvStock(scbv, selected_option, -returnQty);
+      if (updated) {
+        const totalCb = sumCbvStock(newCbv);
+        await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(newCbv), shopProd.id]);
       } else {
         await client.query('UPDATE products SET quantity = quantity - $1 WHERE id=$2', [returnQty, shopProd.id]);
       }
@@ -6532,19 +6537,22 @@ app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
     } catch (_) {}
 
     // 2. Add back to Warehouse item (find or create)
-    const { rows: [whItem] } = await client.query('SELECT * FROM warehouse_items WHERE product_id=$1 OR LOWER(product_name)=LOWER($2) LIMIT 1 FOR UPDATE', [shopProd.id, shopProd.product_name]);
+    const { rows: [whItem] } = await client.query(
+      'SELECT * FROM warehouse_items WHERE product_id=$1 OR TRIM(LOWER(product_name))=TRIM(LOWER($2)) LIMIT 1 FOR UPDATE',
+      [shopProd.id, shopProd.product_name]
+    );
     let whItemId;
     let retBatchCbv = null;
     if (selected_option) {
       let bscbv = {};
       const { newCbv } = updateCbvStock(bscbv, selected_option, returnQty);
-      retBatchCbv = JSON.stringify(newCbv);
+      retBatchCbv = newCbv;
     }
 
     if (whItem) {
       whItemId = whItem.id;
-      if (selected_option && whItem.checkbox_values) {
-        let wcbv = typeof whItem.checkbox_values === 'string' ? JSON.parse(whItem.checkbox_values) : { ...whItem.checkbox_values };
+      if (selected_option) {
+        let wcbv = whItem.checkbox_values ? (typeof whItem.checkbox_values === 'string' ? JSON.parse(whItem.checkbox_values) : { ...whItem.checkbox_values }) : {};
         const { newCbv } = updateCbvStock(wcbv, selected_option, returnQty);
         const totalWcb = sumCbvStock(newCbv);
         await client.query('UPDATE warehouse_items SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalWcb, JSON.stringify(newCbv), whItem.id]);
@@ -6555,7 +6563,7 @@ app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
       const { rows: [newWh] } = await client.query(
         `INSERT INTO warehouse_items (product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants, checkbox_values, description, expiry_date, notes)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-        [shopProd.id, shopProd.product_name, shopProd.barcode || '', shopProd.category || 'عام', retCost, shopProd.sale_price || 0, returnQty, shopProd.variants || null, retBatchCbv || shopProd.checkbox_values || null, shopProd.description || '', retExp, 'محول من المحل']
+        [shopProd.id, shopProd.product_name, shopProd.barcode || '', shopProd.category || 'عام', retCost, shopProd.sale_price || 0, returnQty, shopProd.variants || null, retBatchCbv ? JSON.stringify(retBatchCbv) : (shopProd.checkbox_values || null), shopProd.description || '', retExp, 'محول من المحل']
       );
       whItemId = newWh.id;
     }
@@ -6565,7 +6573,7 @@ app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
       `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes, checkbox_values)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [whItemId, shopProd.id, `محول من المحل #${Date.now().toString().slice(-4)}`, returnQty, retCost, retExp, reason || 'تحويل بضاعة من المحل إلى المخزن الرئيسي', retBatchCbv]
-    ).catch(() => {});
+    );
 
     // 3. Log movement audit
     await logProductMovement({
@@ -6578,7 +6586,7 @@ app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
       quantityBefore: beforeShopQty,
       quantityAfter: beforeShopQty - returnQty,
       unitPrice: shopProd.sale_price,
-      unitCost: shopProd.purchase_price,
+      unitCost: retCost,
       userName: req.session?.username || 'المدير',
       notes: reason || 'إرجاع بضاعة من المحل إلى المستودع الرئيسي'
     }, client);
@@ -6588,7 +6596,7 @@ app.post(`${BASE}/api/warehouse/return-from-store`, async (req, res) => {
     // 4. Sync website
     syncProductsNow([shopProd.id]).catch(() => {});
 
-    res.json({ ok: true, returned_qty: returnQty });
+    res.json({ ok: true, returned_qty: returnQty, warehouse_item_id: whItemId });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('Return to warehouse error:', err);

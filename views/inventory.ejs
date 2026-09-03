@@ -928,9 +928,18 @@ async function openTransferToWhModal() {
     try {
       const cbv = typeof p.checkbox_values === 'string' ? JSON.parse(p.checkbox_values) : p.checkbox_values;
       for (const [k, v] of Object.entries(cbv)) {
-        if (typeof v === 'object' && v !== null && v.checked !== false) {
-          const s = parseInt(v.stock || 0, 10);
-          shopOpts.push({ key: k, stock: s, cost: parseFloat(v.cost_price || p.purchase_price || 0) });
+        if (typeof v === 'object' && v !== null) {
+          if (v.stock != null) {
+            const s = parseInt(v.stock || 0, 10);
+            shopOpts.push({ key: k, stock: s, cost: parseFloat(v.cost_price || p.purchase_price || 0) });
+          } else {
+            for (const [subK, subV] of Object.entries(v)) {
+              if (typeof subV === 'object' && subV !== null && subV.stock != null) {
+                const s = parseInt(subV.stock || 0, 10);
+                shopOpts.push({ key: subK, group: k, stock: s, cost: parseFloat(subV.cost_price || p.purchase_price || 0) });
+              }
+            }
+          }
         }
       }
     } catch (_) {}
