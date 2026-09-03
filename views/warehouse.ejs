@@ -1227,59 +1227,84 @@ let _activeBatchId = null;
 
 async function loadAndRenderWhBatches(itemId) {
   const tabsContainer = document.getElementById('ew-batch-tabs-container');
+  if (!tabsContainer) return;
+
+  // 1. Immediately render from memory if batches exist in _currentEditingWhItem
+  const initialBatches = (_currentEditingWhItem && _currentEditingWhItem.batches && _currentEditingWhItem.batches.length > 0)
+    ? _currentEditingWhItem.batches
+    : [];
+
+  if (initialBatches.length > 0) {
+    _currentWhBatches = [...initialBatches];
+    renderWhBatchesUI(_currentWhBatches);
+  } else {
+    tabsContainer.innerHTML = '<div class="text-xs text-indigo-600 font-bold py-1">جارٍ تحميل الشحنات...</div>';
+  }
+
+  // 2. Fetch fresh batches from server in background
+  try {
+    const res = await fetch(`${BASE}/api/warehouse/items/${itemId}/batches`, { credentials: 'include' });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.batches && Array.isArray(data.batches) && data.batches.length > 0) {
+        _currentWhBatches = data.batches;
+        if (_currentEditingWhItem) _currentEditingWhItem.batches = data.batches;
+        renderWhBatchesUI(_currentWhBatches);
+      } else if (initialBatches.length === 0) {
+        renderWhBatchesUI([]);
+      }
+    }
+  } catch (err) {
+    console.warn('Background batch fetch error:', err);
+    if (initialBatches.length === 0) {
+      tabsContainer.innerHTML = `<div class="p-2 text-xs text-gray-500 font-medium">لا توجد شحنات فرعية مسجلة (يمكنك إضافة شحنة جديدة بالأسفل)</div>`;
+    }
+  }
+}
+
+function renderWhBatchesUI(batches) {
+  const tabsContainer = document.getElementById('ew-batch-tabs-container');
   const countBadge = document.getElementById('ew-batches-count-badge');
   const activeBox = document.getElementById('ew-active-batch-box');
 
   if (!tabsContainer) return;
-  tabsContainer.innerHTML = '<div class="text-xs text-indigo-600 font-bold py-1">جارٍ تحميل الشحنات...</div>';
+  if (countBadge) countBadge.textContent = `${batches.length} شحنات`;
 
-  try {
-    const res = await fetch(`${BASE}/api/warehouse/items/${itemId}/batches`);
-    const data = await res.json();
-    _currentWhBatches = data.batches || [];
-
-    if (countBadge) countBadge.textContent = `${_currentWhBatches.length} شحنات`;
-
-    if (_currentWhBatches.length === 0) {
-      tabsContainer.innerHTML = `<div class="p-2 text-xs text-gray-500 font-medium">لا توجد شحنات فرعية مسجلة (يمكنك إضافة شحنة جديدة بالأسفل)</div>`;
-      if (activeBox) activeBox.classList.add('hidden');
-      return;
-    }
-
-    if (activeBox) activeBox.classList.remove('hidden');
-
-    // Render Batch Selector Tabs (Horizontal Cards with batch title, qty, cost, and notes!)
-    tabsContainer.innerHTML = _currentWhBatches.map((b, idx) => {
-      const isLatest = idx === _currentWhBatches.length - 1;
-      const bNum = b.batch_number || `شحنة #${b.id}`;
-      const bNotes = b.notes ? b.notes.slice(0, 25) : '';
-      const bQty = parseInt(b.quantity || 0, 10);
-      const bCost = parseFloat(b.cost_price || 0).toFixed(2);
-
-      return `
-        <button type="button" onclick="selectActiveWhBatch(${b.id})" id="batch-tab-btn-${b.id}"
-          class="batch-selector-pill flex-shrink-0 text-right p-2.5 rounded-2xl border-2 transition-all cursor-pointer font-medium text-xs space-y-0.5 bg-white border-gray-200 hover:border-indigo-400 hover:bg-indigo-50/40">
-          <div class="flex items-center gap-1.5 justify-between">
-            <span class="font-bold text-gray-900">${isLatest ? '🟢' : '📦'} ${bNum}</span>
-            <span class="text-[10px] font-mono font-black px-1.5 py-0.5 rounded-lg bg-indigo-100 text-indigo-800">${bQty} قطعة</span>
-          </div>
-          <div class="flex items-center gap-2 text-[10px] text-gray-500 pt-0.5">
-            <span class="font-bold text-amber-700 font-mono">${bCost} ج</span>
-            ${bNotes ? `<span class="truncate max-w-[120px] text-gray-600 bg-gray-100 px-1 rounded">📝 ${bNotes}</span>` : ''}
-          </div>
-        </button>
-      `;
-    }).join('');
-
-    // Set latest batch active by default if not set or not in current list
-    if (!_activeBatchId || !_currentWhBatches.some(b => b.id === _activeBatchId)) {
-      _activeBatchId = _currentWhBatches[_currentWhBatches.length - 1].id;
-    }
-
-    selectActiveWhBatch(_activeBatchId);
-  } catch (err) {
-    tabsContainer.innerHTML = `<div class="text-xs text-red-500 font-bold">فشل تحميل الشحنات: ${err.message}</div>`;
+  if (!batches || batches.length === 0) {
+    tabsContainer.innerHTML = `<div class="p-2 text-xs text-gray-500 font-medium">لا توجد شحنات فرعية مسجلة (يمكنك إضافة شحنة جديدة بالأسفل)</div>`;
+    if (activeBox) activeBox.classList.add('hidden');
+    return;
   }
+
+  if (activeBox) activeBox.classList.remove('hidden');
+
+  tabsContainer.innerHTML = batches.map((b, idx) => {
+    const isLatest = idx === batches.length - 1;
+    const bNum = b.batch_number || `شحنة #${b.id}`;
+    const bNotes = b.notes ? b.notes.slice(0, 25) : '';
+    const bQty = parseInt(b.quantity || 0, 10);
+    const bCost = parseFloat(b.cost_price || 0).toFixed(2);
+
+    return `
+      <button type="button" onclick="selectActiveWhBatch(${b.id})" id="batch-tab-btn-${b.id}"
+        class="batch-selector-pill flex-shrink-0 text-right p-2.5 rounded-2xl border-2 transition-all cursor-pointer font-medium text-xs space-y-0.5 bg-white border-gray-200 hover:border-indigo-400 hover:bg-indigo-50/40">
+        <div class="flex items-center gap-1.5 justify-between">
+          <span class="font-bold text-gray-900">${isLatest ? '🟢' : '📦'} ${bNum}</span>
+          <span class="text-[10px] font-mono font-black px-1.5 py-0.5 rounded-lg bg-indigo-100 text-indigo-800">${bQty} قطعة</span>
+        </div>
+        <div class="flex items-center gap-2 text-[10px] text-gray-500 pt-0.5">
+          <span class="font-bold text-amber-700 font-mono">${bCost} ج</span>
+          ${bNotes ? `<span class="truncate max-w-[120px] text-gray-600 bg-gray-100 px-1 rounded">📝 ${bNotes}</span>` : ''}
+        </div>
+      </button>
+    `;
+  }).join('');
+
+  if (!_activeBatchId || !batches.some(b => b.id === _activeBatchId)) {
+    _activeBatchId = batches[batches.length - 1].id;
+  }
+
+  selectActiveWhBatch(_activeBatchId);
 }
 
 function selectActiveWhBatch(batchId) {
