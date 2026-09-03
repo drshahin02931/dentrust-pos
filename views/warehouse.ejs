@@ -393,27 +393,47 @@
             </div>
             <div id="ew-ab-variants-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-2 p-0.5"></div>
 
-            <!-- Form: Add New Variant / Type -->
-            <div class="bg-white/90 p-2.5 rounded-xl border border-indigo-200/80 space-y-1.5 pt-2">
-              <div class="text-[11px] font-bold text-indigo-900 flex items-center gap-1">
-                <span>➕</span> إضافة خيار أو مقاس جديد لهذا الصنف:
+            <!-- Form: Add New Variant / Type (Spacious & Clean Layout) -->
+            <div class="bg-white/95 p-3.5 rounded-2xl border-2 border-indigo-200/90 shadow-xs space-y-3 mt-1">
+              <div class="flex items-center justify-between border-b border-indigo-100 pb-2">
+                <span class="text-xs font-black text-indigo-900 flex items-center gap-1.5">
+                  <span class="text-sm">✨</span> إضافة مقاس أو خاصية جديدة لهذا الصنف:
+                </span>
+                <span class="text-[10px] text-gray-500 font-medium">اختر النوع أو أنشئ نوعاً جديداً</span>
               </div>
-              <div class="flex flex-wrap sm:flex-nowrap items-center gap-1.5">
-                <select id="ew-new-var-group-select" onchange="onEwNewVarGroupChange()"
-                  class="border border-indigo-200 rounded-xl px-2 py-1 text-xs font-bold bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-400">
-                  <option value="المقاس">المقاس</option>
-                  <option value="__custom__">➕ نوع جديد...</option>
-                </select>
-                <input type="text" id="ew-new-var-group-custom" placeholder="اسم النوع (مثال: اللون)"
-                  class="hidden w-28 border border-indigo-300 rounded-xl px-2 py-1 text-xs font-bold bg-white text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
-                <input type="text" id="ew-new-var-name" placeholder="اسم المقاس / الخيار (مثال: XL)"
-                  class="flex-1 min-w-[120px] border border-indigo-200 rounded-xl px-2 py-1 text-xs font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"/>
-                <input type="number" id="ew-new-var-qty" min="0" value="0" placeholder="الكمية"
-                  class="w-16 text-center border border-indigo-200 rounded-xl py-1 text-xs font-black font-mono text-blue-800 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"/>
-                <button type="button" onclick="addNewVariantToActiveBatch()"
-                  class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow-xs transition-all flex items-center gap-1 flex-shrink-0">
-                  <span>➕</span> إضافة
-                </button>
+
+              <!-- Row 1: Attribute Group Selection & Custom Name -->
+              <div class="space-y-1">
+                <label class="text-[11px] font-bold text-gray-700 block">📁 نوع الخاصية / التصنيف:</label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <select id="ew-new-var-group-select" onchange="onEwNewVarGroupChange()"
+                    class="w-full border-2 border-indigo-200 rounded-xl px-3 py-2 text-xs font-bold bg-indigo-50/40 text-indigo-950 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                    <option value="المقاس">المقاس</option>
+                    <option value="__custom__">➕ إنشاء نوع / عنوان جديد...</option>
+                  </select>
+                  <input type="text" id="ew-new-var-group-custom" placeholder="اسم النوع الجديد (مثال: اللون أو التركيز)"
+                    class="hidden w-full border-2 border-indigo-300 rounded-xl px-3 py-2 text-xs font-bold bg-white text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-indigo-300 animate-in fade-in duration-150"/>
+                </div>
+              </div>
+
+              <!-- Row 2: Value / Size Name, Quantity, and Action Button -->
+              <div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-end pt-1">
+                <div class="sm:col-span-6 space-y-1">
+                  <label class="text-[11px] font-bold text-gray-700 block">🏷️ اسم المقاس / الخيار الجديد:</label>
+                  <input type="text" id="ew-new-var-name" placeholder="مثال: XL أو أزرق أو 50ml"
+                    class="w-full border-2 border-gray-200 rounded-xl px-3 py-2 text-xs font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"/>
+                </div>
+                <div class="sm:col-span-3 space-y-1">
+                  <label class="text-[11px] font-bold text-gray-700 block">الكمية بالشحنة:</label>
+                  <input type="number" id="ew-new-var-qty" min="0" value="0"
+                    class="w-full border-2 border-blue-200 rounded-xl px-3 py-2 text-xs font-black font-mono text-center text-blue-800 bg-blue-50/30 focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+                </div>
+                <div class="sm:col-span-3">
+                  <button type="button" onclick="addNewVariantToActiveBatch()"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2.5 px-3 rounded-xl shadow transition-all flex items-center justify-center gap-1.5 cursor-pointer">
+                    <span>➕</span> إضافة للشحنة
+                  </button>
+                </div>
               </div>
             </div>
           </div>
