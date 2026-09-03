@@ -3995,20 +3995,42 @@ app.get('/api/products', webCors, async (req, res) => {
       await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
 
       const { rows } = await client.query(
-        `SELECT p.id, p.name, p.price, p.purchase_price, p.stock,
+        `SELECT p.id, p.name, p.price, p.stock,
                 p.photos[1] AS image_url, p.expiry_date, p.description,
-                c.name AS category_name, p.category_id
+                c.name AS category_name, p.category_id,
+                p.checkbox_values, p.variants
          FROM products p
          LEFT JOIN categories c ON c.id = p.category_id
          WHERE (p.is_hidden IS NOT TRUE AND p.hidden IS NOT TRUE AND (p.is_hidden_from_website IS NOT TRUE OR p.is_hidden_from_website IS NULL) AND (p.section != 'hidden' OR p.section IS NULL))
          ORDER BY p.name`
       );
-      // Convert relative Supabase storage paths to full public URLs
+      // Convert relative Supabase storage paths to full public URLs & sanitize for website
       for (const row of rows) {
+        delete row.purchase_price;
         if (row.image_url && row.image_url.startsWith('/objects/')) {
           row.image_url = 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public' + row.image_url;
         } else if (row.image_url && row.image_url.startsWith('objects/')) {
           row.image_url = 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/' + row.image_url;
+        }
+        // Sanitize checkbox_values: strictly remove cost_price, preserve stock and sale_price
+        if (row.checkbox_values) {
+          try {
+            const cbv = typeof row.checkbox_values === 'string' ? JSON.parse(row.checkbox_values) : row.checkbox_values;
+            const sanitized = {};
+            for (const [k, v] of Object.entries(cbv)) {
+              if (typeof v === 'object' && v !== null) {
+                sanitized[k] = {
+                  checked: v.checked ?? true,
+                  disabled: v.disabled ?? false,
+                  stock: v.stock ?? null,
+                  sale_price: v.sale_price ?? null
+                };
+              } else {
+                sanitized[k] = v;
+              }
+            }
+            row.checkbox_values = sanitized;
+          } catch (_) {}
         }
       }
       cacheSet('site_products', rows, 30000);
