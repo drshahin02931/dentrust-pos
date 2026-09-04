@@ -19,14 +19,21 @@ const autoPrint = (st && st.auto_print) === '1';
 const prevBal = previousBalance || 0;
 const _netTotal   = (typeof netTotal !== 'undefined')   ? netTotal   : parseFloat(sale.total_amount || 0);
 const _totalRet   = (typeof totalReturned !== 'undefined') ? totalReturned : 0;
+const _itemsSubtotal = items.reduce((s, i) => {
+  const nq = parseInt(i.net_qty != null ? i.net_qty : (i.quantity || 0)) || 0;
+  return s + (parseFloat(i.unit_price || 0) * nq);
+}, 0);
+const _hasDiscount = sale.discount_amount && parseFloat(sale.discount_amount) > 0;
+const _hasDelivery = sale.delivery_amount && parseFloat(sale.delivery_amount) > 0;
+const _subtotalBeforeDiscount = _itemsSubtotal > 0 ? _itemsSubtotal : Math.max(0, _netTotal + parseFloat(sale.discount_amount || 0) - parseFloat(sale.delivery_amount || 0));
 
 function fmt(n) { return parseFloat(n || 0).toFixed(2); }
 function payMethodAr(m) {
-  const map = { cash:'كاش', naqdi:'كاش', visa:'فيزا', instapay:'InstaPay', split:'مقسّم', credit:'آجل' };
+  const map = { cash:'كاش', naqdi:'كاش', visa:'فيزا', instapay:'InstaPay', split:'مقسّم', credit:'آجل', online:'أونلاين' };
   return map[m] || m;
 }
 function payMethodEn(m) {
-  const map = { cash:'Cash', naqdi:'Cash', visa:'Visa', instapay:'InstaPay', split:'Split', credit:'Credit' };
+  const map = { cash:'Cash', naqdi:'Cash', visa:'Visa', instapay:'InstaPay', split:'Split', credit:'Credit', online:'Online' };
   return map[m] || m;
 }
 %>
@@ -139,11 +146,14 @@ function payMethodEn(m) {
 
   <% if (showAr) { %>
   <div class="row"><span>رقم الفاتورة</span><span class="bold">#<%= sale.id %></span></div>
+  <% if (sale.dentrust_order_id || sale.source === 'online' || sale.source === 'website') { %>
+  <div class="row"><span>مصدر الطلب</span><span class="bold" style="color:#0284c7;">🌐 طلب موقع <%= sale.dentrust_order_id ? ('#' + sale.dentrust_order_id) : '' %></span></div>
+  <% } %>
   <div class="row"><span>التاريخ</span><span><%= saleDateStr %></span></div>
   <div class="row"><span>الدفع</span><span class="bold"><%= payMethodAr(sale.payment_method) %></span></div>
   <% if (customer) { %>
   <div class="row"><span>العميل</span><span class="bold" style="max-width:55%;text-align:left;"><%- customer.name %></span></div>
-  <% if (customer.phone) { %><div class="row"><span>الهاتف</span><span><%= customer.phone %></span></div><% } %>
+  <% if (customer.phone) { %><div class="row"><span>الهاتف</span><span class="bold"><%= customer.phone %></span></div><% } %>
   <% if (customer.address) { %><div class="row"><span>العنوان</span><span style="max-width:60%;text-align:left;word-break:break-word;"><%- customer.address %></span></div><% } %>
   <% } %>
   <% } %>
@@ -151,11 +161,14 @@ function payMethodEn(m) {
   <% if (showEn) { %>
   <div style="direction:ltr;<%= isBoth ? 'border-top:1px dashed #000;margin-top:4px;padding-top:4px;' : '' %>">
     <div class="row"><span>Invoice #</span><span class="bold"><%= sale.id %></span></div>
+    <% if (sale.dentrust_order_id || sale.source === 'online' || sale.source === 'website') { %>
+    <div class="row"><span>Order Source</span><span class="bold" style="color:#0284c7;">🌐 Website Order <%= sale.dentrust_order_id ? ('#' + sale.dentrust_order_id) : '' %></span></div>
+    <% } %>
     <div class="row"><span>Date</span><span><%= saleDateStr %></span></div>
     <div class="row"><span>Payment</span><span class="bold"><%= payMethodEn(sale.payment_method) %></span></div>
     <% if (customer) { %>
     <div class="row"><span>Customer</span><span class="bold"><%- customer.name %></span></div>
-    <% if (customer.phone) { %><div class="row"><span>Phone</span><span><%= customer.phone %></span></div><% } %>
+    <% if (customer.phone) { %><div class="row"><span>Phone</span><span class="bold"><%= customer.phone %></span></div><% } %>
     <% if (customer.address) { %><div class="row"><span>Address</span><span style="max-width:60%;word-break:break-word;"><%- customer.address %></span></div><% } %>
     <% } %>
   </div>
@@ -226,22 +239,44 @@ function payMethodEn(m) {
   <% } %>
 
   <div class="total-section">
-    <% if (sale.discount_amount && parseFloat(sale.discount_amount) > 0) { %>
+    <% if (_hasDiscount) { %>
     <% if (showAr) { %>
-    <div class="sub-row" style="font-weight:700;"><span>خصم</span><span>- <%= fmt(sale.discount_amount) %> <%= currencyLabel %></span></div>
+    <div class="sub-row" style="font-weight:700;color:#444;">
+      <span>المجموع قبل الخصم</span>
+      <span><%= fmt(_subtotalBeforeDiscount) %> <%= currencyLabel %></span>
+    </div>
+    <div class="sub-row" style="font-weight:700;color:#166534;">
+      <span>خصم<%= sale.promo_code ? ` (${sale.promo_code})` : '' %></span>
+      <span>- <%= fmt(sale.discount_amount) %> <%= currencyLabel %></span>
+    </div>
     <% } %>
     <% if (showEn) { %>
-    <div class="sub-row bold" style="direction:ltr;"><span>Discount</span><span>- <%= fmt(sale.discount_amount) %> <%= currencyEnLabel %></span></div>
+    <div class="sub-row bold" style="direction:ltr;color:#444;">
+      <span>Subtotal (Before Discount)</span>
+      <span><%= fmt(_subtotalBeforeDiscount) %> <%= currencyEnLabel %></span>
+    </div>
+    <div class="sub-row bold" style="direction:ltr;color:#166534;">
+      <span>Discount<%= sale.promo_code ? ` (${sale.promo_code})` : '' %></span>
+      <span>- <%= fmt(sale.discount_amount) %> <%= currencyEnLabel %></span>
+    </div>
     <% } %>
     <% } %>
-    <% if (sale.delivery_amount && parseFloat(sale.delivery_amount) > 0) { %>
+
+    <% if (_hasDelivery) { %>
     <% if (showAr) { %>
-    <div class="sub-row" style="font-weight:700;"><span>مصاريف التوصيل</span><span>+ <%= fmt(sale.delivery_amount) %> <%= currencyLabel %></span></div>
+    <div class="sub-row" style="font-weight:700;color:#1e40af;">
+      <span>مصاريف التوصيل</span>
+      <span>+ <%= fmt(sale.delivery_amount) %> <%= currencyLabel %></span>
+    </div>
     <% } %>
     <% if (showEn) { %>
-    <div class="sub-row bold" style="direction:ltr;"><span>Delivery</span><span>+ <%= fmt(sale.delivery_amount) %> <%= currencyEnLabel %></span></div>
+    <div class="sub-row bold" style="direction:ltr;color:#1e40af;">
+      <span>Delivery Fee</span>
+      <span>+ <%= fmt(sale.delivery_amount) %> <%= currencyEnLabel %></span>
+    </div>
     <% } %>
     <% } %>
+
     <% if (_totalRet > 0) { %>
     <% if (showAr) { %>
     <div class="sub-row" style="font-weight:700;color:#c00;"><span>مرتجع</span><span>- <%= fmt(_totalRet) %> <%= currencyLabel %></span></div>
@@ -250,15 +285,16 @@ function payMethodEn(m) {
     <div class="sub-row bold" style="direction:ltr;color:#c00;"><span>Returns</span><span>- <%= fmt(_totalRet) %> <%= currencyEnLabel %></span></div>
     <% } %>
     <% } %>
+
     <% if (showAr) { %>
     <div class="total-main">
-      <span>الإجمالي</span>
+      <span><%= _hasDiscount ? 'الإجمالي بعد الخصم' : 'الإجمالي' %></span>
       <span><%= fmt(_netTotal) %> <%= currencyLabel %></span>
     </div>
     <% } %>
     <% if (showEn) { %>
     <div class="total-main" style="direction:ltr;">
-      <span>TOTAL</span>
+      <span><%= _hasDiscount ? 'TOTAL (AFTER DISCOUNT)' : 'TOTAL' %></span>
       <span><%= fmt(_netTotal) %> <%= currencyEnLabel %></span>
     </div>
     <% } %>
@@ -463,10 +499,13 @@ function payMethodEn(m) {
       var phone = "<%= customer.phone %>".replace(/[^0-9]/g, "");
       var intl  = phone.startsWith("0") ? "2" + phone : phone;
       var store = "<%- (st && st.store_name) || 'المحل' %>";
-      var items = [<% for (let _i=0; _i<items.length; _i++) { const it=items[_i]; const _nq=parseInt(it.net_qty!=null?it.net_qty:it.quantity); if(_nq<=0&&parseInt(it.returned_qty||0)>0) continue; %>"<%- it.product_name.replace(/"/g,'\\"') %> ×<%= _nq %>"<%= _i < items.length-1 ? ',' : '' %><% } %>];
+      var items = [<% for (let _i=0; _i<items.length; _i++) { const it=items[_i]; const _nq=parseInt(it.net_qty!=null?it.net_qty:it.quantity); if(_nq<=0&&parseInt(it.returned_qty||0)>0) continue; const _opt=it.selected_option ? (' (' + (it.selected_option.includes('::')?it.selected_option.split('::').pop():it.selected_option) + ')') : ''; %>"<%- it.product_name.replace(/"/g,'\\"') %><%- _opt %> ×<%= _nq %>"<%= _i < items.length-1 ? ',' : '' %><% } %>];
       var total = "<%= fmt(_netTotal) %>";
+      var discLine = <%= _hasDiscount ? `'\\nالمجموع قبل الخصم: ' + '${fmt(_subtotalBeforeDiscount)}' + ' جنيه\\nخصم: -' + '${fmt(sale.discount_amount)}' + ' جنيه'` : "''" %>;
+      var delivLine = <%= _hasDelivery ? `'\\nمصاريف التوصيل: +' + '${fmt(sale.delivery_amount)}' + ' جنيه'` : "''" %>;
       var msg   = "🧾 فاتورة من " + store + "\n#<%= sale.id %> — <%= saleDateDay %>\n\n" +
-                  items.join("\n") + "\n\nالإجمالي: " + total + " جنيه\nشكراً لتعاملكم معنا 🙏";
+                  items.join("\n") + "\n" +
+                  discLine + delivLine + "\n\nالإجمالي: " + total + " جنيه\nشكراً لتعاملكم معنا 🙏";
       document.getElementById("waBtn").href = "https://wa.me/" + intl + "?text=" + encodeURIComponent(msg);
     })();
   </script>

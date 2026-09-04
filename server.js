@@ -307,10 +307,18 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
   try {
     const sid = parseInt(req.params.sale_id, 10);
     const { rows: [sale] } = await posDb.query(
-      `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone, c.address AS customer_address,
+      `SELECT s.*, 
+              COALESCE(NULLIF(c.name,''), NULLIF(s.customer_name,''), woa.customer_name) AS customer_name,
+              COALESCE(NULLIF(c.phone,''), woa.customer_phone) AS customer_phone,
+              COALESCE(NULLIF(c.address,''), NULLIF(s.customer_address,''), woa.customer_address) AS customer_address,
+              woa.customer_city,
+              COALESCE(s.delivery_amount, woa.delivery_amount, 0) AS delivery_amount,
+              COALESCE(s.discount_amount, woa.discount_amount, 0) AS discount_amount,
+              woa.promo_code,
               u.username AS cashier_name
        FROM sales s
        LEFT JOIN customers c ON s.customer_id=c.id
+       LEFT JOIN website_order_alerts woa ON s.dentrust_order_id::text = woa.dentrust_order_id::text
        LEFT JOIN users u ON u.id=s.cashier_id
        WHERE s.id=$1`, [sid]
     );
@@ -329,6 +337,7 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
         GROUP BY ri.sale_item_id
       ) ri_sum ON ri_sum.sale_item_id = si.id
       WHERE si.sale_id = $1
+      ORDER BY si.id ASC
     `, [sid]);
     // Total returned amount for this sale
     const { rows: [retRow] } = await posDb.query(
@@ -336,11 +345,21 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
     );
     const totalReturned = Math.round(parseFloat(retRow.total_returned || 0) * 100) / 100;
     const netTotal = Math.max(0, Math.round((parseFloat(sale.total_amount || 0) - totalReturned) * 100) / 100);
-    const customer = sale.customer_id ? {
-      name: sale.customer_name || '',
-      phone: sale.customer_phone || '',
-      address: sale.customer_address || '',
-    } : null;
+    
+    let customer = null;
+    if (sale.customer_name || sale.customer_phone || sale.customer_address || sale.customer_city) {
+      let fullAddr = (sale.customer_address || '').trim();
+      if (sale.customer_city && !fullAddr.includes(sale.customer_city)) {
+        fullAddr = (sale.customer_city + (fullAddr ? ' - ' + fullAddr : '')).trim();
+      }
+      customer = {
+        name: sale.customer_name || 'عميل',
+        phone: sale.customer_phone || '',
+        address: fullAddr,
+        city: sale.customer_city || '',
+      };
+    }
+
     let previousBalance = 0;
     if (['credit','split'].includes(sale.payment_method) && sale.customer_id) {
       // previousBalance = current debt minus this sale's NET credit portion (after returns)
@@ -354,6 +373,101 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
     const st = await getSettings();
     res.render('invoice', { sale, items, customer, previousBalance, totalReturned, netTotal, st, base: BASE,
       canEditPrices: hasPerm(req, 'edit_prices'), isMgr: isMgr(req), cashierName: sale.cashier_name || req.session?.username || null });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('خطأ داخلي');
+  }
+});
+
+// Route to print/view invoice by website order number
+app.get(`${BASE}/invoice/order/:order_id`, async (req, res) => {
+  try {
+    const orderId = String(req.params.order_id).trim();
+    // 1. Check if linked sale exists
+    const { rows: sales } = await posDb.query(
+      `SELECT id FROM sales WHERE dentrust_order_id::text = $1 ORDER BY id DESC LIMIT 1`,
+      [orderId]
+    );
+    if (sales.length > 0) {
+      return res.redirect(`${BASE}/invoice/${sales[0].id}`);
+    }
+    // 2. If not yet in sales, render from website_order_alerts + items
+    const { rows: [alert] } = await posDb.query(
+      `SELECT * FROM website_order_alerts WHERE dentrust_order_id::text = $1 ORDER BY id DESC LIMIT 1`,
+      [orderId]
+    );
+    if (!alert) return res.status(404).send('الطلب غير موجود');
+    
+    let items = [];
+    try {
+      const dtClient = await dentrustDb.connect();
+      try {
+        const { rows } = await dtClient.query(
+          `SELECT oi.product_name, oi.quantity, oi.unit_price, oi.selected_option, oi.total_price
+           FROM order_items oi WHERE oi.order_id=$1`, [parseInt(orderId, 10)]
+        );
+        items = rows.map(r => ({ ...r, net_qty: r.quantity }));
+      } finally { dtClient.release(); }
+    } catch (_) {}
+    
+    if (!items.length) {
+      (alert.items_summary || '').split(/[،,]/).forEach(part => {
+        const m = part.trim().match(/^(.+?)\s+[xX×](\d+)\s*$/);
+        if (m) items.push({ product_name: m[1].trim(), quantity: parseInt(m[2], 10), net_qty: parseInt(m[2], 10), unit_price: 0 });
+      });
+    }
+
+    const sale = {
+      id: alert.dentrust_order_id || alert.id,
+      date: alert.created_at ? new Date(alert.created_at).toISOString() : new Date().toISOString(),
+      payment_method: 'online',
+      source: 'online',
+      dentrust_order_id: alert.dentrust_order_id,
+      total_amount: parseFloat(alert.total_amount || 0),
+      discount_amount: parseFloat(alert.discount_amount || 0),
+      delivery_amount: parseFloat(alert.delivery_amount || 0),
+      promo_code: alert.promo_code || null,
+      customer_name: alert.customer_name || '',
+    };
+
+    let fullAddr = (alert.customer_address || '').trim();
+    if (alert.customer_city && !fullAddr.includes(alert.customer_city)) {
+      fullAddr = (alert.customer_city + (fullAddr ? ' - ' + fullAddr : '')).trim();
+    }
+    const customer = {
+      name: alert.customer_name || 'عميل',
+      phone: alert.customer_phone || '',
+      address: fullAddr,
+      city: alert.customer_city || '',
+    };
+
+    const totalReturned = 0;
+    const netTotal = parseFloat(sale.total_amount || 0);
+    const previousBalance = 0;
+    const st = await getSettings();
+
+    res.render('invoice', {
+      sale, items, customer, previousBalance, totalReturned, netTotal, st, base: BASE,
+      canEditPrices: false, isMgr: isMgr(req), cashierName: 'طلب أونلاين'
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('خطأ داخلي');
+  }
+});
+
+// Route to print/view invoice by website_order_alerts id
+app.get(`${BASE}/invoice/alert/:alert_id`, async (req, res) => {
+  try {
+    const aid = parseInt(req.params.alert_id, 10);
+    const { rows: [alert] } = await posDb.query(
+      `SELECT * FROM website_order_alerts WHERE id = $1`, [aid]
+    );
+    if (!alert) return res.status(404).send('الطلب غير موجود');
+    if (alert.dentrust_order_id) {
+      return res.redirect(`${BASE}/invoice/order/${alert.dentrust_order_id}`);
+    }
+    return res.redirect(`${BASE}/invoice/order/${alert.id}`);
   } catch (err) {
     console.error(err);
     res.status(500).send('خطأ داخلي');
@@ -2178,16 +2292,25 @@ app.get(`${BASE}/api/invoices/:sid`, async (req, res) => {
   const sid = parseInt(req.params.sid, 10);
   try {
     const { rows: [inv] } = await posDb.query(
-      `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone,
-              c.address AS customer_address, c.city AS customer_city
-       FROM sales s LEFT JOIN customers c ON s.customer_id = c.id WHERE s.id=$1`, [sid]
+      `SELECT s.*, 
+              COALESCE(NULLIF(c.name,''), NULLIF(s.customer_name,''), woa.customer_name) AS customer_name,
+              COALESCE(NULLIF(c.phone,''), woa.customer_phone) AS customer_phone,
+              COALESCE(NULLIF(c.address,''), NULLIF(s.customer_address,''), woa.customer_address) AS customer_address,
+              COALESCE(NULLIF(c.city,''), woa.customer_city) AS customer_city,
+              COALESCE(s.delivery_amount, woa.delivery_amount, 0) AS delivery_amount,
+              COALESCE(s.discount_amount, woa.discount_amount, 0) AS discount_amount,
+              woa.promo_code
+       FROM sales s 
+       LEFT JOIN customers c ON s.customer_id = c.id 
+       LEFT JOIN website_order_alerts woa ON s.dentrust_order_id::text = woa.dentrust_order_id::text
+       WHERE s.id=$1`, [sid]
     );
     if (!inv) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
     const { rows: [refRow] } = await posDb.query(
       `SELECT COALESCE(SUM(total_refund),0) AS total_refunded FROM returns WHERE sale_id=$1`, [sid]
     );
     inv.total_refunded = parseFloat(refRow.total_refunded || 0);
-    const { rows: itemsRaw } = await posDb.query('SELECT * FROM sale_items WHERE sale_id=$1', [sid]);
+    const { rows: itemsRaw } = await posDb.query('SELECT * FROM sale_items WHERE sale_id=$1 ORDER BY id ASC', [sid]);
     const items = [];
     for (const item of itemsRaw) {
       const { rows: [ret] } = await posDb.query(
@@ -3902,6 +4025,8 @@ app.post(`${BASE}/api/sync/confirm-online-order`, async (req, res) => {
       const creditPaid = (method === 'credit') ? 0 : 1;
       let custId = null;
       let saleItems = [];
+      let deliveryAmt = 0;
+      let discountAmt = 0;
       try {
         const dtClient = await dentrustDb.connect();
         try {
@@ -3915,29 +4040,55 @@ app.post(`${BASE}/api/sync/confirm-online-order`, async (req, res) => {
               region: dtOrder.customer_region || dtOrder.region,
               street: dtOrder.customer_street || dtOrder.street,
             });
+            deliveryAmt = parseFloat(dtOrder.delivery_amount || dtOrder.delivery_fee || 0);
+            discountAmt = parseFloat(dtOrder.discount_amount || 0);
             const { rows: dtItems } = await dtClient.query('SELECT * FROM order_items WHERE order_id=$1', [orderId]);
             saleItems = dtItems;
           }
         } finally { dtClient.release(); }
       } catch (_) {}
+
+      // If website db didn't have delivery/discount, check website_order_alerts
+      if (!deliveryAmt && !discountAmt) {
+        try {
+          const { rows: [al] } = await posDb.query('SELECT delivery_amount, discount_amount FROM website_order_alerts WHERE dentrust_order_id::text=$1', [String(orderId)]);
+          if (al) {
+            deliveryAmt = parseFloat(al.delivery_amount || 0);
+            discountAmt = parseFloat(al.discount_amount || 0);
+          }
+        } catch (_) {}
+      }
+
       const { rows: [newSale] } = await posDb.query(
-        `INSERT INTO sales (total_amount, payment_method, source, dentrust_order_id, customer_name, customer_id, credit_paid)
-         VALUES ($1,$2,'online',$3,$4,$5,$6) RETURNING *`,
-        [total, method, orderId, customer_name || '', custId, creditPaid]
+        `INSERT INTO sales (total_amount, payment_method, source, dentrust_order_id, customer_name, customer_id, credit_paid, delivery_amount, discount_amount)
+         VALUES ($1,$2,'online',$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [total, method, orderId, customer_name || '', custId, creditPaid, deliveryAmt, discountAmt]
       );
       for (const item of saleItems) {
         try {
           const { rows: [prod] } = await posDb.query('SELECT id, product_name FROM products WHERE dentrust_id=$1', [item.product_id || item.dentrust_product_id]);
+          const selOpt = item.selected_option || item.selectedOption || null;
           await posDb.query(
-            'INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_unit_price) VALUES ($1,$2,$3,$4,$5,$6)',
-            [newSale.id, prod?.id || null, item.product_name || prod?.product_name || '', item.quantity || 1, item.unit_price || item.price || 0, item.unit_price || item.price || 0]
+            'INSERT INTO sale_items (sale_id, product_id, product_name, quantity, unit_price, snapshot_unit_price, selected_option) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+            [newSale.id, prod?.id || null, item.product_name || prod?.product_name || '', item.quantity || 1, item.unit_price || item.price || 0, item.unit_price || item.price || 0, selOpt]
           );
           if (prod?.id) await posDb.query('UPDATE products SET quantity = GREATEST(0, quantity - $1) WHERE id=$2', [item.quantity || 1, prod.id]);
         } catch (_) {}
       }
       return res.json({ ok: true, sale_id: newSale.id });
     } else {
-      // Flask behavior: if sale already exists, return idempotently without mutating financial state
+      // If sale exists, ensure delivery_amount & discount_amount are updated if they were missing/zero
+      if ((!sale.delivery_amount || parseFloat(sale.delivery_amount) === 0) || (!sale.discount_amount || parseFloat(sale.discount_amount) === 0)) {
+        try {
+          const { rows: [al] } = await posDb.query('SELECT delivery_amount, discount_amount FROM website_order_alerts WHERE dentrust_order_id::text=$1', [String(orderId)]);
+          if (al && (al.delivery_amount || al.discount_amount)) {
+            await posDb.query(
+              'UPDATE sales SET delivery_amount = CASE WHEN COALESCE(delivery_amount,0)=0 THEN $1 ELSE delivery_amount END, discount_amount = CASE WHEN COALESCE(discount_amount,0)=0 THEN $2 ELSE discount_amount END WHERE id=$3',
+              [parseFloat(al.delivery_amount || 0), parseFloat(al.discount_amount || 0), sale.id]
+            );
+          }
+        } catch (_) {}
+      }
     }
     res.json({ ok: true, sale_id: sale.id });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
@@ -5587,6 +5738,24 @@ app.get(`${BASE}/api/website-orders/:id`, async (req, res) => {
         } finally { dtClient.release(); }
       } catch (_) {}
     }
+    // Also find linked sale in POS DB if it exists
+    let saleId = null;
+    if (order.dentrust_order_id) {
+      const { rows: [s] } = await posDb.query(
+        'SELECT id FROM sales WHERE dentrust_order_id::text=$1 ORDER BY id DESC LIMIT 1',
+        [String(order.dentrust_order_id)]
+      );
+      if (s) saleId = s.id;
+    }
+    // Fallback: If website db had no items or failed, fetch items from POS sale_items
+    if ((!items || items.length === 0) && saleId) {
+      const { rows: posItems } = await posDb.query(
+        `SELECT product_name, quantity, unit_price, selected_option, (unit_price * quantity) AS total_price
+         FROM sale_items WHERE sale_id=$1 ORDER BY id ASC`, [saleId]
+      );
+      if (posItems.length) items = posItems;
+    }
+    order.sale_id = saleId;
     res.json({ order, items });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });

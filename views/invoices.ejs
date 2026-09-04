@@ -336,16 +336,24 @@ async function viewInvoice(id) {
     </div>`;
   }
 
-  document.getElementById("modalBody").innerHTML = `<div class="space-y-4">
+    const itemsSubtotal = items.reduce((s, i) => s + (parseFloat(i.unit_price || 0) * parseInt(i.quantity || 0)), 0);
+    const hasDiscount = inv.discount_amount && parseFloat(inv.discount_amount) > 0;
+    const hasDelivery = inv.delivery_amount && parseFloat(inv.delivery_amount) > 0;
+    const subtotalBeforeDiscount = itemsSubtotal > 0 ? itemsSubtotal : Math.max(0, (parseFloat(inv.total_amount || 0) + parseFloat(inv.discount_amount || 0) - parseFloat(inv.delivery_amount || 0)));
+
+    document.getElementById("modalBody").innerHTML = `<div class="space-y-4">
     <div class="grid grid-cols-2 gap-3 text-sm">
       <div class="bg-gray-50 rounded-xl p-3 space-y-1.5">
         <div class="flex justify-between"><span class="text-gray-500">رقم الفاتورة</span><span class="font-bold text-blue-700 font-mono">#${String(inv.id).padStart(5,'0')}</span></div>
         <div class="flex justify-between"><span class="text-gray-500">التاريخ</span><span class="text-gray-700">${inv.date.replace('T',' ').slice(0,16)}</span></div>
         <div class="flex justify-between items-center"><span class="text-gray-500">طريقة الدفع</span>${payBadge}</div>
+        ${inv.dentrust_order_id || inv.source === 'online' ? `
+        <div class="flex justify-between items-center"><span class="text-gray-500">مصدر الطلب</span><span class="font-bold text-blue-600 text-xs bg-blue-100 px-2 py-0.5 rounded-lg">🌐 طلب موقع #${inv.dentrust_order_id || ''}</span></div>` : ''}
       </div>
       <div class="bg-gray-50 rounded-xl p-3 space-y-1.5">
         ${inv.customer_name?`<div class="flex justify-between"><span class="text-gray-500">العميل</span><span class="font-medium">${inv.customer_name}</span></div>`:''}
-        ${inv.customer_phone?`<div class="flex justify-between"><span class="text-gray-500">الهاتف</span><span class="font-mono text-sm">${inv.customer_phone}</span></div>`:''}
+        ${inv.customer_phone?`<div class="flex justify-between"><span class="text-gray-500">الهاتف</span><span class="font-mono text-sm font-bold">${inv.customer_phone}</span></div>`:''}
+        ${(inv.customer_address || inv.customer_city) ? `<div class="flex justify-between"><span class="text-gray-500">العنوان</span><span class="text-xs text-gray-700 max-w-[60%] text-left">${[inv.customer_city, inv.customer_address].filter(Boolean).join(' - ')}</span></div>` : ''}
         <div class="flex justify-between"><span class="text-gray-500">عدد الأصناف</span><span class="font-bold">${items.length}</span></div>
       </div>
     </div>
@@ -365,7 +373,7 @@ async function viewInvoice(id) {
             return `<tr class="${fullyReturned?'bg-red-50/40 opacity-70':''}">
               <td class="px-4 py-2.5 font-medium text-gray-800">
                 ${item.product_name}
-                ${item.selected_option ? `<span style="font-size:0.7rem;color:#6b7280;display:block;">${item.selected_option.includes('::')?item.selected_option.split('::').pop():item.selected_option}</span>` : ''}
+                ${item.selected_option ? `<span style="font-size:0.75rem;color:#7c3aed;font-weight:700;display:block;">◈ ${item.selected_option.includes('::')?item.selected_option.split('::').pop():item.selected_option}</span>` : ''}
               </td>
               <td class="px-4 py-2.5 text-center font-bold">${item.quantity}</td>
               <td class="px-4 py-2.5 text-center text-xs">
@@ -377,13 +385,22 @@ async function viewInvoice(id) {
         </tbody>
       </table>
     </div>
-    ${inv.discount_amount && parseFloat(inv.discount_amount) > 0 ? `
+    ${hasDiscount ? `
+    <div class="bg-gray-50 rounded-xl p-3 flex justify-between items-center text-sm">
+      <span class="font-medium text-gray-600">المجموع قبل الخصم</span>
+      <span class="font-bold text-gray-700">${subtotalBeforeDiscount.toFixed(2)} جنيه</span>
+    </div>
     <div class="bg-orange-50 rounded-xl p-3 flex justify-between items-center">
-      <span class="font-medium text-orange-700">🏷️ خصم مطبّق</span>
+      <span class="font-medium text-orange-700">🏷️ خصم مطبّق${inv.promo_code ? ' (' + inv.promo_code + ')' : ''}</span>
       <span class="font-bold text-orange-700">- ${parseFloat(inv.discount_amount).toFixed(2)} جنيه</span>
     </div>` : ''}
+    ${hasDelivery ? `
+    <div class="bg-indigo-50 rounded-xl p-3 flex justify-between items-center">
+      <span class="font-medium text-indigo-700">🚚 مصاريف التوصيل</span>
+      <span class="font-bold text-indigo-700">+ ${parseFloat(inv.delivery_amount).toFixed(2)} جنيه</span>
+    </div>` : ''}
     <div class="bg-blue-50 rounded-xl p-4 flex justify-between items-center">
-      <span class="font-bold text-gray-700">الإجمالي الكلي</span>
+      <span class="font-bold text-gray-700">${hasDiscount ? 'الإجمالي بعد الخصم' : 'الإجمالي الكلي'}</span>
       <div class="text-left">
         <span class="text-2xl font-black text-blue-700">${(inv.total_amount-(inv.total_refunded||0)).toFixed(2)} جنيه</span>
         ${inv.total_refunded > 0 ? '<div class="text-xs text-red-400 line-through">' + inv.total_amount.toFixed(2) + ' جنيه (قبل المردود)</div>' : ''}
