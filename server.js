@@ -717,7 +717,15 @@ app.get(`${BASE}/api/products`, async (req, res) => {
           ? `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`
           : `SELECT ${PRODUCT_LIST_COLS} FROM products ORDER BY product_name`,
         q ? [q, `%${q}%`] : []
-      ).catch(() => ({ rows: [] }));
+      ).catch(async err => {
+        console.error('[GET /api/products query error]:', err.message);
+        return posDb.query(
+          q
+            ? `SELECT id, barcode, product_name, quantity, purchase_price, sale_price, expiry_date, category, min_stock, description, variants, section, checkbox_values, is_offer, original_price, is_best_seller, COALESCE(is_hidden_from_website, false) AS is_hidden_from_website, dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image, CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp' ELSE NULL END AS image_url FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`
+            : `SELECT id, barcode, product_name, quantity, purchase_price, sale_price, expiry_date, category, min_stock, description, variants, section, checkbox_values, is_offer, original_price, is_best_seller, COALESCE(is_hidden_from_website, false) AS is_hidden_from_website, dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image, CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp' ELSE NULL END AS image_url FROM products ORDER BY product_name`,
+          q ? [q, `%${q}%`] : []
+        ).catch(() => ({ rows: [] }));
+      });
       return res.json(rows || []);
     }
 
@@ -728,7 +736,15 @@ app.get(`${BASE}/api/products`, async (req, res) => {
         ? `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE (barcode=$1 OR product_name ILIKE $2) AND ${hideCond} ORDER BY product_name`
         : `SELECT ${PRODUCT_LIST_COLS} FROM products WHERE ${hideCond} ORDER BY product_name`,
       q ? [q, `%${q}%`] : []
-    ).catch(() => ({ rows: [] }));
+    ).catch(async err => {
+      console.error('[GET /api/products public query error]:', err.message);
+      return posDb.query(
+        q
+          ? `SELECT id, barcode, product_name, quantity, purchase_price, sale_price, expiry_date, category, min_stock, description, variants, section, checkbox_values, is_offer, original_price, is_best_seller, COALESCE(is_hidden_from_website, false) AS is_hidden_from_website, dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image, CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp' ELSE NULL END AS image_url FROM products WHERE (barcode=$1 OR product_name ILIKE $2) AND ${hideCond} ORDER BY product_name`
+          : `SELECT id, barcode, product_name, quantity, purchase_price, sale_price, expiry_date, category, min_stock, description, variants, section, checkbox_values, is_offer, original_price, is_best_seller, COALESCE(is_hidden_from_website, false) AS is_hidden_from_website, dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image, CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp' ELSE NULL END AS image_url FROM products WHERE ${hideCond} ORDER BY product_name`,
+        q ? [q, `%${q}%`] : []
+      ).catch(() => ({ rows: [] }));
+    });
 
     return res.json(rows || []);
   } catch (err) {

@@ -390,6 +390,7 @@ const PUBLIC_PRODUCTS_MIGRATIONS = [
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS orig_section TEXT",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS gender TEXT DEFAULT 'unisex'",
   "ALTER TABLE public.products DISABLE ROW LEVEL SECURITY",
 ];
 
@@ -426,7 +427,8 @@ SELECT
   COALESCE(p.is_offer, false)                                     AS is_offer,
   p.original_price,
   COALESCE(p.is_best_seller, false)                               AS is_best_seller,
-  COALESCE(p.is_hidden_from_website, p.is_hidden, p.hidden, false) AS is_hidden_from_website
+  COALESCE(p.is_hidden_from_website, p.is_hidden, p.hidden, false) AS is_hidden_from_website,
+  COALESCE(p.gender, 'unisex')                                    AS gender
 FROM public.products p
 LEFT JOIN public.categories c ON c.id = p.category_id
 `;
@@ -471,7 +473,7 @@ BEGIN
     barcode, name, stock, purchase_price, price,
     expiry_date, photos, category_id, min_stock, supplier_id,
     details, variants, section, checkbox_values, is_offer, is_sold_out,
-    original_price, is_best_seller
+    original_price, is_best_seller, gender
   ) VALUES (
     NEW.barcode,
     NEW.product_name,
@@ -490,7 +492,8 @@ BEGIN
     COALESCE(NEW.is_offer, false),
     (COALESCE(NEW.quantity, 0) <= 0),
     NEW.original_price,
-    COALESCE(NEW.is_best_seller, false)
+    COALESCE(NEW.is_best_seller, false),
+    COALESCE(NEW.gender, 'unisex')
   ) RETURNING id INTO v_new_id;
 
   NEW.id         := v_new_id;
@@ -571,7 +574,8 @@ BEGIN
     original_price = NEW.original_price,
     is_best_seller = COALESCE(NEW.is_best_seller, is_best_seller),
     is_hidden_from_website = COALESCE(NEW.is_hidden_from_website, is_hidden_from_website),
-    is_hidden      = COALESCE(NEW.is_hidden_from_website, is_hidden)
+    is_hidden      = COALESCE(NEW.is_hidden_from_website, is_hidden),
+    gender         = COALESCE(NEW.gender, gender, 'unisex')
   WHERE id = NEW.id;
 
   RETURN NEW;
