@@ -4532,17 +4532,18 @@ async function callGroqStream(fullMessages, res, maxTokens = 600) {
           max_tokens: Math.min(Number(maxTokens) || 600, 1024),
           stream: true
         }),
-        signal: AbortSignal.timeout(4000)
+        signal: AbortSignal.timeout(15000)
       });
       if (resp.ok) {
         _groqCooldowns.delete(model);
         await pipeGroqStream(resp, res, 'Groq');
         return true;
       }
-      _groqCooldowns.set(model, Date.now() + 120_000);
+      if (resp.status >= 500 || resp.status === 429) {
+        _groqCooldowns.set(model, Date.now() + 30_000);
+      }
       console.warn(`[Groq Stream] model ${model} status ${resp.status}`);
     } catch (e) {
-      _groqCooldowns.set(model, Date.now() + 120_000);
       console.warn(`[Groq Stream] model ${model} failed:`, e.message);
     }
   }
@@ -4565,7 +4566,7 @@ async function callGroqGenerate(fullMessages, maxTokens = 600) {
           messages: fullMessages,
           max_tokens: Math.min(Number(maxTokens) || 600, 1024)
         }),
-        signal: AbortSignal.timeout(4000)
+        signal: AbortSignal.timeout(15000)
       });
       if (resp.ok) {
         const data = await resp.json();
@@ -4575,9 +4576,10 @@ async function callGroqGenerate(fullMessages, maxTokens = 600) {
           return content;
         }
       }
-      _groqCooldowns.set(model, Date.now() + 120_000);
+      if (resp.status >= 500 || resp.status === 429) {
+        _groqCooldowns.set(model, Date.now() + 30_000);
+      }
     } catch (e) {
-      _groqCooldowns.set(model, Date.now() + 120_000);
       console.warn(`[Groq Generate] model ${model} failed:`, e.message);
     }
   }
@@ -4704,7 +4706,7 @@ async function callGeminiGenerate(geminiBody, timeout = 25000) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(geminiBody),
-        signal: AbortSignal.timeout(Math.min(timeout, 6000)),
+        signal: AbortSignal.timeout(timeout),
       });
       const data = await resp.json();
       if (resp.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
@@ -4731,7 +4733,7 @@ async function callGeminiStream(geminiBody, res, timeout = 35000) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(geminiBody),
-        signal: AbortSignal.timeout(Math.min(timeout, 6000)),
+        signal: AbortSignal.timeout(timeout),
       });
       if (resp.ok) {
         recordGeminiSuccess(m);
