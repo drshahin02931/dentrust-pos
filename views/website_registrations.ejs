@@ -1,14 +1,14 @@
-<%- include('partials/header', Object.assign({pageTitle: 'تسجيلات الموقع'}, locals)) %>
+<%- include('partials/header', Object.assign({pageTitle: 'تسجيل دخول عملاء الموقع'}, locals)) %>
 
 <div class="space-y-5">
   <!-- Header -->
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
       <h1 class="text-2xl font-black text-gray-800 flex items-center gap-2">
-        <span>📝 تسجيلات الموقع</span>
-        <span class="text-xs bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-full">الأطباء المنضمون عبر المتجر</span>
+        <span>🔑 تسجيل دخول عملاء الموقع</span>
+        <span class="text-xs bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-full">إدارة الحسابات وكلمات المرور</span>
       </h1>
-      <p class="text-xs text-gray-500 mt-1">قائمة الأطباء الذين قاموا بإنشاء حسابات عبر متجر DenTrust الإلكتروني مع إمكانية التواصل الفوري وإدارة الحسابات.</p>
+      <p class="text-xs text-gray-500 mt-1">صفحة مخصصة لإدارة حسابات الأطباء المسجلين على الموقع، الأكواد الطبية (DT-XXXX)، أرقام الهواتف، وتصفير كلمة المرور إلى 1234567 فوراً.</p>
     </div>
     <div class="flex items-center gap-2">
       <button onclick="loadRegistrations()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm">
@@ -190,6 +190,15 @@ function renderRegistrations(list) {
                 ` : ''}
               </div>
 
+              <!-- Password Status Row -->
+              <div class="flex items-center gap-2 text-xs mt-1.5 flex-wrap">
+                <span class="font-semibold text-gray-800">🔑 حالة كلمة المرور:</span>
+                ${(!c.password_hash || c.password_hash === '1234567')
+                  ? `<span class="bg-amber-50 text-amber-800 font-mono font-bold text-[11px] px-2.5 py-0.5 rounded-lg border border-amber-200">الافتراضية: 1234567</span>`
+                  : `<span class="bg-emerald-50 text-emerald-800 font-bold text-[11px] px-2.5 py-0.5 rounded-lg border border-emerald-200">مخصصة ومحفوظة بتشفير آمن 🔒</span>`
+                }
+              </div>
+
               <!-- Addresses preview -->
               ${addresses.length ? `
                 <div class="text-xs text-gray-500 mt-1 flex items-center gap-1.5 flex-wrap">
@@ -208,9 +217,9 @@ function renderRegistrations(list) {
           <!-- Quick Actions -->
           <div class="flex items-center gap-2 shrink-0 self-center">
             ${c.phone ? `
-              <a href="https://wa.me/${waPhone}?text=${encodeURIComponent('مرحباً دكتور ' + c.name + '، سعداء بانضمامك لمنصة DenTrust لطب الأسنان!')}" target="_blank"
+              <a href="https://wa.me/${waPhone}?text=${encodeURIComponent('مرحباً دكتور ' + c.name + '، سعداء بتواصلكم مع DenTrust. كود حسابكم: ' + code)}" target="_blank"
                 class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
-                title="محادثة واتساب سريعة">
+                title="محادثة واتساب">
                 <span>💬</span> واتساب
               </a>
               <a href="tel:${c.phone}"
@@ -220,10 +229,10 @@ function renderRegistrations(list) {
               </a>
             ` : ''}
             
-            <button onclick="promptResetPassword(${c.id}, '${c.name.replace(/'/g, "\\'")}')"
-              class="bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-xs px-3 py-2 rounded-xl flex items-center gap-1 border border-amber-200 transition-all"
+            <button onclick="promptResetPassword(${c.id}, '${c.name.replace(/'/g, "\\'")}', '${waPhone}')"
+              class="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs px-3.5 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
               title="إعادة تعيين كلمة المرور إلى 1234567">
-              <span>🔑</span> تصفير الباسورد
+              <span>🔑</span> تصفير كلمة المرور
             </button>
           </div>
 
@@ -259,6 +268,7 @@ async function confirmResetPassword() {
     if (!res.ok) throw new Error(data.error || "فشل التصفير");
     alert("✅ تم تصفير كلمة المرور بنجاح إلى: 1234567");
     closeResetModal();
+    loadRegistrations();
   } catch (err) {
     alert("❌ خطأ: " + err.message);
   } finally {
