@@ -343,8 +343,10 @@ async function viewInvoice(id) {
 
     const itemsSubtotal = items.reduce((s, i) => s + (parseFloat(i.unit_price || 0) * parseInt(i.quantity || 0)), 0);
     const hasDiscount = inv.discount_amount && parseFloat(inv.discount_amount) > 0;
-    const hasDelivery = inv.delivery_amount && parseFloat(inv.delivery_amount) > 0;
-    const subtotalBeforeDiscount = itemsSubtotal > 0 ? itemsSubtotal : Math.max(0, (parseFloat(inv.total_amount || 0) + parseFloat(inv.discount_amount || 0) - parseFloat(inv.delivery_amount || 0)));
+    const calcDelivery = (inv.delivery_amount && parseFloat(inv.delivery_amount) > 0 ? parseFloat(inv.delivery_amount) : 0)
+      || ((inv.dentrust_order_id || inv.source === 'online') && itemsSubtotal > 0 && parseFloat(inv.total_amount || 0) > itemsSubtotal ? Math.max(0, Math.round((parseFloat(inv.total_amount || 0) + parseFloat(inv.discount_amount || 0) - itemsSubtotal) * 100) / 100) : 0);
+    const hasDelivery = calcDelivery > 0;
+    const subtotalBeforeDiscount = itemsSubtotal > 0 ? itemsSubtotal : Math.max(0, (parseFloat(inv.total_amount || 0) + parseFloat(inv.discount_amount || 0) - calcDelivery));
 
     document.getElementById("modalBody").innerHTML = `<div class="space-y-4">
     <div class="grid grid-cols-2 gap-3 text-sm">
@@ -402,7 +404,7 @@ async function viewInvoice(id) {
     ${hasDelivery ? `
     <div class="bg-indigo-50 rounded-xl p-3 flex justify-between items-center">
       <span class="font-medium text-indigo-700">🚚 مصاريف التوصيل</span>
-      <span class="font-bold text-indigo-700">+ ${parseFloat(inv.delivery_amount).toFixed(2)} جنيه</span>
+      <span class="font-bold text-indigo-700">+ ${calcDelivery.toFixed(2)} جنيه</span>
     </div>` : ''}
     <div class="bg-blue-50 rounded-xl p-4 flex justify-between items-center">
       <span class="font-bold text-gray-700">${hasDiscount ? 'الإجمالي بعد الخصم' : 'الإجمالي الكلي'}</span>

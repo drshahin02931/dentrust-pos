@@ -405,10 +405,11 @@ async function openDetail(id) {
     _updateStatusSelectStyle(order.status || 'pending');
 
     // ── Build items rows ──
+    const itemsSubtotal = (_detailItems || []).reduce((s, i) => s + (parseFloat(i.unit_price || 0) * parseInt(i.quantity || 0)), 0);
     const discount  = parseFloat(order.discount_amount || 0);
-    const delivery  = parseFloat(order.delivery_amount || 0);
+    const delivery  = parseFloat(order.delivery_amount || 0) || (itemsSubtotal > 0 && parseFloat(order.total_amount || 0) > itemsSubtotal ? Math.max(0, Math.round((parseFloat(order.total_amount || 0) + discount - itemsSubtotal) * 100) / 100) : 0);
     const total     = parseFloat(order.total_amount    || 0);
-    const subtotal  = total + discount - delivery;
+    const subtotal  = itemsSubtotal > 0 ? itemsSubtotal : Math.max(0, total + discount - delivery);
 
     const itemsRows = buildItemsRows(_detailItems, order.items_summary);
 

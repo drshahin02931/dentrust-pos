@@ -23,9 +23,12 @@ const _itemsSubtotal = items.reduce((s, i) => {
   const nq = parseInt(i.net_qty != null ? i.net_qty : (i.quantity || 0)) || 0;
   return s + (parseFloat(i.unit_price || 0) * nq);
 }, 0);
+const _calcDelivery = (sale.delivery_amount && parseFloat(sale.delivery_amount) > 0 ? parseFloat(sale.delivery_amount) : 0)
+  || ((['online','website'].includes(sale.source) || sale.dentrust_order_id) && _itemsSubtotal > 0 && _netTotal > _itemsSubtotal ? Math.max(0, Math.round((_netTotal + parseFloat(sale.discount_amount || 0) - _itemsSubtotal) * 100) / 100) : 0);
+const _hasDelivery = _calcDelivery > 0;
+const _effectiveDelivery = _calcDelivery;
 const _hasDiscount = sale.discount_amount && parseFloat(sale.discount_amount) > 0;
-const _hasDelivery = sale.delivery_amount && parseFloat(sale.delivery_amount) > 0;
-const _subtotalBeforeDiscount = _itemsSubtotal > 0 ? _itemsSubtotal : Math.max(0, _netTotal + parseFloat(sale.discount_amount || 0) - parseFloat(sale.delivery_amount || 0));
+const _subtotalBeforeDiscount = _itemsSubtotal > 0 ? _itemsSubtotal : Math.max(0, _netTotal + parseFloat(sale.discount_amount || 0) - _effectiveDelivery);
 
 function fmt(n) { return parseFloat(n || 0).toFixed(2); }
 function payMethodAr(m) {
@@ -266,13 +269,13 @@ function payMethodEn(m) {
     <% if (showAr) { %>
     <div class="sub-row" style="font-weight:700;color:#1e40af;">
       <span>مصاريف التوصيل</span>
-      <span>+ <%= fmt(sale.delivery_amount) %> <%= currencyLabel %></span>
+      <span>+ <%= fmt(_effectiveDelivery) %> <%= currencyLabel %></span>
     </div>
     <% } %>
     <% if (showEn) { %>
     <div class="sub-row bold" style="direction:ltr;color:#1e40af;">
       <span>Delivery Fee</span>
-      <span>+ <%= fmt(sale.delivery_amount) %> <%= currencyEnLabel %></span>
+      <span>+ <%= fmt(_effectiveDelivery) %> <%= currencyEnLabel %></span>
     </div>
     <% } %>
     <% } %>
@@ -502,7 +505,7 @@ function payMethodEn(m) {
       var items = [<% for (let _i=0; _i<items.length; _i++) { const it=items[_i]; const _nq=parseInt(it.net_qty!=null?it.net_qty:it.quantity); if(_nq<=0&&parseInt(it.returned_qty||0)>0) continue; const _opt=it.selected_option ? (' (' + (it.selected_option.includes('::')?it.selected_option.split('::').pop():it.selected_option) + ')') : ''; %>"<%- it.product_name.replace(/"/g,'\\"') %><%- _opt %> ×<%= _nq %>"<%= _i < items.length-1 ? ',' : '' %><% } %>];
       var total = "<%= fmt(_netTotal) %>";
       var discLine = <%= _hasDiscount ? `'\\nالمجموع قبل الخصم: ' + '${fmt(_subtotalBeforeDiscount)}' + ' جنيه\\nخصم: -' + '${fmt(sale.discount_amount)}' + ' جنيه'` : "''" %>;
-      var delivLine = <%= _hasDelivery ? `'\\nمصاريف التوصيل: +' + '${fmt(sale.delivery_amount)}' + ' جنيه'` : "''" %>;
+      var delivLine = <%= _hasDelivery ? `'\\nمصاريف التوصيل: +' + '${fmt(_effectiveDelivery)}' + ' جنيه'` : "''" %>;
       var msg   = "🧾 فاتورة من " + store + "\n#<%= sale.id %> — <%= saleDateDay %>\n\n" +
                   items.join("\n") + "\n" +
                   discLine + delivLine + "\n\nالإجمالي: " + total + " جنيه\nشكراً لتعاملكم معنا 🙏";
