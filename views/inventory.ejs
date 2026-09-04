@@ -289,6 +289,28 @@
           </div>
         </div>
 
+        <!-- Gender Selector (Only visible when section === 'medical') -->
+        <div id="medicalGenderSection" class="col-span-2 hidden bg-teal-50/70 border border-teal-200 rounded-2xl p-3.5 transition-all">
+          <label class="text-xs font-bold text-teal-800 block mb-2 flex items-center gap-1.5">
+            <span>👕 الفئة المستهدفة للسكرابز (الجنس)</span>
+            <span class="text-[10px] text-teal-600 font-normal">(يحدد ظهور المنتج في تابات For Women / For Men وعلى الموقع)</span>
+          </label>
+          <div class="flex gap-2.5">
+            <label class="flex-1 flex items-center justify-center gap-2 border-2 rounded-xl px-3 py-2.5 cursor-pointer transition-all bg-white hover:bg-pink-50/50 border-gray-200" id="gender-women-lbl">
+              <input type="radio" name="f-gender" id="gender-women" value="women" onchange="onGenderChange()" class="w-4 h-4 accent-pink-600"/>
+              <span class="text-xs font-bold text-pink-700">♀ نسائي (Women)</span>
+            </label>
+            <label class="flex-1 flex items-center justify-center gap-2 border-2 rounded-xl px-3 py-2.5 cursor-pointer transition-all bg-white hover:bg-sky-50/50 border-gray-200" id="gender-men-lbl">
+              <input type="radio" name="f-gender" id="gender-men" value="men" onchange="onGenderChange()" class="w-4 h-4 accent-sky-600"/>
+              <span class="text-xs font-bold text-sky-700">♂ رجالي (Men)</span>
+            </label>
+            <label class="flex-1 flex items-center justify-center gap-2 border-2 rounded-xl px-3 py-2.5 cursor-pointer transition-all bg-teal-50 border-teal-600" id="gender-unisex-lbl">
+              <input type="radio" name="f-gender" id="gender-unisex" value="unisex" checked onchange="onGenderChange()" class="w-4 h-4 accent-teal-600"/>
+              <span class="text-xs font-bold text-teal-800">⚥ للجنسين (Unisex)</span>
+            </label>
+          </div>
+        </div>
+
       </div><!-- end grid -->
 
       <!-- Variants Section -->
@@ -703,11 +725,29 @@ function onSectionChange() {
     `flex-1 flex items-center gap-2.5 border-2 rounded-xl px-4 py-3 cursor-pointer transition-colors section-opt ${val==='dental' ? 'border-blue-700 bg-blue-50' : 'border-gray-200'}`;
   document.getElementById("sec-medical-lbl").className =
     `flex-1 flex items-center gap-2.5 border-2 rounded-xl px-4 py-3 cursor-pointer transition-colors section-opt ${val==='medical' ? 'border-teal-600 bg-teal-50' : 'border-gray-200'}`;
+  
+  const gSec = document.getElementById("medicalGenderSection");
+  if (gSec) {
+    gSec.classList.toggle("hidden", val !== 'medical');
+  }
 }
 
-function setSection(val) {
+function onGenderChange() {
+  const val = document.querySelector('input[name="f-gender"]:checked')?.value || 'unisex';
+  const wLbl = document.getElementById("gender-women-lbl");
+  const mLbl = document.getElementById("gender-men-lbl");
+  const uLbl = document.getElementById("gender-unisex-lbl");
+  if (wLbl) wLbl.className = `flex-1 flex items-center justify-center gap-2 border-2 rounded-xl px-3 py-2.5 cursor-pointer transition-all ${val==='women' ? 'border-pink-500 bg-pink-50' : 'border-gray-200 bg-white'}`;
+  if (mLbl) mLbl.className = `flex-1 flex items-center justify-center gap-2 border-2 rounded-xl px-3 py-2.5 cursor-pointer transition-all ${val==='men' ? 'border-sky-600 bg-sky-50' : 'border-gray-200 bg-white'}`;
+  if (uLbl) uLbl.className = `flex-1 flex items-center justify-center gap-2 border-2 rounded-xl px-3 py-2.5 cursor-pointer transition-all ${val==='unisex' ? 'border-teal-600 bg-teal-50' : 'border-gray-200 bg-white'}`;
+}
+
+function setSection(val, gender) {
   const el = document.getElementById(val === 'medical' ? 'sec-medical' : 'sec-dental');
   if (el) { el.checked = true; onSectionChange(); }
+  const gVal = gender || 'unisex';
+  const gRadio = document.getElementById(gVal === 'women' ? 'gender-women' : gVal === 'men' ? 'gender-men' : 'gender-unisex');
+  if (gRadio) { gRadio.checked = true; onGenderChange(); }
 }
 
 function openModal() {
@@ -720,7 +760,7 @@ function openModal() {
   resetPhotos();
   resetVariants();
   cbReset();
-  setSection('dental');
+  setSection('dental', 'unisex');
   generateBarcode();
   const sn = document.getElementById("syncNote");
   sn.classList.remove("hidden");
@@ -821,7 +861,7 @@ function editProduct(id) {
       if (img) loadPhotos([img]);
     });
   loadVariants(p);
-  setSection(p.section || 'dental');
+  setSection(p.section || 'dental', p.gender || 'unisex');
   cbLoad(p.checkbox_values);
   const sn = document.getElementById("syncNote");
   sn.classList.toggle("hidden", !p.dentrust_id);
@@ -1027,6 +1067,10 @@ async function saveProduct(e) {
   errDiv.classList.add("hidden");
   try {
     const id = document.getElementById("editId").value;
+    const secVal = document.querySelector('input[name="f-section"]:checked')?.value || 'dental';
+    const genderVal = (secVal === 'medical')
+      ? (document.querySelector('input[name="f-gender"]:checked')?.value || 'unisex')
+      : null;
     const body = {
       product_name: document.getElementById("f-name").value,
       barcode: document.getElementById("f-barcode").value || null,
@@ -1038,7 +1082,8 @@ async function saveProduct(e) {
       min_stock: parseInt(document.getElementById("f-min-stock").value) || 0,
       description: document.getElementById("f-description").value.trim() || null,
       variants: variantItems.length > 0 ? { items: variantItems } : null,
-      section: document.querySelector('input[name="f-section"]:checked')?.value || 'dental',
+      section: secVal,
+      gender: genderVal,
       checkbox_values: cbGetValues(),
       is_hidden_from_website: document.getElementById("f-is-hidden-website").checked,
     };

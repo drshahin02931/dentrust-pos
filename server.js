@@ -690,7 +690,7 @@ app.get(`${BASE}/api/products/search`, async (req, res) => {
 
 // Columns for list endpoints — excludes heavy base64 image_url, adds has_image flag
 const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, sale_price,
-  expiry_date, category, min_stock, description, variants, section, checkbox_values,
+  expiry_date, category, min_stock, description, variants, section, checkbox_values, gender,
   is_offer, original_price, is_best_seller,
   COALESCE(is_hidden_from_website, false) AS is_hidden_from_website,
   dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image,
@@ -774,15 +774,16 @@ app.post(`${BASE}/api/products`, async (req, res) => {
       : 0;
     const qty = !isNaN(parseInt(d.quantity, 10)) ? parseInt(d.quantity, 10) : 0;
     const minStock = !isNaN(parseInt(d.min_stock, 10)) ? parseInt(d.min_stock, 10) : 0;
+    const genderVal = d.gender || (d.section === 'medical' ? 'unisex' : null);
 
     const { rows: [ins] } = await posDb.query(
-      `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+      `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values, gender)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
       [d.barcode || null, d.product_name, qty,
        pPrice, sPrice,
        d.expiry_date || null, mainPhoto,
        d.category || null, minStock,
-       d.description || null, variantsJson, d.section || 'dental', cbJson]
+       d.description || null, variantsJson, d.section || 'dental', cbJson, genderVal]
     );
     // حفظ كل الصور (حتى 5) مباشرة في public.products.photos
     if (d.photos && d.photos.length > 0) {
@@ -878,6 +879,8 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
     const qty = !isNaN(parseInt(d.quantity, 10)) ? parseInt(d.quantity, 10) : 0;
     const minStock = !isNaN(parseInt(d.min_stock, 10)) ? parseInt(d.min_stock, 10) : 0;
 
+    const genderVal = d.gender || (d.section === 'medical' ? 'unisex' : null);
+
     const params = [
       d.barcode || null,
       d.product_name || 'بدون اسم',
@@ -892,13 +895,14 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
       d.section || 'dental',
       cbJson,
       isHidden,
+      genderVal,
       pid,
     ];
 
     const updateQuery = `UPDATE products SET barcode=$1, product_name=$2, quantity=$3,
       purchase_price=$4, sale_price=$5,
       expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
-      section=$11, checkbox_values=$12, is_hidden_from_website=$13 WHERE id=$14`;
+      section=$11, checkbox_values=$12, is_hidden_from_website=$13, gender=$14 WHERE id=$15`;
 
     try {
       await posDb.query(updateQuery, params);
@@ -908,7 +912,7 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
         `UPDATE public.products SET barcode=$1, product_name=$2, quantity=$3,
          purchase_price=$4, sale_price=$5,
          expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
-         section=$11, checkbox_values=$12, is_hidden_from_website=$13 WHERE id=$14`,
+         section=$11, checkbox_values=$12, is_hidden_from_website=$13, gender=$14 WHERE id=$15`,
         params
       ).catch(async () => {
         await posDb.query(
@@ -2961,11 +2965,13 @@ async function syncNewProductToDentrust(posId, d) {
       : 0;
     const qty = !isNaN(parseInt(d.quantity, 10)) ? parseInt(d.quantity, 10) : 0;
 
+    const genderVal = d.gender || (d.section === 'medical' ? 'unisex' : null);
+
     const { rows: [ins] } = await client.query(
-      'INSERT INTO products (name, price, purchase_price, stock, is_offer, photos, category_id, expiry_date, details, section, variants, checkbox_values) VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11) RETURNING id',
+      'INSERT INTO products (name, price, purchase_price, stock, is_offer, photos, category_id, expiry_date, details, section, variants, checkbox_values, gender) VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id',
       [d.product_name, sPrice, pPrice,
        qty, photosArr, catRow.id, d.expiry_date || null, details,
-       d.section || 'dental', variantsJson, cbJson]
+       d.section || 'dental', variantsJson, cbJson, genderVal]
     );
     await posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2', [ins.id, posId]);
   } finally { client.release(); }
@@ -3016,15 +3022,16 @@ async function syncUpdateProductToDentrust(pid, d) {
          pPrice, variantsJson,
          cbJson, d.section || 'dental', targetWebId, pid]);
     } else {
+      const genderVal = d.gender || (d.section === 'medical' ? 'unisex' : null);
       await client.query(
         `UPDATE products SET 
           name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, 
           variants=$6, section=$7, checkbox_values=$8, is_hidden=false, hidden=false, 
-          is_hidden_from_website=false, is_active=true 
+          is_hidden_from_website=false, is_active=true, gender=COALESCE($11, gender, 'unisex')
          WHERE id=$9 OR id=$10 OR LOWER(TRIM(name))=LOWER(TRIM($1))`,
         [d.product_name, sPrice, qty, d.expiry_date || null,
          pPrice, variantsJson,
-         d.section || 'dental', cbJson, targetWebId, pid]);
+         d.section || 'dental', cbJson, targetWebId, pid, genderVal]);
     }
     cacheDel('site_products');
   } finally { client.release(); }
@@ -7171,6 +7178,8 @@ async function main() {
     await posDb.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS details TEXT NOT NULL DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE products ALTER COLUMN details SET DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE`).catch(() => {});
+    await posDb.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS gender TEXT DEFAULT 'unisex'`).catch(() => {});
+    await posDb.query(`ALTER TABLE public.products ADD COLUMN IF NOT EXISTS gender TEXT DEFAULT 'unisex'`).catch(() => {});
 
     // Sync all hidden products to section='hidden' on startup
     await posDb.query(`
