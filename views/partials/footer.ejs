@@ -265,6 +265,22 @@
         }
         _lastUnseenOrdersCount = count;
       } catch(_) {}
+
+      // 3. Website registrations count (every 12 seconds)
+      try {
+        const regRes = await fetch(`${BASE_PATH}/api/website-registrations/count`, { credentials: 'include' });
+        const regData = await regRes.json();
+        const regCount = parseInt(regData.count || 0, 10);
+        const regBadge = document.getElementById("webRegBadge");
+        if (regBadge) {
+          if (regCount > 0) {
+            regBadge.textContent = regCount;
+            regBadge.classList.remove("hidden");
+          } else {
+            regBadge.classList.add("hidden");
+          }
+        }
+      } catch(_) {}
     }
 
     window.refreshAlerts = checkAlerts;

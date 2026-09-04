@@ -166,9 +166,16 @@ function payMethodEn(m) {
   <div class="row"><span>التاريخ</span><span><%= saleDateStr %></span></div>
   <div class="row"><span>الدفع</span><span class="bold"><%= payMethodAr(sale.payment_method) %></span></div>
   <% if (customer) { %>
-  <div class="row"><span>العميل</span><span class="bold" style="max-width:55%;text-align:left;"><%- customer.name %></span></div>
+  <div class="row"><span>العميل</span><span class="bold" style="max-width:55%;text-align:left;"><%- customer.name %> <%= customer.customer_code ? ('[' + customer.customer_code + ']') : '' %></span></div>
   <% if (customer.phone) { %><div class="row"><span>الهاتف</span><span class="bold"><%= customer.phone %></span></div><% } %>
-  <% if (customer.address) { %><div class="row"><span>العنوان</span><span style="max-width:60%;text-align:left;word-break:break-word;"><%- customer.address %></span></div><% } %>
+  <% if (sale.delivery_type === 'pickup') { %>
+  <div class="row"><span>طريقة التسليم</span><span class="bold" style="color:#000;">🏪 استلام من الفرع</span></div>
+  <% } else if (sale.clinic_address || customer.address) { %>
+  <div class="row"><span>عنوان التوصيل</span><span style="max-width:60%;text-align:left;word-break:break-word;"><%- sale.clinic_address || customer.address %></span></div>
+  <% } %>
+  <% if (sale.promo_code) { %>
+  <div class="row"><span>كود الخصم</span><span class="bold">🎟️ <%= sale.promo_code %></span></div>
+  <% } %>
   <% } %>
   <% } %>
 

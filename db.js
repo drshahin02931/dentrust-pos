@@ -354,6 +354,37 @@ const MIGRATIONS = [
     unit_price NUMERIC DEFAULT 0, unit_cost NUMERIC DEFAULT 0, user_name TEXT, notes TEXT,
     date TEXT DEFAULT (NOW()::text), created_at TIMESTAMPTZ DEFAULT NOW()
   )`,
+  "ALTER TABLE customers ADD COLUMN IF NOT EXISTS customer_code TEXT",
+  "ALTER TABLE customers ADD COLUMN IF NOT EXISTS password_hash TEXT DEFAULT '1234567'",
+  "ALTER TABLE customers ADD COLUMN IF NOT EXISTS extra_phones TEXT DEFAULT ''",
+  "ALTER TABLE customers ADD COLUMN IF NOT EXISTS addresses JSONB DEFAULT '[]'::jsonb",
+  "ALTER TABLE customers ADD COLUMN IF NOT EXISTS points_balance INTEGER DEFAULT 0",
+  "ALTER TABLE customers ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'pos'",
+  "ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE",
+  "ALTER TABLE sales ADD COLUMN IF NOT EXISTS promo_code TEXT",
+  "ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_type TEXT DEFAULT 'pickup'",
+  "ALTER TABLE sales ADD COLUMN IF NOT EXISTS clinic_address TEXT",
+  `CREATE TABLE IF NOT EXISTS customer_audit_logs (
+    id SERIAL PRIMARY KEY,
+    customer_id INTEGER,
+    customer_code TEXT,
+    customer_name TEXT,
+    action_type TEXT NOT NULL,
+    details TEXT,
+    current_phones TEXT,
+    user_name TEXT DEFAULT 'الموقع',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS promo_codes (
+    id SERIAL PRIMARY KEY,
+    code TEXT UNIQUE NOT NULL,
+    discount_type TEXT NOT NULL DEFAULT 'percentage',
+    discount_value NUMERIC NOT NULL DEFAULT 0,
+    min_order NUMERIC DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE,
+    usage_count INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
 ];
 
 // Migrations that run on the PUBLIC schema (Supabase website DB) — customers table.
@@ -691,6 +722,17 @@ async function initDb() {
     try { await client.query(UPDATE_TRIGGER_SQL);    } catch (e) { console.error('[initDb] Failed to create products_instead_of_update trigger:', e.message); }
     try { await client.query(DELETE_TRIGGER_FN_SQL); } catch (e) { console.error('[initDb] Failed to create products_delete_fn:', e.message); }
     try { await client.query(DELETE_TRIGGER_SQL);    } catch (e) { console.error('[initDb] Failed to create products_instead_of_delete trigger:', e.message); }
+
+    // 7. Auto backfill customer codes & default passwords for existing customers
+    try {
+      await client.query("UPDATE customers SET customer_code = 'DT-' || (1000 + id) WHERE customer_code IS NULL OR customer_code = ''");
+      await client.query("UPDATE customers SET password_hash = '1234567' WHERE password_hash IS NULL OR password_hash = ''");
+      await client.query(`
+        INSERT INTO promo_codes (code, discount_type, discount_value, min_order)
+        VALUES ('DENTRUST10', 'percentage', 10, 0), ('WELCOME50', 'fixed', 50, 500)
+        ON CONFLICT (code) DO NOTHING
+      `);
+    } catch (_) {}
 
   } finally {
     client.release();

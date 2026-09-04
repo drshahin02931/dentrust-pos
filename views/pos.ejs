@@ -137,41 +137,94 @@
         </div>
       </div>
 
-      <!-- Customer name -->
+      <!-- Customer name with Live Search & Address Picker -->
       <div>
-        <label class="text-xs font-medium text-gray-500 block mb-1.5">
-          <span data-ar="اسم العميل" data-en="Customer Name">اسم العميل</span>
-          <span id="customerRequired" class="text-orange-500 hidden" data-ar="(مطلوب)" data-en="(required)">(مطلوب)</span>
-          <span class="text-gray-400 text-xs" id="customerOptional" data-ar="(اختياري)" data-en="(optional)">(اختياري)</span>
+        <label class="text-xs font-medium text-gray-500 block mb-1.5 flex items-center justify-between">
+          <span>
+            <span data-ar="اسم العميل / الطبيب" data-en="Customer / Doctor Name">اسم العميل / الطبيب</span>
+            <span id="customerRequired" class="text-orange-500 hidden" data-ar="(مطلوب)" data-en="(required)">(مطلوب)</span>
+            <span class="text-gray-400 text-xs" id="customerOptional" data-ar="(اختياري)" data-en="(optional)">(اختياري)</span>
+          </span>
+          <span id="selectedCustCodeBadge" class="hidden text-[11px] font-mono font-black bg-blue-100 text-blue-800 px-2 py-0.5 rounded"></span>
         </label>
-        <!-- Customer select for ALL payment types -->
+        
         <div id="customerSection" class="space-y-1.5">
-          <select id="customerSelect" class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
+          <!-- Live Search Input -->
+          <input id="customerSearchInput" type="text" oninput="onCustomerSearch(this.value)"
+            placeholder="🔍 ابحث بالاسم، كود DT-XXXX، أو أي رقم هاتف..."
+            class="w-full border rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+
+          <!-- Customer select -->
+          <select id="customerSelect" onchange="onCustomerSelectChange()" class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
             <option value="" data-ar="-- اختر عميل (اختياري) --" data-en="-- Select customer (optional) --">-- اختر عميل (اختياري) --</option>
           </select>
+
+          <!-- Clinic Address Dropdown (hidden if none or pickup) -->
+          <div id="clinicAddressBox" class="hidden bg-gray-50 border border-gray-200 rounded-xl p-2.5 space-y-1.5">
+            <div class="text-[11px] font-bold text-gray-700 flex items-center justify-between">
+              <span>🏥 عنوان العيادة للفاتورة:</span>
+              <span id="addressesCountBadge" class="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded"></span>
+            </div>
+            <select id="clinicAddressSelect" class="w-full border rounded-lg px-2.5 py-1.5 text-xs bg-white focus:outline-none">
+              <option value="">-- العنوان المسجل الرئيسي --</option>
+            </select>
+          </div>
+
           <button type="button" onclick="openQuickAddCustomer()"
-            class="w-full text-xs text-blue-600 hover:text-blue-800 border border-blue-200 hover:border-blue-400 bg-blue-50 hover:bg-blue-100 rounded-xl py-2 font-semibold transition-all"
-            data-ar="＋ إضافة عميل جديد" data-en="＋ Add New Customer">
-            ＋ إضافة عميل جديد
+            class="w-full text-xs text-blue-600 hover:text-blue-800 border border-blue-200 hover:border-blue-400 bg-blue-50 hover:bg-blue-100 rounded-xl py-2 font-semibold transition-all flex items-center justify-center gap-1">
+            <span>＋</span> إضافة عميل جديد
           </button>
         </div>
       </div>
 
-      <!-- Discount -->
+      <!-- Delivery / Pickup Toggle -->
       <div>
-        <label class="text-xs font-medium text-gray-500 block mb-1.5" data-ar="خصم" data-en="Discount">خصم</label>
-        <div class="flex gap-2">
-          <input id="discountInput" type="number" min="0" value="0" oninput="updateTotal()"
-            class="flex-1 border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
-          <select id="discountType" onchange="updateTotal()" class="border rounded-xl px-2 py-2 text-sm focus:outline-none bg-white">
-            <option value="amount">جنيه</option>
-            <option value="percent">%</option>
-          </select>
+        <label class="text-xs font-medium text-gray-500 block mb-1.5">نوع الاستلام والتسليم</label>
+        <div class="grid grid-cols-2 gap-1.5 p-1 bg-gray-100 rounded-xl">
+          <button type="button" id="btnTypePickup" onclick="setDeliveryMode('pickup')"
+            class="py-2 text-xs font-bold rounded-lg transition-all bg-white text-blue-700 shadow-xs flex items-center justify-center gap-1">
+            🏪 استلام من الفرع
+          </button>
+          <button type="button" id="btnTypeDelivery" onclick="setDeliveryMode('delivery')"
+            class="py-2 text-xs font-bold rounded-lg transition-all text-gray-600 hover:text-gray-800 flex items-center justify-center gap-1">
+            🛵 توصيل
+          </button>
         </div>
       </div>
 
-      <!-- Delivery -->
-      <div>
+      <!-- Discount & Promo Code -->
+      <div class="space-y-2">
+        <div>
+          <label class="text-xs font-medium text-gray-500 block mb-1.5" data-ar="خصم" data-en="Discount">خصم</label>
+          <div class="flex gap-2">
+            <input id="discountInput" type="number" min="0" value="0" oninput="updateTotal()"
+              class="flex-1 border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+            <select id="discountType" onchange="updateTotal()" class="border rounded-xl px-2 py-2 text-sm focus:outline-none bg-white">
+              <option value="amount">جنيه</option>
+              <option value="percent">%</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Promo Code Input -->
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label class="text-xs font-medium text-gray-500 block">🎟️ كود الخصم (البروموكود)</label>
+            <span id="promoBadge" class="hidden text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded"></span>
+          </div>
+          <div class="flex gap-1.5">
+            <input id="promoCodeInput" type="text" placeholder="اكتب كود الخصم..."
+              class="flex-1 border uppercase rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+            <button type="button" onclick="applyPromoCode()" id="applyPromoBtn"
+              class="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition-all">
+              تطبيق
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Delivery Fee (hidden if pickup) -->
+      <div id="deliveryFeeSection" class="hidden">
         <label class="text-xs font-medium text-gray-500 block mb-1.5" data-ar="رسوم التوصيل" data-en="Delivery Fee">رسوم التوصيل</label>
         <input id="deliveryInput" type="number" min="0" value="0" oninput="updateTotal()"
           class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
@@ -413,17 +466,148 @@ let searchTimeout = null;
 let suggCache   = {};        // id → product object, avoids JSON escaping in onclick
 let posSelectedCategory = null;
 
-// ── Load customers ───────────────────────────────────────────────────────────
-fetch(`${BASE}/api/customers`).then(r=>r.json()).then(data => {
-  customers = data;
+// ── Load & Search Customers ──────────────────────────────────────────────────
+function populateCustomerSelect(list) {
   const sel = document.getElementById("customerSelect");
-  data.forEach(c => {
+  const currentVal = sel.value;
+  while (sel.options.length > 1) sel.remove(1);
+  (list || customers).forEach(c => {
     const opt = document.createElement("option");
     opt.value = c.id;
-    opt.textContent = `${c.name}${c.total_debt > 0 ? ' (دين: '+c.total_debt.toFixed(2)+' ج)' : ''}`;
+    const code = c.customer_code || `DT-${1000 + c.id}`;
+    const debtStr = c.total_debt > 0 ? ` (دين: ${parseFloat(c.total_debt).toFixed(2)} ج)` : '';
+    const phoneStr = c.phone ? ` - ${c.phone}` : '';
+    opt.textContent = `[${code}] ${c.name}${phoneStr}${debtStr}`;
     sel.appendChild(opt);
   });
+  if (currentVal) sel.value = currentVal;
+}
+
+fetch(`${BASE}/api/customers`).then(r=>r.json()).then(data => {
+  customers = data;
+  populateCustomerSelect(data);
 });
+
+function onCustomerSearch(query) {
+  const q = (query || '').toLowerCase().trim();
+  if (!q) {
+    populateCustomerSelect(customers);
+    return;
+  }
+  const filtered = customers.filter(c => {
+    const nameMatch = (c.name || '').toLowerCase().includes(q);
+    const codeMatch = (c.customer_code || '').toLowerCase().includes(q);
+    const phoneMatch = (c.phone || '').includes(q);
+    const extraMatch = (c.extra_phones || '').includes(q);
+    return nameMatch || codeMatch || phoneMatch || extraMatch;
+  });
+  populateCustomerSelect(filtered);
+  if (filtered.length === 1) {
+    document.getElementById("customerSelect").value = filtered[0].id;
+    onCustomerSelectChange();
+  }
+}
+
+function onCustomerSelectChange() {
+  const cid = parseInt(document.getElementById("customerSelect").value, 10);
+  const cust = customers.find(c => c.id === cid);
+  const codeBadge = document.getElementById("selectedCustCodeBadge");
+  const clinicBox = document.getElementById("clinicAddressBox");
+  const clinicSelect = document.getElementById("clinicAddressSelect");
+
+  if (!cust) {
+    codeBadge.classList.add("hidden");
+    clinicBox.classList.add("hidden");
+    return;
+  }
+
+  const code = cust.customer_code || `DT-${1000 + cust.id}`;
+  codeBadge.textContent = code;
+  codeBadge.classList.remove("hidden");
+
+  let addresses = [];
+  try {
+    addresses = typeof cust.addresses === 'string' ? JSON.parse(cust.addresses) : (cust.addresses || []);
+  } catch (_) { addresses = []; }
+
+  clinicSelect.innerHTML = `<option value="">-- العنوان المسجل: ${cust.address || 'لا يوجد عنوان مسجل'} --</option>`;
+  if (addresses.length > 0) {
+    document.getElementById("addressesCountBadge").textContent = `${addresses.length} عيادة`;
+    addresses.forEach((a, idx) => {
+      const opt = document.createElement("option");
+      const fullText = `${a.title || 'عيادة ' + (idx+1)}: ${a.address || ''} ${a.city ? '('+a.city+')' : ''}`;
+      opt.value = fullText;
+      opt.textContent = fullText;
+      clinicSelect.appendChild(opt);
+    });
+  } else {
+    document.getElementById("addressesCountBadge").textContent = "";
+  }
+
+  if (_currentDeliveryMode === 'delivery') {
+    clinicBox.classList.remove("hidden");
+  } else {
+    clinicBox.classList.add("hidden");
+  }
+}
+
+// ── Delivery vs Pickup Mode ──────────────────────────────────────────────────
+let _currentDeliveryMode = 'pickup';
+function setDeliveryMode(mode) {
+  _currentDeliveryMode = mode;
+  const btnPickup = document.getElementById("btnTypePickup");
+  const btnDelivery = document.getElementById("btnTypeDelivery");
+  const feeSection = document.getElementById("deliveryFeeSection");
+  const clinicBox = document.getElementById("clinicAddressBox");
+  const custId = document.getElementById("customerSelect").value;
+
+  if (mode === 'pickup') {
+    btnPickup.className = "py-2 text-xs font-bold rounded-lg transition-all bg-white text-blue-700 shadow-xs flex items-center justify-center gap-1";
+    btnDelivery.className = "py-2 text-xs font-bold rounded-lg transition-all text-gray-600 hover:text-gray-800 flex items-center justify-center gap-1";
+    feeSection.classList.add("hidden");
+    document.getElementById("deliveryInput").value = 0;
+    clinicBox.classList.add("hidden");
+  } else {
+    btnDelivery.className = "py-2 text-xs font-bold rounded-lg transition-all bg-white text-blue-700 shadow-xs flex items-center justify-center gap-1";
+    btnPickup.className = "py-2 text-xs font-bold rounded-lg transition-all text-gray-600 hover:text-gray-800 flex items-center justify-center gap-1";
+    feeSection.classList.remove("hidden");
+    if (custId) clinicBox.classList.remove("hidden");
+  }
+  updateTotal();
+}
+
+// ── Promo Code ───────────────────────────────────────────────────────────────
+let _appliedPromo = null;
+async function applyPromoCode() {
+  const code = (document.getElementById("promoCodeInput").value || '').trim();
+  if (!code) {
+    alert("يرجى إدخال كود الخصم أولاً");
+    return;
+  }
+  const subtotal = cart.reduce((s,i) => s + i.unit_price * i.quantity, 0);
+  const btn = document.getElementById("applyPromoBtn");
+  btn.disabled = true;
+  btn.textContent = "...";
+  try {
+    const res = await fetch(`${BASE}/api/promo/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, total_amount: subtotal })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "كود الخصم غير صحيح");
+    _appliedPromo = data.promo;
+    const badge = document.getElementById("promoBadge");
+    badge.textContent = `✅ خصم ${_appliedPromo.discount_amount} ج (${_appliedPromo.code})`;
+    badge.classList.remove("hidden");
+    updateTotal();
+  } catch (err) {
+    alert("❌ " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "تطبيق";
+  }
+}
 
 // ── Stats ────────────────────────────────────────────────────────────────────
 function loadStats() {
@@ -1158,8 +1342,15 @@ function updateTotal() {
   const subtotal  = cart.reduce((s,i) => s + i.unit_price * i.quantity, 0);
   const rawDisc   = parseFloat(document.getElementById("discountInput").value) || 0;
   const discType  = document.getElementById("discountType").value;
-  const discAmt   = discType === "percent" ? subtotal * rawDisc / 100 : rawDisc;
-  const delivery  = parseFloat(document.getElementById("deliveryInput").value) || 0;
+  let discAmt     = discType === "percent" ? subtotal * rawDisc / 100 : rawDisc;
+  if (_appliedPromo) {
+    if (_appliedPromo.discount_type === 'percentage') {
+      discAmt += (subtotal * _appliedPromo.discount_value) / 100;
+    } else {
+      discAmt += _appliedPromo.discount_amount;
+    }
+  }
+  const delivery  = (_currentDeliveryMode === 'delivery') ? (parseFloat(document.getElementById("deliveryInput").value) || 0) : 0;
   const final     = Math.max(0, subtotal - discAmt) + delivery;
 
   // Cart bottom summary
@@ -1170,11 +1361,11 @@ function updateTotal() {
   const discRow = document.getElementById("discountRow");
   if (discAmt > 0) {
     discRow.classList.remove("hidden");
-    document.getElementById("discountDisplay").textContent = "−" + discAmt.toFixed(2) + " جنيه";
+    document.getElementById("discountDisplay").textContent = "−" + discAmt.toFixed(2) + " جنيه" + (_appliedPromo ? ` (شامل كود ${_appliedPromo.code})` : '');
   } else { discRow.classList.add("hidden"); }
 
   const delRow = document.getElementById("deliveryRow");
-  if (delivery > 0) {
+  if (delivery > 0 && _currentDeliveryMode === 'delivery') {
     delRow.classList.remove("hidden");
     document.getElementById("deliveryDisplay").textContent = "+" + delivery.toFixed(2) + " جنيه";
   } else { delRow.classList.add("hidden"); }
@@ -1182,7 +1373,7 @@ function updateTotal() {
   // Profit (screen only)
   if (cart.length > 0) {
     const cost   = cart.reduce((s,i) => s + (i.purchase_price||0) * i.quantity, 0);
-    const profit = Math.max(0, subtotal - discAmt) - cost; // delivery excluded — goes to courier
+    const profit = Math.max(0, subtotal - discAmt) - cost;
     document.getElementById("profitDisplay").textContent = profit.toFixed(2) + " جنيه";
     document.getElementById("profitRow").classList.remove("hidden");
   } else {
@@ -1318,6 +1509,10 @@ async function checkout() {
     changeDue = (amountReceived && amountReceived >= total) ? +(amountReceived - total).toFixed(2) : null;
   }
 
+  const selectedAddress = (_currentDeliveryMode === 'delivery')
+    ? (document.getElementById("clinicAddressSelect")?.value || null)
+    : null;
+
   const res = await fetch(`${BASE}/api/sales`, {
     method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({
@@ -1328,7 +1523,10 @@ async function checkout() {
       change_due: changeDue,
       payment_split: paymentSplitData,
       discount_amount:  discAmt    > 0 ? discAmt    : undefined,
-      delivery_amount:  delivery   > 0 ? delivery   : undefined
+      delivery_amount:  delivery   > 0 ? delivery   : undefined,
+      delivery_type:    _currentDeliveryMode,
+      clinic_address:   selectedAddress,
+      promo_code:       _appliedPromo ? _appliedPromo.code : undefined
     })
   });
   const data = await res.json();

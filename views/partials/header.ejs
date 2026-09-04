@@ -113,6 +113,15 @@
         <span id="webOrdersBadge" class="hidden absolute -top-1 -right-1 bg-orange-500 text-white font-black rounded-full text-[9px] min-w-[1rem] px-1 leading-none py-0.5 text-center"></span>
       </a>
 
+      <a href="<%= base %>/website-registrations" class="nav-link relative <%= reqPath.includes('/website-registrations') ? 'active' : '' %>">
+        📝 تسجيلات الموقع
+        <span id="webRegBadge" class="hidden absolute -top-1 -right-1 bg-emerald-500 text-white font-black rounded-full text-[9px] min-w-[1rem] px-1 leading-none py-0.5 text-center"></span>
+      </a>
+
+      <a href="<%= base %>/customer-audit-logs" class="nav-link <%= reqPath.includes('/customer-audit-logs') ? 'active' : '' %>">
+        📋 سجل التعديلات
+      </a>
+
       <% if (typeof isMgr !== 'undefined' && isMgr) { %>
       <div class="h-5 w-px bg-blue-500 mx-1"></div>
       <a href="<%= base %>/warehouse" class="nav-link <%= reqPath.includes('/warehouse') ? 'active' : '' %>">

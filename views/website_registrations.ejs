@@ -1,0 +1,273 @@
+<%- include('partials/header', Object.assign({pageTitle: 'تسجيلات الموقع'}, locals)) %>
+
+<div class="space-y-5">
+  <!-- Header -->
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-2xl font-black text-gray-800 flex items-center gap-2">
+        <span>📝 تسجيلات الموقع</span>
+        <span class="text-xs bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-full">الأطباء المنضمون عبر المتجر</span>
+      </h1>
+      <p class="text-xs text-gray-500 mt-1">قائمة الأطباء الذين قاموا بإنشاء حسابات عبر متجر DenTrust الإلكتروني مع إمكانية التواصل الفوري وإدارة الحسابات.</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick="loadRegistrations()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm">
+        🔄 تحديث البيانات
+      </button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div class="bg-white border rounded-2xl p-4 text-center shadow-sm">
+      <div id="cnt-total" class="text-2xl font-black text-blue-700">—</div>
+      <div class="text-xs text-gray-500 mt-0.5">إجمالي المسجلين من الموقع</div>
+    </div>
+    <div class="bg-white border rounded-2xl p-4 text-center shadow-sm">
+      <div id="cnt-orders" class="text-2xl font-black text-emerald-600">—</div>
+      <div class="text-xs text-emerald-600 mt-0.5">🛒 أجروا طلبات شراء</div>
+    </div>
+    <div class="bg-white border rounded-2xl p-4 text-center shadow-sm">
+      <div id="cnt-no-orders" class="text-2xl font-black text-amber-600">—</div>
+      <div class="text-xs text-amber-600 mt-0.5">⏳ بانتظار أول طلب</div>
+    </div>
+    <div class="bg-white border rounded-2xl p-4 text-center shadow-sm">
+      <div id="cnt-debt" class="text-2xl font-black text-red-600">—</div>
+      <div class="text-xs text-red-500 mt-0.5">إجمالي الآجل (ج.م)</div>
+    </div>
+  </div>
+
+  <!-- Search & Filter Bar -->
+  <div class="bg-white rounded-2xl border shadow-sm p-4 flex flex-wrap gap-3 items-center">
+    <div class="relative flex-1 min-w-[220px]">
+      <input id="searchInput" type="text" placeholder="🔍 ابحث باسم الطبيب، كود العميل DT-XXXX، أو رقم الهاتف..." oninput="filterList()"
+        class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+    </div>
+    <select id="filterSelect" onchange="filterList()" class="border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-white font-medium text-gray-700">
+      <option value="all">كل الأطباء المسجلين</option>
+      <option value="has_orders">لديهم طلبات سابقة</option>
+      <option value="no_orders">جدد (بدون طلبات)</option>
+      <option value="has_debt">عليهم حساب آجل</option>
+    </select>
+  </div>
+
+  <!-- Registrations List Container -->
+  <div id="registrationsContainer" class="space-y-3">
+    <div class="flex items-center justify-center py-16 text-gray-400">
+      <svg class="animate-spin h-6 w-6 ml-2" viewBox="0 0 24 24" fill="none">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+      </svg>
+      جارٍ تحميل تسجيلات الموقع...
+    </div>
+  </div>
+
+  <div id="noResults" class="hidden bg-white border rounded-2xl p-12 text-center text-gray-400">
+    <div class="text-3xl mb-2">🔍</div>
+    <div class="font-bold text-gray-700">لا توجد تسجيلات مطابقة للبحث</div>
+    <div class="text-xs text-gray-400 mt-1">تأكد من كتابة الاسم أو الرقم أو الكود بشكل صحيح</div>
+  </div>
+</div>
+
+<!-- Reset Password Modal -->
+<div id="resetPwModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-5 text-center">
+    <div class="w-12 h-12 rounded-full bg-amber-100 text-amber-700 text-2xl flex items-center justify-center mx-auto mb-3">🔑</div>
+    <h3 class="font-bold text-gray-800 text-lg mb-1">تصفير كلمة المرور</h3>
+    <p class="text-xs text-gray-600 mb-4">
+      هل أنت متأكد من رغبتك في إعادة تعيين كلمة مرور الطبيب <span id="resetCustName" class="font-bold text-blue-700"></span> إلى كلمة المرور الافتراضية <strong class="text-emerald-700 font-mono text-sm">1234567</strong>؟
+    </p>
+    <div class="flex gap-2">
+      <button id="confirmResetBtn" onclick="confirmResetPassword()" class="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-xl text-sm transition-all shadow-sm">
+        نعم، تصفير الآن
+      </button>
+      <button onclick="closeResetModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">
+        إلغاء
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+let allRegistrations = [];
+let pendingResetCustId = null;
+
+async function loadRegistrations() {
+  const container = document.getElementById("registrationsContainer");
+  try {
+    const res = await fetch(`${BASE}/api/website-registrations`);
+    if (!res.ok) throw new Error("فشل الجلب");
+    allRegistrations = await res.json();
+    updateStats(allRegistrations);
+    filterList();
+  } catch (err) {
+    container.innerHTML = `<div class="bg-red-50 border border-red-200 text-red-700 p-6 rounded-2xl text-center text-sm font-semibold">تعذر تحميل بيانات التسجيلات. يرجى إعادة المحاولة.</div>`;
+  }
+}
+
+function updateStats(data) {
+  document.getElementById("cnt-total").textContent = data.length;
+  const withOrders = data.filter(c => parseInt(c.orders_count || 0, 10) > 0).length;
+  document.getElementById("cnt-orders").textContent = withOrders;
+  document.getElementById("cnt-no-orders").textContent = data.length - withOrders;
+  const totalDebt = data.reduce((s, c) => s + parseFloat(c.total_debt || 0), 0);
+  document.getElementById("cnt-debt").textContent = totalDebt.toLocaleString('ar-EG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function filterList() {
+  const q = (document.getElementById("searchInput").value || "").toLowerCase().trim();
+  const filter = document.getElementById("filterSelect").value;
+
+  let filtered = allRegistrations.filter(c => {
+    const nameMatch = (c.name || "").toLowerCase().includes(q);
+    const codeMatch = (c.customer_code || "").toLowerCase().includes(q);
+    const phoneMatch = (c.phone || "").includes(q);
+    const extraMatch = (c.extra_phones || "").includes(q);
+    return nameMatch || codeMatch || phoneMatch || extraMatch;
+  });
+
+  if (filter === "has_orders") {
+    filtered = filtered.filter(c => parseInt(c.orders_count || 0, 10) > 0);
+  } else if (filter === "no_orders") {
+    filtered = filtered.filter(c => parseInt(c.orders_count || 0, 10) === 0);
+  } else if (filter === "has_debt") {
+    filtered = filtered.filter(c => parseFloat(c.total_debt || 0) > 0);
+  }
+
+  renderRegistrations(filtered);
+}
+
+function renderRegistrations(list) {
+  const container = document.getElementById("registrationsContainer");
+  const noRes = document.getElementById("noResults");
+
+  if (!list.length) {
+    container.innerHTML = "";
+    noRes.classList.remove("hidden");
+    return;
+  }
+  noRes.classList.add("hidden");
+
+  container.innerHTML = list.map(c => {
+    const code = c.customer_code || `DT-${1000 + c.id}`;
+    const debt = parseFloat(c.total_debt || 0);
+    const ordersCount = parseInt(c.orders_count || 0, 10);
+    const points = parseInt(c.points_balance || 0, 10);
+    const cleanPhone = (c.phone || "").replace(/\D/g, '');
+    const waPhone = cleanPhone.startsWith('0') ? '2' + cleanPhone : cleanPhone;
+    
+    let addresses = [];
+    try { addresses = typeof c.addresses === 'string' ? JSON.parse(c.addresses) : (c.addresses || []); } catch (_) { addresses = []; }
+
+    const extraPhonesList = (c.extra_phones || "").split(',').map(s=>s.trim()).filter(Boolean);
+
+    return `
+      <div class="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm hover:border-blue-300 transition-all">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          
+          <!-- Doctor Info -->
+          <div class="flex items-start gap-3 min-w-0">
+            <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white font-black text-lg flex items-center justify-center shrink-0 shadow-sm">
+              ${(c.name || 'د').charAt(0)}
+            </div>
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-black text-gray-900 text-base">${c.name}</span>
+                <span class="bg-blue-50 text-blue-700 font-mono font-black text-xs px-2 py-0.5 rounded-lg border border-blue-200">${code}</span>
+                <span class="bg-emerald-50 text-emerald-700 font-bold text-[11px] px-2 py-0.5 rounded-lg border border-emerald-200">🌐 مسجل بالموقع</span>
+                ${debt > 0 ? `<span class="bg-red-50 text-red-700 font-bold text-[11px] px-2 py-0.5 rounded-lg border border-red-200">دين: ${debt.toFixed(2)} ج</span>` : ''}
+                ${points > 0 ? `<span class="bg-amber-50 text-amber-700 font-bold text-[11px] px-2 py-0.5 rounded-lg border border-amber-200">⭐ ${points} نقطة</span>` : ''}
+              </div>
+
+              <!-- Phones Row -->
+              <div class="flex items-center gap-2 text-xs text-gray-600 mt-1.5 flex-wrap">
+                <span class="font-semibold text-gray-800">📱 الرقم الأساسي:</span>
+                <a href="tel:${c.phone}" class="font-mono text-blue-600 hover:underline font-bold">${c.phone || '—'}</a>
+                ${extraPhonesList.length ? `
+                  <span class="text-gray-300">|</span>
+                  <span class="text-gray-500">أرقام بديلة (${extraPhonesList.length}):</span>
+                  ${extraPhonesList.map(p => `<a href="tel:${p}" class="font-mono text-gray-700 hover:text-blue-600 bg-gray-50 px-1.5 py-0.5 rounded border text-[11px]">${p}</a>`).join(' ')}
+                ` : ''}
+              </div>
+
+              <!-- Addresses preview -->
+              ${addresses.length ? `
+                <div class="text-xs text-gray-500 mt-1 flex items-center gap-1.5 flex-wrap">
+                  <span class="font-semibold text-gray-700">🏥 العيادات المسجلة (${addresses.length}):</span>
+                  ${addresses.map(a => `<span class="bg-gray-100 text-gray-700 px-2 py-0.5 rounded-md text-[11px]">${a.title || 'عيادة'}: ${a.address || a.city || ''}</span>`).join(' ')}
+                </div>
+              ` : (c.address ? `<div class="text-xs text-gray-400 mt-1">📍 ${c.address}</div>` : '')}
+
+              <div class="text-[11px] text-gray-400 mt-1.5">
+                تاريخ التسجيل: ${c.created_at ? new Date(c.created_at).toLocaleDateString('ar-EG', {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'}
+                &bull; عدد الطلبات: <strong class="text-gray-700">${ordersCount}</strong> طلبات
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Actions -->
+          <div class="flex items-center gap-2 shrink-0 self-center">
+            ${c.phone ? `
+              <a href="https://wa.me/${waPhone}?text=${encodeURIComponent('مرحباً دكتور ' + c.name + '، سعداء بانضمامك لمنصة DenTrust لطب الأسنان!')}" target="_blank"
+                class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-2 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
+                title="محادثة واتساب سريعة">
+                <span>💬</span> واتساب
+              </a>
+              <a href="tel:${c.phone}"
+                class="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs px-3 py-2 rounded-xl flex items-center gap-1.5 border border-blue-200 transition-all"
+                title="اتصال هاتفي">
+                <span>📞</span> اتصال
+              </a>
+            ` : ''}
+            
+            <button onclick="promptResetPassword(${c.id}, '${c.name.replace(/'/g, "\\'")}')"
+              class="bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-xs px-3 py-2 rounded-xl flex items-center gap-1 border border-amber-200 transition-all"
+              title="إعادة تعيين كلمة المرور إلى 1234567">
+              <span>🔑</span> تصفير الباسورد
+            </button>
+          </div>
+
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function promptResetPassword(cid, name) {
+  pendingResetCustId = cid;
+  document.getElementById("resetCustName").textContent = name;
+  document.getElementById("resetPwModal").classList.remove("hidden");
+}
+
+function closeResetModal() {
+  pendingResetCustId = null;
+  document.getElementById("resetPwModal").classList.add("hidden");
+}
+
+async function confirmResetPassword() {
+  if (!pendingResetCustId) return;
+  const btn = document.getElementById("confirmResetBtn");
+  btn.disabled = true;
+  btn.textContent = "جارٍ التصفير...";
+  try {
+    const res = await fetch(`${BASE}/api/customer/reset-password-admin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_id: pendingResetCustId })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "فشل التصفير");
+    alert("✅ تم تصفير كلمة المرور بنجاح إلى: 1234567");
+    closeResetModal();
+  } catch (err) {
+    alert("❌ خطأ: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "نعم، تصفير الآن";
+  }
+}
+
+document.addEventListener("DOMContentLoaded", loadRegistrations);
+</script>
+
+<%- include('partials/footer', locals) %>

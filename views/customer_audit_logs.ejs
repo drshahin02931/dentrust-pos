@@ -1,0 +1,191 @@
+<%- include('partials/header', Object.assign({pageTitle: 'سجل تعديلات العملاء'}, locals)) %>
+
+<div class="space-y-5">
+  <!-- Header -->
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-2xl font-black text-gray-800 flex items-center gap-2">
+        <span>📋 سجل تعديلات العملاء (Audit Logs)</span>
+      </h1>
+      <p class="text-xs text-gray-500 mt-1">سجل أمني فوري يدون أي تعديل أو إضافة لأرقام الهواتف أو العناوين أو كلمات المرور يجريه أي طبيب من الموقع أو الإدارة.</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick="loadAuditLogs()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm">
+        🔄 تحديث السجل
+      </button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div class="bg-white border rounded-2xl p-4 text-center shadow-sm">
+      <div id="stat-total" class="text-2xl font-black text-gray-800">—</div>
+      <div class="text-xs text-gray-500 mt-0.5">إجمالي الحركات المسجلة</div>
+    </div>
+    <div class="bg-white border rounded-2xl p-4 text-center shadow-sm">
+      <div id="stat-phones" class="text-2xl font-black text-blue-600">—</div>
+      <div class="text-xs text-blue-600 mt-0.5">📱 تعديلات أرقام الهواتف</div>
+    </div>
+    <div class="bg-white border rounded-2xl p-4 text-center shadow-sm">
+      <div id="stat-passwords" class="text-2xl font-black text-amber-600">—</div>
+      <div class="text-xs text-amber-600 mt-0.5">🔑 تغييرات كلمات المرور</div>
+    </div>
+    <div class="bg-white border rounded-2xl p-4 text-center shadow-sm">
+      <div id="stat-registrations" class="text-2xl font-black text-emerald-600">—</div>
+      <div class="text-xs text-emerald-600 mt-0.5">🎉 تسجيلات جديدة</div>
+    </div>
+  </div>
+
+  <!-- Search & Filter -->
+  <div class="bg-white rounded-2xl border shadow-sm p-4 flex flex-wrap gap-3 items-center">
+    <div class="relative flex-1 min-w-[240px]">
+      <input id="searchInput" type="text" placeholder="🔍 ابحث بكود العميل DT-XXXX، اسم الطبيب، أو رقم الهاتف..." oninput="filterLogs()"
+        class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+    </div>
+    <select id="actionFilter" onchange="filterLogs()" class="border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-white font-medium text-gray-700">
+      <option value="all">كل أنواع الحركات</option>
+      <option value="update_profile">تعديل بيانات / أرقام</option>
+      <option value="registration">تسجيل جديد</option>
+      <option value="change_password">تغيير كلمة المرور</option>
+      <option value="reset_password_admin">تصفير كلمة المرور من الإدارة</option>
+    </select>
+  </div>
+
+  <!-- Logs Container -->
+  <div id="logsContainer" class="space-y-3">
+    <div class="flex items-center justify-center py-16 text-gray-400">
+      <svg class="animate-spin h-6 w-6 ml-2" viewBox="0 0 24 24" fill="none">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+      </svg>
+      جارٍ تحميل سجل الحركات...
+    </div>
+  </div>
+
+  <div id="noLogs" class="hidden bg-white border rounded-2xl p-12 text-center text-gray-400">
+    <div class="text-3xl mb-2">📋</div>
+    <div class="font-bold text-gray-700">لا توجد حركات مسجلة مطابقة للبحث</div>
+    <div class="text-xs text-gray-400 mt-1">جرب البحث بمعايير أخرى أو تغيير الفلتر</div>
+  </div>
+</div>
+
+<script>
+let allLogs = [];
+
+async function loadAuditLogs() {
+  const container = document.getElementById("logsContainer");
+  try {
+    const res = await fetch(`${BASE}/api/customer-audit-logs`);
+    if (!res.ok) throw new Error("فشل الجلب");
+    allLogs = await res.json();
+    updateStats(allLogs);
+    filterLogs();
+  } catch (err) {
+    container.innerHTML = `<div class="bg-red-50 border border-red-200 text-red-700 p-6 rounded-2xl text-center text-sm font-semibold">تعذر تحميل سجل الحركات. يرجى إعادة المحاولة.</div>`;
+  }
+}
+
+function updateStats(data) {
+  document.getElementById("stat-total").textContent = data.length;
+  document.getElementById("stat-phones").textContent = data.filter(l => l.action_type === 'update_profile').length;
+  document.getElementById("stat-passwords").textContent = data.filter(l => l.action_type === 'change_password' || l.action_type === 'reset_password_admin').length;
+  document.getElementById("stat-registrations").textContent = data.filter(l => l.action_type === 'registration').length;
+}
+
+function filterLogs() {
+  const q = (document.getElementById("searchInput").value || "").toLowerCase().trim();
+  const filter = document.getElementById("actionFilter").value;
+
+  let filtered = allLogs.filter(l => {
+    const nameMatch = (l.customer_name || "").toLowerCase().includes(q);
+    const codeMatch = (l.customer_code || "").toLowerCase().includes(q);
+    const detailMatch = (l.details || "").toLowerCase().includes(q);
+    const phonesMatch = (l.current_phones || "").includes(q);
+    return nameMatch || codeMatch || detailMatch || phonesMatch;
+  });
+
+  if (filter !== 'all') {
+    filtered = filtered.filter(l => l.action_type === filter);
+  }
+
+  renderLogs(filtered);
+}
+
+function getActionMeta(type) {
+  switch (type) {
+    case 'update_profile':
+      return { badge: 'تعديل بيانات / أرقام', bg: 'bg-blue-50 text-blue-700 border-blue-200', icon: '📱' };
+    case 'registration':
+      return { badge: 'تسجيل جديد', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: '🎉' };
+    case 'change_password':
+      return { badge: 'تغيير كلمة المرور', bg: 'bg-purple-50 text-purple-700 border-purple-200', icon: '🔑' };
+    case 'reset_password_admin':
+      return { badge: 'تصفير باسورد (إدارة)', bg: 'bg-amber-50 text-amber-800 border-amber-200', icon: '⚙️' };
+    default:
+      return { badge: type || 'حركة', bg: 'bg-gray-50 text-gray-700 border-gray-200', icon: '📝' };
+  }
+}
+
+function renderLogs(list) {
+  const container = document.getElementById("logsContainer");
+  const noMsg = document.getElementById("noLogs");
+
+  if (!list.length) {
+    container.innerHTML = "";
+    noMsg.classList.remove("hidden");
+    return;
+  }
+  noMsg.classList.add("hidden");
+
+  container.innerHTML = list.map(l => {
+    const meta = getActionMeta(l.action_type);
+    const timeStr = l.created_at ? new Date(l.created_at).toLocaleString('ar-EG', {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    }) : '—';
+
+    return `
+      <div class="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm hover:border-blue-200 transition-all">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          
+          <div class="flex items-start gap-3 min-w-0 flex-1">
+            <div class="w-10 h-10 rounded-xl bg-gray-100 text-lg flex items-center justify-center shrink-0">
+              ${meta.icon}
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-black text-gray-900 text-base">${l.customer_name || 'طبيب'}</span>
+                <span class="bg-blue-50 text-blue-700 font-mono font-black text-xs px-2 py-0.5 rounded-lg border border-blue-200">${l.customer_code || '—'}</span>
+                <span class="font-bold text-xs px-2.5 py-0.5 rounded-lg border ${meta.bg}">${meta.badge}</span>
+                <span class="text-xs text-gray-400">بواسطة: <strong>${l.user_name || 'النظام'}</strong></span>
+              </div>
+
+              <!-- Details of change -->
+              <div class="text-sm font-semibold text-gray-800 mt-2 bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                ${l.details || '—'}
+              </div>
+
+              <!-- Current phones list -->
+              ${l.current_phones ? `
+                <div class="text-xs text-gray-500 mt-2 flex items-center gap-1.5 flex-wrap">
+                  <span class="font-bold text-gray-700">📞 أرقام الطبيب الحالية:</span>
+                  <span class="font-mono text-gray-800 bg-white px-2 py-0.5 rounded border text-[11px]">${l.current_phones}</span>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+
+          <div class="text-left shrink-0 text-xs text-gray-400 font-medium">
+            🕒 ${timeStr}
+          </div>
+
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+document.addEventListener("DOMContentLoaded", loadAuditLogs);
+</script>
+
+<%- include('partials/footer', locals) %>

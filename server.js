@@ -108,6 +108,13 @@ const OPEN_API = [
   '/api/website-orders/alerts',
   '/api/warehouse',
   '/api/push/subscribe',
+  '/api/customer/register',
+  '/api/customer/login',
+  '/api/customer/profile',
+  '/api/customer/change-password',
+  '/api/customer/update-profile',
+  '/api/promo/validate',
+  '/api/website-registrations/count',
 ];
 
 function authGuard(req, res, next) {
@@ -1458,10 +1465,13 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
     const changeDue      = d.change_due != null ? parseFloat(d.change_due) : null;
     const discountAmount = d.discount_amount != null ? parseFloat(d.discount_amount) : 0;
     const deliveryAmount = d.delivery_amount != null ? parseFloat(d.delivery_amount) : 0;
+    const deliveryType   = d.delivery_type || (deliveryAmount > 0 ? 'delivery' : 'pickup');
+    const clinicAddress  = (d.clinic_address || '').trim() || null;
+    const promoCode      = (d.promo_code || '').trim() || null;
     const { rows: [sale] } = await client.query(
-      `INSERT INTO sales (total_amount, payment_method, customer_id, cashier_id, customer_name, amount_received, change_due, payment_split, discount_amount, delivery_amount)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-      [total, method, customerId, req.session?.user_id || null, customerNameFree, amtReceived, changeDue, splitJson, discountAmount, deliveryAmount]
+      `INSERT INTO sales (total_amount, payment_method, customer_id, cashier_id, customer_name, amount_received, change_due, payment_split, discount_amount, delivery_amount, delivery_type, clinic_address, promo_code)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+      [total, method, customerId, req.session?.user_id || null, customerNameFree, amtReceived, changeDue, splitJson, discountAmount, deliveryAmount, deliveryType, clinicAddress, promoCode]
     );
     const saleId = sale.id;
     const lowStockItemIds = [];
@@ -1849,20 +1859,422 @@ app.post(`${BASE}/api/customers`, async (req, res) => {
         });
       }
     }
-    await posDb.query(
-      'INSERT INTO customers (name, phone, address, installment_plan) VALUES ($1,$2,$3,$4)',
+    const { rows: [newCust] } = await posDb.query(
+      `INSERT INTO customers (name, phone, address, installment_plan, source, password_hash, points_balance)
+       VALUES ($1,$2,$3,$4,'pos','1234567',0) RETURNING id`,
       [d.name, d.phone?.trim() || '', d.address || '', d.installment_plan || '']
     );
+    const custCode = `DT-${1000 + newCust.id}`;
+    await posDb.query('UPDATE customers SET customer_code=$1 WHERE id=$2', [custCode, newCust.id]);
+
     // ── Sync new customer to website (Supabase) ──────────────────────────────
     try {
-      const { rows: [newCust] } = await posDb.query('SELECT id, name, phone FROM customers WHERE phone=$1', [d.phone?.trim() || '']);
-      if (newCust) syncCustomerToSupabase(newCust).catch(() => {});
+      const { rows: [cRow] } = await posDb.query('SELECT id, name, phone, customer_code FROM customers WHERE id=$1', [newCust.id]);
+      if (cRow) syncCustomerToSupabase(cRow).catch(() => {});
     } catch (syncErr) {
       console.error('[sync] POS→Supabase customer sync failed:', syncErr.message);
     }
     // ────────────────────────────────────────────────────────────────────────
-    res.status(201).json({ ok: true });
+    res.status(201).json({ ok: true, customer_id: newCust.id, customer_code: custCode });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── Customer Auth & Profile Routes ──────────────────────────────────────────
+
+app.post(`${BASE}/api/customer/register`, async (req, res) => {
+  const { name, phone, password, extra_phones, address, city, region } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'اسم الطبيب مطلوب' });
+  if (!phone || !phone.trim()) return res.status(400).json({ error: 'رقم الهاتف مطلوب' });
+  const cleanPhone = phone.trim().replace(/\s+/g, '');
+  if (!/^01[0125][0-9]{8}$/.test(cleanPhone)) {
+    return res.status(400).json({ error: 'يرجى إدخال رقم هاتف مصري صحيح مكون من 11 رقماً (يبدأ بـ 010 أو 011 أو 012 أو 015)' });
+  }
+  if (!password || password.length < 6) {
+    return res.status(400).json({ error: 'كلمة المرور يجب أن تكون 6 أحرف أو أرقام على الأقل' });
+  }
+
+  try {
+    const { rows: [existing] } = await posDb.query(
+      'SELECT id, name, customer_code, password_hash FROM customers WHERE phone=$1 OR extra_phones LIKE $2',
+      [cleanPhone, `%${cleanPhone}%`]
+    );
+    if (existing) {
+      return res.status(409).json({
+        error: `رقم الهاتف مسجل بالفعل باسم "${existing.name}". يمكنك تسجيل الدخول مباشرة أو طلب استعادة كلمة المرور.`
+      });
+    }
+
+    const passHash = await hashPassword(password);
+    const initialAddresses = [];
+    if (address && address.trim()) {
+      initialAddresses.push({
+        id: 'addr_' + Date.now(),
+        title: 'العيادة الرئيسية',
+        address: address.trim(),
+        city: city || 'القاهرة',
+        region: region || ''
+      });
+    }
+
+    const extraStr = Array.isArray(extra_phones) ? extra_phones.filter(Boolean).join(',') : (extra_phones || '');
+
+    const { rows: [ins] } = await posDb.query(
+      `INSERT INTO customers (name, phone, password_hash, extra_phones, addresses, source, points_balance, is_verified)
+       VALUES ($1, $2, $3, $4, $5, 'website', 0, false)
+       RETURNING id`,
+      [name.trim(), cleanPhone, passHash, extraStr, JSON.stringify(initialAddresses)]
+    );
+
+    const customerCode = `DT-${1000 + ins.id}`;
+    await posDb.query('UPDATE customers SET customer_code=$1 WHERE id=$2', [customerCode, ins.id]);
+
+    await posDb.query(
+      `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+       VALUES ($1, $2, $3, 'registration', 'تسجيل حساب جديد من المتجر الإلكتروني', $4, 'الموقع')`,
+      [ins.id, customerCode, name.trim(), cleanPhone + (extraStr ? `, ${extraStr}` : '')]
+    ).catch(() => {});
+
+    await posDb.query(
+      `INSERT INTO website_order_alerts
+         (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id, total_amount, items_count, items_summary, seen)
+       VALUES ($1, $2, $3, $4, 'new_customer', 0, 0, 'تسجيل طبيب جديد من الموقع', false)`,
+      [name.trim(), cleanPhone, city || '', address || '']
+    ).catch(() => {});
+
+    res.status(201).json({
+      ok: true,
+      customer: {
+        id: ins.id,
+        customer_code: customerCode,
+        name: name.trim(),
+        phone: cleanPhone,
+        extra_phones: extraStr,
+        addresses: initialAddresses,
+        points_balance: 0,
+        total_debt: 0
+      }
+    });
+  } catch (err) {
+    console.error('[Customer Register Error]:', err);
+    res.status(500).json({ error: err.message || 'خطأ داخلي في الخادم' });
+  }
+});
+
+app.post(`${BASE}/api/customer/login`, async (req, res) => {
+  const { identifier, password } = req.body;
+  if (!identifier || !identifier.trim()) return res.status(400).json({ error: 'يرجى إدخال رقم الهاتف أو كود العميل' });
+  if (!password) return res.status(400).json({ error: 'يرجى إدخال كلمة المرور' });
+
+  const idTrimmed = identifier.trim();
+  try {
+    const { rows: [customer] } = await posDb.query(
+      `SELECT * FROM customers 
+       WHERE LOWER(customer_code) = LOWER($1) 
+          OR phone = $1 
+          OR extra_phones LIKE $2 
+       LIMIT 1`,
+      [idTrimmed, `%${idTrimmed}%`]
+    );
+
+    if (!customer) {
+      return res.status(404).json({ error: 'لم يتم العثور على حساب بهذا الرقم أو الكود' });
+    }
+
+    let isValid = false;
+    const stored = customer.password_hash;
+    if (!stored || stored === '1234567') {
+      isValid = (password === '1234567');
+    } else if (stored === password) {
+      isValid = true;
+    } else {
+      isValid = await verifyPassword(password, stored);
+    }
+
+    if (!isValid) {
+      return res.status(401).json({ error: 'كلمة المرور غير صحيحة. يمكنك استعادة كلمة المرور عبر واتساب خدمة العملاء.' });
+    }
+
+    let addrs = [];
+    try {
+      addrs = typeof customer.addresses === 'string' ? JSON.parse(customer.addresses) : (customer.addresses || []);
+    } catch (_) { addrs = []; }
+
+    const custCode = customer.customer_code || `DT-${1000 + customer.id}`;
+
+    res.json({
+      ok: true,
+      customer: {
+        id: customer.id,
+        customer_code: custCode,
+        name: customer.name,
+        phone: customer.phone,
+        extra_phones: customer.extra_phones || '',
+        addresses: addrs,
+        points_balance: parseInt(customer.points_balance || 0, 10),
+        total_debt: parseFloat(customer.total_debt || 0)
+      }
+    });
+  } catch (err) {
+    console.error('[Customer Login Error]:', err);
+    res.status(500).json({ error: err.message || 'خطأ داخلي في الخادم' });
+  }
+});
+
+app.post(`${BASE}/api/customer/change-password`, async (req, res) => {
+  const { customer_id, phone, current_password, new_password } = req.body;
+  if (!new_password || new_password.length < 6) {
+    return res.status(400).json({ error: 'كلمة المرور الجديدة يجب أن تكون 6 أحرف أو أرقام على الأقل' });
+  }
+  try {
+    let customer = null;
+    if (customer_id) {
+      const { rows } = await posDb.query('SELECT * FROM customers WHERE id=$1', [customer_id]);
+      customer = rows[0];
+    } else if (phone) {
+      const { rows } = await posDb.query('SELECT * FROM customers WHERE phone=$1', [phone.trim()]);
+      customer = rows[0];
+    }
+    if (!customer) return res.status(404).json({ error: 'العميل غير موجود' });
+
+    let isValid = false;
+    const stored = customer.password_hash;
+    if (!stored || stored === '1234567') {
+      isValid = (current_password === '1234567');
+    } else if (stored === current_password) {
+      isValid = true;
+    } else {
+      isValid = await verifyPassword(current_password, stored);
+    }
+    if (!isValid) return res.status(401).json({ error: 'كلمة المرور الحالية غير صحيحة' });
+
+    const newHash = await hashPassword(new_password);
+    await posDb.query('UPDATE customers SET password_hash=$1 WHERE id=$2', [newHash, customer.id]);
+
+    await posDb.query(
+      `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+       VALUES ($1, $2, $3, 'change_password', 'تغيير كلمة المرور من حساب الطبيب بالموقع', $4, 'الموقع')`,
+      [customer.id, customer.customer_code || `DT-${1000 + customer.id}`, customer.name, customer.phone]
+    ).catch(() => {});
+
+    res.json({ ok: true, message: 'تم تغيير كلمة المرور بنجاح' });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+app.post(`${BASE}/api/customer/reset-password-admin`, async (req, res) => {
+  const { customer_id } = req.body;
+  if (!customer_id) return res.status(400).json({ error: 'معرف العميل مطلوب' });
+  try {
+    const { rows: [customer] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [customer_id]);
+    if (!customer) return res.status(404).json({ error: 'العميل غير موجود' });
+
+    await posDb.query("UPDATE customers SET password_hash='1234567' WHERE id=$1", [customer_id]);
+
+    const adminName = req.session?.username || 'مدير النظام';
+    await posDb.query(
+      `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+       VALUES ($1, $2, $3, 'reset_password_admin', 'تم تصفير كلمة المرور إلى 1234567 بواسطة الإدارة', $4, $5)`,
+      [customer.id, customer.customer_code || `DT-${1000 + customer.id}`, customer.name, customer.phone, adminName]
+    ).catch(() => {});
+
+    res.json({ ok: true, message: 'تم تصفير كلمة المرور إلى 1234567 بنجاح' });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+app.post(`${BASE}/api/customer/update-profile`, async (req, res) => {
+  const { customer_id, phone, new_primary_phone, extra_phones, addresses } = req.body;
+  try {
+    let customer = null;
+    if (customer_id) {
+      const { rows } = await posDb.query('SELECT * FROM customers WHERE id=$1', [customer_id]);
+      customer = rows[0];
+    } else if (phone) {
+      const { rows } = await posDb.query('SELECT * FROM customers WHERE phone=$1', [phone.trim()]);
+      customer = rows[0];
+    }
+    if (!customer) return res.status(404).json({ error: 'العميل غير موجود' });
+
+    const changes = [];
+    let updatedPrimary = customer.phone;
+    if (new_primary_phone && new_primary_phone.trim() !== customer.phone) {
+      const cleanNew = new_primary_phone.trim().replace(/\s+/g, '');
+      if (!/^01[0125][0-9]{8}$/.test(cleanNew)) {
+        return res.status(400).json({ error: 'رقم الهاتف الأساسي الجديد غير صحيح (يجب أن يكون 11 رقماً يبدأ بـ 010/011/012/015)' });
+      }
+      changes.push(`تعديل الرقم الأساسي من ${customer.phone} إلى ${cleanNew}`);
+      updatedPrimary = cleanNew;
+    }
+
+    let updatedExtra = customer.extra_phones || '';
+    if (extra_phones !== undefined) {
+      const extraList = Array.isArray(extra_phones) ? extra_phones.filter(Boolean) : extra_phones.split(',').map(s => s.trim()).filter(Boolean);
+      if (extraList.length > 3) {
+        return res.status(400).json({ error: 'الحد الأقصى للأرقام الإضافية هو 3 أرقام فقط (إجمالي 4 أرقام مع الأساسي)' });
+      }
+      const newExtraStr = extraList.join(',');
+      if (newExtraStr !== (customer.extra_phones || '')) {
+        changes.push(`تعديل قائمة الأرقام الإضافية إلى: ${newExtraStr || 'لا توجد أرقام إضافية'}`);
+        updatedExtra = newExtraStr;
+      }
+    }
+
+    let updatedAddresses = customer.addresses;
+    if (addresses !== undefined) {
+      updatedAddresses = typeof addresses === 'string' ? addresses : JSON.stringify(addresses);
+      changes.push('تحديث قائمة عناوين العيادات');
+    }
+
+    await posDb.query(
+      'UPDATE customers SET phone=$1, extra_phones=$2, addresses=$3 WHERE id=$4',
+      [updatedPrimary, updatedExtra, updatedAddresses, customer.id]
+    );
+
+    const allPhonesStr = [updatedPrimary, updatedExtra].filter(Boolean).join(', ');
+    if (changes.length > 0) {
+      await posDb.query(
+        `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+         VALUES ($1, $2, $3, 'update_profile', $4, $5, 'الموقع')`,
+        [customer.id, customer.customer_code || `DT-${1000 + customer.id}`, customer.name, changes.join(' | '), allPhonesStr]
+      ).catch(() => {});
+    }
+
+    let parsedAddrs = [];
+    try { parsedAddrs = JSON.parse(updatedAddresses || '[]'); } catch (_) { parsedAddrs = []; }
+
+    res.json({
+      ok: true,
+      customer: {
+        id: customer.id,
+        customer_code: customer.customer_code || `DT-${1000 + customer.id}`,
+        name: customer.name,
+        phone: updatedPrimary,
+        extra_phones: updatedExtra,
+        addresses: parsedAddrs,
+        points_balance: parseInt(customer.points_balance || 0, 10),
+        total_debt: parseFloat(customer.total_debt || 0)
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+app.get(`${BASE}/api/customer/profile`, async (req, res) => {
+  const { identifier } = req.query;
+  if (!identifier) return res.status(400).json({ error: 'المعرف مطلوب' });
+  try {
+    const { rows: [customer] } = await posDb.query(
+      `SELECT * FROM customers 
+       WHERE LOWER(customer_code)=LOWER($1) OR phone=$1 OR extra_phones LIKE $2 LIMIT 1`,
+      [identifier.trim(), `%${identifier.trim()}%`]
+    );
+    if (!customer) return res.status(404).json({ error: 'العميل غير موجود' });
+
+    let addrs = [];
+    try { addrs = typeof customer.addresses === 'string' ? JSON.parse(customer.addresses) : (customer.addresses || []); } catch (_) { addrs = []; }
+
+    const { rows: sales } = await posDb.query(
+      `SELECT id, total_amount, payment_method, date, delivery_type, clinic_address, promo_code, discount_amount, delivery_amount
+       FROM sales WHERE customer_id=$1 OR (dentrust_order_id IS NOT NULL AND customer_name=$2) ORDER BY id DESC LIMIT 50`,
+      [customer.id, customer.name]
+    );
+
+    res.json({
+      ok: true,
+      customer: {
+        id: customer.id,
+        customer_code: customer.customer_code || `DT-${1000 + customer.id}`,
+        name: customer.name,
+        phone: customer.phone,
+        extra_phones: customer.extra_phones || '',
+        addresses: addrs,
+        points_balance: parseInt(customer.points_balance || 0, 10),
+        total_debt: parseFloat(customer.total_debt || 0),
+        orders: sales
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+app.post(`${BASE}/api/promo/validate`, async (req, res) => {
+  const { code, total_amount } = req.body;
+  if (!code || !code.trim()) return res.status(400).json({ error: 'كود الخصم مطلوب' });
+  const cleanCode = code.trim().toUpperCase();
+  const orderTotal = parseFloat(total_amount || 0);
+  try {
+    const { rows: [promo] } = await posDb.query(
+      'SELECT * FROM promo_codes WHERE UPPER(code)=$1 AND is_active=true LIMIT 1',
+      [cleanCode]
+    );
+    if (!promo) return res.status(404).json({ error: 'كود الخصم غير صالح أو منتهي الصلاحية' });
+
+    const minOrder = parseFloat(promo.min_order || 0);
+    if (minOrder > 0 && orderTotal < minOrder) {
+      return res.status(400).json({ error: `هذا الكوبون يتطلب حداً أدنى للطلب بقيمة ${minOrder} ج.م` });
+    }
+
+    let discount = 0;
+    if (promo.discount_type === 'percentage') {
+      discount = (orderTotal * parseFloat(promo.discount_value)) / 100;
+    } else {
+      discount = Math.min(orderTotal, parseFloat(promo.discount_value));
+    }
+    discount = Math.round(discount * 100) / 100;
+
+    res.json({
+      ok: true,
+      promo: {
+        code: promo.code,
+        discount_type: promo.discount_type,
+        discount_value: parseFloat(promo.discount_value),
+        discount_amount: discount
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+app.get(`${BASE}/api/customer-audit-logs`, async (req, res) => {
+  try {
+    const { rows } = await posDb.query('SELECT * FROM customer_audit_logs ORDER BY id DESC LIMIT 300');
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/customer-audit-logs`, (req, res) => {
+  if (!hasPerm(req, 'customers')) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'customer_audit_logs');
+});
+
+app.get(`${BASE}/api/website-registrations`, async (req, res) => {
+  try {
+    const { rows } = await posDb.query(
+      `SELECT c.*, 
+        COALESCE((SELECT COUNT(*) FROM sales WHERE customer_id=c.id), 0) AS orders_count
+       FROM customers c 
+       WHERE c.source='website' 
+       ORDER BY c.id DESC LIMIT 300`
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/website-registrations/count`, async (req, res) => {
+  try {
+    const { rows: [row] } = await posDb.query("SELECT COUNT(*) as count FROM customers WHERE source='website'");
+    res.json({ count: parseInt(row?.count || 0, 10) });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/website-registrations`, (req, res) => {
+  if (!hasPerm(req, 'customers')) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'website_registrations');
 });
 
 app.get(`${BASE}/api/customers/:cid/orders`, async (req, res) => {
