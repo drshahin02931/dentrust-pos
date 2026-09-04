@@ -4373,7 +4373,7 @@ app.get('/api/ai/test', async (req, res) => {
 
 
 // ── Google Gemini Integration ──────────────────────────────────────────────────
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-2.5-flash', 'gemini-3.5-flash', 'gemma-4-31b-it'];
 
 function buildGeminiPayload(messages = [], systemPrompt = '', maxTokens = 1000) {
   const contents = [];
@@ -4417,7 +4417,6 @@ function buildGeminiPayload(messages = [], systemPrompt = '', maxTokens = 1000) 
     generationConfig: {
       temperature: 0.7,
       maxOutputTokens: Math.min(Number(maxTokens) || 1000, 2048),
-      thinkingConfig: { thinkingBudget: 0 }
     }
   };
 
@@ -4428,6 +4427,53 @@ function buildGeminiPayload(messages = [], systemPrompt = '', maxTokens = 1000) 
   }
 
   return payload;
+}
+
+async function callGeminiGenerate(geminiBody, timeout = 25000) {
+  if (!GEMINI_API_KEY) return null;
+  for (const m of GEMINI_MODELS) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${GEMINI_API_KEY}`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(geminiBody),
+        signal: AbortSignal.timeout(timeout),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
+        return data.candidates[0].content.parts[0].text;
+      }
+      console.warn(`[Gemini] model ${m} returned:`, resp.status, data.error?.message || 'no text');
+    } catch (e) {
+      console.warn(`[Gemini] model ${m} failed:`, e.message);
+    }
+  }
+  return null;
+}
+
+async function callGeminiStream(geminiBody, res, timeout = 35000) {
+  if (!GEMINI_API_KEY) return false;
+  for (const m of GEMINI_MODELS) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(geminiBody),
+        signal: AbortSignal.timeout(timeout),
+      });
+      if (resp.ok) {
+        await pipeGeminiStream(resp, res);
+        return true;
+      }
+      const errText = await resp.text().catch(() => '');
+      console.warn(`[Gemini Stream] model ${m} status ${resp.status}:`, errText.slice(0, 150));
+    } catch (e) {
+      console.warn(`[Gemini Stream] model ${m} failed:`, e.message);
+    }
+  }
+  return false;
 }
 
 async function pipeGeminiStream(geminiResp, res) {
@@ -4487,16 +4533,10 @@ app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
 
     if (GEMINI_API_KEY) {
       const geminiBody = buildGeminiPayload(messages, combinedSystem, max_tokens);
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(geminiBody),
-        signal: AbortSignal.timeout(25000),
-      });
-      const data = await resp.json();
-      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      return res.json({ choices: [{ message: { content: reply } }] });
+      const reply = await callGeminiGenerate(geminiBody, 25000);
+      if (reply) {
+        return res.json({ choices: [{ message: { content: reply } }] });
+      }
     }
 
     if (!OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured.' });
@@ -4520,16 +4560,10 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
     const { messages = [], max_tokens = 800 } = req.body;
     if (GEMINI_API_KEY) {
       const geminiBody = buildGeminiPayload(messages, 'أنت مستشار المظهر والمقاسات الطبي لمتجر DenTrust. انظر إلى الصورة وقدم نصائح للمقاس وتنسيق السكراب والبالطو الطبي المناسب.', max_tokens);
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(geminiBody),
-        signal: AbortSignal.timeout(30000),
-      });
-      const data = await resp.json();
-      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      return res.json({ choices: [{ message: { content: reply } }] });
+      const reply = await callGeminiGenerate(geminiBody, 30000);
+      if (reply) {
+        return res.json({ choices: [{ message: { content: reply } }] });
+      }
     }
 
     if (!OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured.' });
@@ -4548,7 +4582,6 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
   }
 });
 
-
 // POST /api/ai/fashion-chat-stream  (SSE streaming)
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
   try {
@@ -4558,19 +4591,14 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
 
     if (GEMINI_API_KEY) {
       const geminiBody = buildGeminiPayload(messages, combinedSystem, max_tokens);
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(geminiBody),
-        signal: AbortSignal.timeout(35000),
-      });
-      return pipeGeminiStream(resp, res);
+      const ok = await callGeminiStream(geminiBody, res, 35000);
+      if (ok) return;
     }
 
     if (!OPENROUTER_KEY) {
       res.setHeader('Content-Type', 'text/event-stream');
-      res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'عذرًا، الذكاء الاصطناعي غير مهيّأ.' }, finish_reason: 'stop' }] }) + '\r\n\r\n');
+      res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'عذرًا، حدث خطأ أثناء الاتصال بالذكاء الاصطناعي — يرجى المحاولة بعد لحظات.' }, finish_reason: 'stop' }] }) + '\r\n\r\n');
+      res.write('data: [DONE]\r\n\r\n');
       return res.end();
     }
     const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
@@ -4600,25 +4628,14 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
     if (GEMINI_API_KEY) {
       const geminiBody = buildGeminiPayload(messages, combinedSystem, max_tokens);
       if (stream) {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
-        const resp = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(geminiBody),
-          signal: AbortSignal.timeout(35000),
-        });
-        return pipeGeminiStream(resp, res);
+        const ok = await callGeminiStream(geminiBody, res, 35000);
+        if (ok) return;
+      } else {
+        const reply = await callGeminiGenerate(geminiBody, 25000);
+        if (reply) {
+          return res.json({ choices: [{ message: { content: reply } }] });
+        }
       }
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(geminiBody),
-        signal: AbortSignal.timeout(25000),
-      });
-      const data = await resp.json();
-      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      return res.json({ choices: [{ message: { content: reply } }] });
     }
 
     if (!OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured.' });
