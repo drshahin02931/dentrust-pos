@@ -4373,7 +4373,7 @@ app.get('/api/ai/test', async (req, res) => {
 
 
 // ── Google Gemini Integration ──────────────────────────────────────────────────
-const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-2.5-flash', 'gemini-3.5-flash', 'gemma-4-31b-it'];
+const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-2.5-flash', 'gemma-4-31b-it'];
 
 function buildGeminiPayload(messages = [], systemPrompt = '', maxTokens = 1000) {
   const contents = [];
@@ -4481,6 +4481,9 @@ async function pipeGeminiStream(geminiResp, res) {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('X-Accel-Buffering', 'no');
   res.setHeader('Connection', 'keep-alive');
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
 
   if (!geminiResp.ok) {
     const errText = await geminiResp.text().catch(() => '');
@@ -4512,6 +4515,9 @@ async function pipeGeminiStream(geminiResp, res) {
           if (text) {
             const chunk = JSON.stringify({ choices: [{ delta: { content: text }, finish_reason: null }] });
             res.write(`data: ${chunk}\r\n\r\n`);
+            if (typeof res.flush === 'function') {
+              res.flush();
+            }
           }
         } catch (_) {}
       }
