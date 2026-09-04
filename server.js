@@ -4352,14 +4352,19 @@ function findRelevantStoreProducts(queryText, allProducts, limit = 5) {
 function sanitizeSystemPromptAndMessages(messages = [], matchingProducts = []) {
   if (!Array.isArray(messages)) return [];
   return messages.map(m => {
-    if (m.role === 'system' && typeof m.content === 'string' && m.content.includes('DENTRUST PRODUCT CATALOG (live inventory):')) {
-      let clean = m.content.replace(/DENTRUST PRODUCT CATALOG \(live inventory\):[\s\S]*?(?=RULES:|$)/, () => {
-        if (!matchingProducts.length) {
-          return 'DENTRUST PRODUCT CATALOG: (Answer clinical/procedural queries directly as an expert dental consultant. If products are asked for, recommend them).\n\n';
-        }
-        const lines = matchingProducts.map(p => `- ID:${p.id} | "${p.product_name || p.name}" | Price: ${p.sale_price || p.price} EGP`).join('\n');
-        return `DENTRUST MATCHING PRODUCTS IN STORE:\n${lines}\n\n`;
-      });
+    if (m.role === 'system' && typeof m.content === 'string') {
+      let clean = m.content;
+      if (clean.includes('DENTRUST PRODUCT CATALOG (live inventory):')) {
+        clean = clean.replace(/DENTRUST PRODUCT CATALOG \(live inventory\):[\s\S]*?(?=RULES:|$)/, () => {
+          if (!matchingProducts.length) {
+            return 'DENTRUST PRODUCT CATALOG:\n(No specific products matched. Answer clinical/procedural queries directly as an expert dental consultant with high scientific accuracy. If the doctor asks for a recommendation, recommend suitable materials and check store availability).\n\n';
+          }
+          const lines = matchingProducts.map(p => `- ID:${p.id} | "${p.product_name || p.name}" | Price: ${p.sale_price || p.price} EGP`).join('\n');
+          return `DENTRUST MATCHING PRODUCTS IN STORE (You can mention these exact products with [[P:ID]]):\n${lines}\n\n`;
+        });
+      }
+      // Add strong clinical persona and forbid inventing random [[P:X]]
+      clean = 'You are "DenBot" — an elite Dental Clinical Consultant and product advisor for DenTrust Dental Supplies in Egypt. You speak with licensed dentists, specialists, and dental students. Always explain dental procedures, materials, indications, shade selection, layering, and clinical properties (polishability, bond strength, shrinkage) with authoritative scientific depth and professional medical Arabic/English. Never invent fake product IDs (only use [[P:ID]] if the ID is listed above).\n\n' + clean;
       return { ...m, content: clean };
     }
     return m;
@@ -4589,9 +4594,9 @@ async function pipeGroqStream(groqResp, res, providerLabel = 'Groq') {
   res.end();
 }
 
-// ── Groq Ultra-Fast AI Integration (300ms response time) ───────────────────────
+// ── Groq Ultra-Fast AI Integration (OpenAI GPT Flagship Models) ───────────────
 const GROQ_KEY = process.env.GROQ_API_KEY || Buffer.from('67736b5f644874674f65376931314544343975597270746d5747647962334659694e54716d7843517374574e724e7637344d515378724f49', 'hex').toString('utf8');
-const GROQ_MODELS = ['qwen/qwen3.8-27b', 'allam-2-7b', 'openai/gpt-oss-120b'];
+const GROQ_MODELS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'];
 const _groqCooldowns = new Map();
 
 function getActiveGroqModels() {
