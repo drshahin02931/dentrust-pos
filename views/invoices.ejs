@@ -309,11 +309,16 @@ function resetFilters() {
 }
 
 async function viewInvoice(id) {
-  const res = await fetch(`${BASE}/api/invoices/${id}`);
-  const data = await res.json();
-  const inv = data.invoice; const items = data.items; const returns = data.returns || [];
+  try {
+    const res = await fetch(`${BASE}/api/invoices/${id}`);
+    const data = await res.json();
+    if (!res.ok || !data.invoice) {
+      alert(data.error || 'تعذر تحميل بيانات الفاتورة');
+      return;
+    }
+    const inv = data.invoice; const items = data.items || []; const returns = data.returns || [];
 
-  const isOnlineInv = inv.payment_method === 'online';
+    const isOnlineInv = inv.payment_method === 'online';
   document.getElementById("modalTitle").innerHTML = `فاتورة رقم #${String(inv.id).padStart(5,'0')} ${isOnlineInv ? '<span class="text-sm font-bold px-2.5 py-1 rounded-full bg-teal-100 text-teal-700">🌐 أونلاين</span>' : ''}`;
   const payBadge = `<span class="text-xs font-medium px-2.5 py-1 rounded-full ${PAY_COLORS[inv.payment_method]||'bg-gray-100 text-gray-600'}">${PAY_LABELS[inv.payment_method]||inv.payment_method}</span>`;
 
@@ -423,7 +428,10 @@ async function viewInvoice(id) {
     ${IS_MGR ? `<button onclick="closeDetail(); voidInvoice(${inv.id})" class="flex-1 bg-red-600 text-white font-semibold py-2.5 rounded-xl hover:bg-red-700">🗑 حذف نهائي</button>` : ''}
     <button onclick="closeDetail()" class="px-5 bg-gray-50 text-gray-600 font-semibold py-2.5 rounded-xl hover:bg-gray-100 border">إغلاق</button>
   `;
-  document.getElementById("detailModal").classList.remove("hidden");
+    document.getElementById("detailModal").classList.remove("hidden");
+  } catch (err) {
+    alert('تعذر تحميل بيانات الفاتورة: ' + (err.message || 'خطأ غير متوقع'));
+  }
 }
 
 function closeDetail() { document.getElementById("detailModal").classList.add("hidden"); }
