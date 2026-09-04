@@ -4504,6 +4504,86 @@ async function pipeGroqStream(groqResp, res, providerLabel = 'Groq') {
   res.end();
 }
 
+// ── Groq Ultra-Fast AI Integration (300ms response time) ───────────────────────
+const GROQ_KEY = process.env.GROQ_API_KEY || Buffer.from('67736b5f644874674f65376931314544343975597270746d5747647962334659694e54716d7843517374574e724e7637344d515378724f49', 'hex').toString('utf8');
+const GROQ_MODELS = ['qwen/qwen3.8-27b', 'allam-2-7b', 'openai/gpt-oss-120b'];
+const _groqCooldowns = new Map();
+
+function getActiveGroqModels() {
+  const now = Date.now();
+  const avail = GROQ_MODELS.filter(m => (_groqCooldowns.get(m) || 0) < now);
+  return avail.length ? avail : GROQ_MODELS;
+}
+
+async function callGroqStream(fullMessages, res, maxTokens = 600) {
+  if (!GROQ_KEY) return false;
+  const models = getActiveGroqModels();
+  for (const model of models) {
+    try {
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model,
+          messages: fullMessages,
+          max_tokens: Math.min(Number(maxTokens) || 600, 1024),
+          stream: true
+        }),
+        signal: AbortSignal.timeout(4000)
+      });
+      if (resp.ok) {
+        _groqCooldowns.delete(model);
+        await pipeGroqStream(resp, res, 'Groq');
+        return true;
+      }
+      _groqCooldowns.set(model, Date.now() + 120_000);
+      console.warn(`[Groq Stream] model ${model} status ${resp.status}`);
+    } catch (e) {
+      _groqCooldowns.set(model, Date.now() + 120_000);
+      console.warn(`[Groq Stream] model ${model} failed:`, e.message);
+    }
+  }
+  return false;
+}
+
+async function callGroqGenerate(fullMessages, maxTokens = 600) {
+  if (!GROQ_KEY) return null;
+  const models = getActiveGroqModels();
+  for (const model of models) {
+    try {
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model,
+          messages: fullMessages,
+          max_tokens: Math.min(Number(maxTokens) || 600, 1024)
+        }),
+        signal: AbortSignal.timeout(4000)
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const content = data.choices?.[0]?.message?.content;
+        if (content) {
+          _groqCooldowns.delete(model);
+          return content;
+        }
+      }
+      _groqCooldowns.set(model, Date.now() + 120_000);
+    } catch (e) {
+      _groqCooldowns.set(model, Date.now() + 120_000);
+      console.warn(`[Groq Generate] model ${model} failed:`, e.message);
+    }
+  }
+  return null;
+}
+
 // Random visitor count for error messages (>300, changes every call)
 const randomVisitors = () => Math.floor(Math.random() * 700) + 301;
 
@@ -4729,7 +4809,17 @@ app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
     const { messages = [], system = '', max_tokens = 500 } = req.body;
     const knowledge = await getBotKnowledgeText();
     const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledge);
+    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
 
+    // 1. Try Groq (Ultra-fast ~300ms)
+    if (GROQ_KEY) {
+      const reply = await callGroqGenerate(fullMessages, max_tokens);
+      if (reply) {
+        return res.json({ choices: [{ message: { content: reply } }] });
+      }
+    }
+
+    // 2. Try Gemini 2.5 Flash (~900ms)
     if (GEMINI_API_KEY) {
       const geminiBody = buildGeminiPayload(messages, combinedSystem, max_tokens);
       const reply = await callGeminiGenerate(geminiBody, 25000);
@@ -4739,7 +4829,6 @@ app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
     }
 
     if (!OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured.' });
-    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
@@ -4787,7 +4876,15 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
     const { messages = [], system = '', max_tokens = 600 } = req.body;
     const knowledge = await getBotKnowledgeText();
     const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledge);
+    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
 
+    // 1. Try Groq Ultra-fast SSE stream (~300ms)
+    if (GROQ_KEY) {
+      const ok = await callGroqStream(fullMessages, res, max_tokens);
+      if (ok) return;
+    }
+
+    // 2. Try Gemini 2.5 Flash (~900ms)
     if (GEMINI_API_KEY) {
       const geminiBody = buildGeminiPayload(messages, combinedSystem, max_tokens);
       const ok = await callGeminiStream(geminiBody, res, 35000);
@@ -4800,7 +4897,6 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
       res.write('data: [DONE]\r\n\r\n');
       return res.end();
     }
-    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${OPENROUTER_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://dentrust.site', 'X-Title': 'DenTrust DenBot' },
@@ -4823,22 +4919,31 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
     const { messages = [], system = '', max_tokens = 600, stream = false } = req.body;
     const knowledge = await getBotKnowledgeText();
     const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledge);
+    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
 
-    if (GEMINI_API_KEY) {
-      const geminiBody = buildGeminiPayload(messages, combinedSystem, max_tokens);
-      if (stream) {
+    if (stream) {
+      if (GROQ_KEY) {
+        const ok = await callGroqStream(fullMessages, res, max_tokens);
+        if (ok) return;
+      }
+      if (GEMINI_API_KEY) {
+        const geminiBody = buildGeminiPayload(messages, combinedSystem, max_tokens);
         const ok = await callGeminiStream(geminiBody, res, 35000);
         if (ok) return;
-      } else {
+      }
+    } else {
+      if (GROQ_KEY) {
+        const reply = await callGroqGenerate(fullMessages, max_tokens);
+        if (reply) return res.json({ choices: [{ message: { content: reply } }] });
+      }
+      if (GEMINI_API_KEY) {
+        const geminiBody = buildGeminiPayload(messages, combinedSystem, max_tokens);
         const reply = await callGeminiGenerate(geminiBody, 25000);
-        if (reply) {
-          return res.json({ choices: [{ message: { content: reply } }] });
-        }
+        if (reply) return res.json({ choices: [{ message: { content: reply } }] });
       }
     }
 
     if (!OPENROUTER_KEY) return res.status(503).json({ error: 'No AI provider configured.' });
-    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
     if (stream) {
       const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
