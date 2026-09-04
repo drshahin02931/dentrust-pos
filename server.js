@@ -312,8 +312,8 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
               COALESCE(NULLIF(c.phone,''), woa.customer_phone) AS customer_phone,
               COALESCE(NULLIF(c.address,''), woa.customer_address) AS customer_address,
               woa.customer_city,
-              COALESCE(s.delivery_amount, woa.delivery_amount, 0) AS delivery_amount,
-              COALESCE(s.discount_amount, woa.discount_amount, 0) AS discount_amount,
+              COALESCE(NULLIF(s.delivery_amount, 0), woa.delivery_amount, 0) AS delivery_amount,
+              COALESCE(NULLIF(s.discount_amount, 0), woa.discount_amount, 0) AS discount_amount,
               woa.promo_code,
               u.username AS cashier_name
        FROM sales s
@@ -346,6 +346,12 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
     const totalReturned = Math.round(parseFloat(retRow.total_returned || 0) * 100) / 100;
     const netTotal = Math.max(0, Math.round((parseFloat(sale.total_amount || 0) - totalReturned) * 100) / 100);
     
+    // Auto-detect delivery fee if missing on online orders
+    const itemsTotal = items.reduce((s, i) => s + (parseFloat(i.unit_price || 0) * parseInt(i.net_qty != null ? i.net_qty : (i.quantity || 0))), 0);
+    if ((!sale.delivery_amount || parseFloat(sale.delivery_amount) === 0) && (sale.source === 'online' || sale.dentrust_order_id) && netTotal > itemsTotal) {
+      sale.delivery_amount = Math.max(0, Math.round((netTotal + parseFloat(sale.discount_amount || 0) - itemsTotal) * 100) / 100);
+    }
+
     let customer = null;
     if (sale.customer_name || sale.customer_phone || sale.customer_address || sale.customer_city) {
       let fullAddr = (sale.customer_address || '').trim();
@@ -2297,8 +2303,8 @@ app.get(`${BASE}/api/invoices/:sid`, async (req, res) => {
               COALESCE(NULLIF(c.phone,''), woa.customer_phone) AS customer_phone,
               COALESCE(NULLIF(c.address,''), woa.customer_address) AS customer_address,
               COALESCE(NULLIF(c.city,''), woa.customer_city) AS customer_city,
-              COALESCE(s.delivery_amount, woa.delivery_amount, 0) AS delivery_amount,
-              COALESCE(s.discount_amount, woa.discount_amount, 0) AS discount_amount,
+              COALESCE(NULLIF(s.delivery_amount, 0), woa.delivery_amount, 0) AS delivery_amount,
+              COALESCE(NULLIF(s.discount_amount, 0), woa.discount_amount, 0) AS discount_amount,
               woa.promo_code
        FROM sales s 
        LEFT JOIN customers c ON s.customer_id = c.id 
@@ -2324,6 +2330,14 @@ app.get(`${BASE}/api/invoices/:sid`, async (req, res) => {
     const returnStatus = (totalRemaining === 0 && totalSold > 0) ? 2 : (totalRemaining < totalSold ? 1 : 0);
     inv.return_status = returnStatus;
     inv.profit = items.reduce((s, i) => s + (parseFloat(i.unit_price||0) - parseFloat(i.snapshot_purchase_price||0)) * parseInt(i.quantity||0, 10), 0);
+
+    // Auto-detect delivery fee if missing on online orders
+    const itemsTotal = items.reduce((s, i) => s + (parseFloat(i.unit_price || 0) * parseInt(i.remaining_qty != null ? i.remaining_qty : (i.quantity || 0))), 0);
+    const netTotal = Math.max(0, Math.round((parseFloat(inv.total_amount || 0) - parseFloat(inv.total_refunded || 0)) * 100) / 100);
+    if ((!inv.delivery_amount || parseFloat(inv.delivery_amount) === 0) && (inv.source === 'online' || inv.dentrust_order_id) && netTotal > itemsTotal) {
+      inv.delivery_amount = Math.max(0, Math.round((netTotal + parseFloat(inv.discount_amount || 0) - itemsTotal) * 100) / 100);
+    }
+
     const { rows: returns } = await posDb.query(
       `SELECT r.*, u.username AS processed_by_name FROM returns r
        LEFT JOIN users u ON u.id = r.processed_by WHERE r.sale_id=$1 ORDER BY r.date`, [sid]
