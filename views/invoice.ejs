@@ -46,37 +46,54 @@ function payMethodEn(m) {
   <title><%= showAr ? 'فاتورة #'+sale.id : 'Invoice #'+sale.id %></title>
   <style>
     @page { size: <%= (st && st.receipt_width) || '57mm' %> auto; margin: 3mm 7.5mm; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; color: #000; }
     body {
       width: <%= (st && st.receipt_width) || '57mm' %>;
       font-family: 'Arial', 'Tahoma', 'Segoe UI', sans-serif;
       font-size: 11px;
       color: #000;
       background: #fff;
+      font-weight: 700;
     }
     @media screen {
-      body { max-width: <%= (st && st.receipt_width) || '57mm' %>; margin: 20px auto; border: 1px dashed #ccc; padding: 8px; }
+      body { max-width: <%= (st && st.receipt_width) || '57mm' %>; margin: 20px auto; border: 1px dashed #000; padding: 8px; }
     }
     @media print {
-      body { border: none; padding: 0; margin: 0; }
+      .no-print { display: none !important; }
+      body { border: none; padding: 0; margin: 0; color: #000 !important; background: #fff !important; font-weight: 800; }
+      * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color: #000 !important;
+        border-color: #000 !important;
+        text-shadow: none !important;
+      }
+      tbody td { border-bottom: 1px dotted #000 !important; font-weight: 700; color: #000 !important; }
+      .divider { border-top: 1px dashed #000 !important; }
+      .store-name { font-weight: 900 !important; color: #000 !important; }
+      .total-main { border-top: 2px solid #000 !important; border-bottom: 2px solid #000 !important; font-weight: 900 !important; color: #000 !important; }
+      .sub-row { font-weight: 700 !important; color: #000 !important; }
+      span, div, p, th, td, b, strong { color: #000 !important; }
     }
     .center { text-align: center; }
     .right  { text-align: right; }
     .left   { text-align: left; }
     .bold   { font-weight: bold; }
     .divider { border: none; border-top: 1px dashed #000; margin: 5px 0; }
-    .row { display: flex; justify-content: space-between; align-items: baseline; margin: 2.5px 0; font-size: 11px; }
-    .store-name { font-size: 17px; font-weight: 900; letter-spacing: 0.5px; margin: 3px 0 1px; }
-    .store-sub  { font-size: 10px; margin: 1px 0; }
-    .inv-title { font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; margin: 4px 0; }
+    .row { display: flex; justify-content: space-between; align-items: baseline; margin: 2.5px 0; font-size: 11px; color: #000; }
+    .store-name { font-size: 17px; font-weight: 900; letter-spacing: 0.5px; margin: 3px 0 1px; color: #000; }
+    .store-sub  { font-size: 10px; margin: 1px 0; color: #000; font-weight: 600; }
+    .inv-title { font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; margin: 4px 0; color: #000; }
     table { width: 100%; border-collapse: collapse; margin: 2px 0; }
     thead th {
       font-size: 10px; font-weight: bold; padding: 3px 2px;
       border-bottom: 1px solid #000; border-top: 1px solid #000;
+      color: #000;
     }
     tbody td {
       font-size: 11px; padding: 3px 2px; vertical-align: top;
       border-bottom: 1px dotted #000; font-weight: 700;
+      color: #000;
     }
     tbody tr:last-child td { border-bottom: none; }
     .total-section { margin-top: 4px; }
@@ -84,34 +101,28 @@ function payMethodEn(m) {
       display: flex; justify-content: space-between;
       font-size: 14px; font-weight: 900; padding: 4px 0;
       border-top: 2px solid #000; border-bottom: 2px solid #000; margin: 4px 0;
+      color: #000;
     }
-    .sub-row { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; }
+    .sub-row { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; color: #000; }
     .credit-stamp {
       border: 2px solid #000; border-radius: 4px; padding: 3px 8px;
       font-size: 12px; font-weight: bold; text-align: center; margin: 5px 0; letter-spacing: 1px;
+      color: #000;
     }
-    .balance-box { border: 1px dashed #000; border-radius: 3px; padding: 4px 6px; margin: 3px 0; }
+    .balance-box { border: 1px dashed #000; border-radius: 3px; padding: 4px 6px; margin: 3px 0; color: #000; }
     .balance-total {
       display: flex; justify-content: space-between;
       font-size: 13px; font-weight: bold;
       border-top: 1px dashed #000; padding-top: 3px; margin-top: 3px;
+      color: #000;
     }
     .footer-text {
       white-space: pre-line; text-align: center; font-size: 10px; line-height: 1.6; margin-top: 5px;
+      color: #000; font-weight: 600;
     }
     .logo-box { margin: 0 auto 4px; text-align: center; }
     .logo-box img { max-width: 60px; max-height: 60px; object-fit: contain; }
     .no-print { }
-    @media print {
-      .no-print { display: none !important; }
-      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color: #000 !important; }
-      body { font-weight: 800; background: #fff !important; }
-      tbody td { border-bottom: 1px dotted #000 !important; font-weight: 700; }
-      .divider { border-top: 1px dashed #000 !important; }
-      .store-name { font-weight: 900 !important; }
-      .total-main { border-top: 2px solid #000 !important; border-bottom: 2px solid #000 !important; font-weight: 900 !important; }
-      .sub-row { font-weight: 700 !important; }
-    }
   </style>
 </head>
 <body>
@@ -150,7 +161,7 @@ function payMethodEn(m) {
   <% if (showAr) { %>
   <div class="row"><span>رقم الفاتورة</span><span class="bold">#<%= sale.id %></span></div>
   <% if (sale.dentrust_order_id || sale.source === 'online' || sale.source === 'website') { %>
-  <div class="row"><span>مصدر الطلب</span><span class="bold" style="color:#0284c7;">🌐 طلب موقع <%= sale.dentrust_order_id ? ('#' + sale.dentrust_order_id) : '' %></span></div>
+  <div class="row"><span>مصدر الطلب</span><span class="bold" style="color:#000;font-weight:900;">🌐 طلب موقع <%= sale.dentrust_order_id ? ('#' + sale.dentrust_order_id) : '' %></span></div>
   <% } %>
   <div class="row"><span>التاريخ</span><span><%= saleDateStr %></span></div>
   <div class="row"><span>الدفع</span><span class="bold"><%= payMethodAr(sale.payment_method) %></span></div>
@@ -165,7 +176,7 @@ function payMethodEn(m) {
   <div style="direction:ltr;<%= isBoth ? 'border-top:1px dashed #000;margin-top:4px;padding-top:4px;' : '' %>">
     <div class="row"><span>Invoice #</span><span class="bold"><%= sale.id %></span></div>
     <% if (sale.dentrust_order_id || sale.source === 'online' || sale.source === 'website') { %>
-    <div class="row"><span>Order Source</span><span class="bold" style="color:#0284c7;">🌐 Website Order <%= sale.dentrust_order_id ? ('#' + sale.dentrust_order_id) : '' %></span></div>
+    <div class="row"><span>Order Source</span><span class="bold" style="color:#000;font-weight:900;">🌐 Website Order <%= sale.dentrust_order_id ? ('#' + sale.dentrust_order_id) : '' %></span></div>
     <% } %>
     <div class="row"><span>Date</span><span><%= saleDateStr %></span></div>
     <div class="row"><span>Payment</span><span class="bold"><%= payMethodEn(sale.payment_method) %></span></div>
@@ -198,7 +209,7 @@ function payMethodEn(m) {
           <div style="font-size:9px;font-weight:700;color:#000;margin-top:1px;">◈ <%- item.selected_option %></div>
           <% } %>
           <% if (rq > 0) { %>
-          <div style="font-size:9px;color:#c00;margin-top:1px;">مرتجع: <%= rq %></div>
+          <div style="font-size:9px;color:#000;font-weight:700;margin-top:1px;">مرتجع: <%= rq %></div>
           <% } %>
         </td>
         <td class="center"><%= nq %></td>
@@ -229,7 +240,7 @@ function payMethodEn(m) {
           <div style="font-size:9px;font-weight:700;color:#000;margin-top:1px;">◈ <%- item.selected_option %></div>
           <% } %>
           <% if (rq > 0) { %>
-          <div style="font-size:9px;color:#c00;margin-top:1px;">Returned: <%= rq %></div>
+          <div style="font-size:9px;color:#000;font-weight:700;margin-top:1px;">Returned: <%= rq %></div>
           <% } %>
         </td>
         <td class="center"><%= nq %></td>
@@ -244,21 +255,21 @@ function payMethodEn(m) {
   <div class="total-section">
     <% if (_hasDiscount) { %>
     <% if (showAr) { %>
-    <div class="sub-row" style="font-weight:700;color:#444;">
+    <div class="sub-row" style="font-weight:700;color:#000;">
       <span>المجموع قبل الخصم</span>
       <span><%= fmt(_subtotalBeforeDiscount) %> <%= currencyLabel %></span>
     </div>
-    <div class="sub-row" style="font-weight:700;color:#166534;">
+    <div class="sub-row" style="font-weight:700;color:#000;">
       <span>خصم<%= sale.promo_code ? ` (${sale.promo_code})` : '' %></span>
       <span>- <%= fmt(sale.discount_amount) %> <%= currencyLabel %></span>
     </div>
     <% } %>
     <% if (showEn) { %>
-    <div class="sub-row bold" style="direction:ltr;color:#444;">
+    <div class="sub-row bold" style="direction:ltr;color:#000;">
       <span>Subtotal (Before Discount)</span>
       <span><%= fmt(_subtotalBeforeDiscount) %> <%= currencyEnLabel %></span>
     </div>
-    <div class="sub-row bold" style="direction:ltr;color:#166534;">
+    <div class="sub-row bold" style="direction:ltr;color:#000;">
       <span>Discount<%= sale.promo_code ? ` (${sale.promo_code})` : '' %></span>
       <span>- <%= fmt(sale.discount_amount) %> <%= currencyEnLabel %></span>
     </div>
@@ -267,13 +278,13 @@ function payMethodEn(m) {
 
     <% if (_hasDelivery) { %>
     <% if (showAr) { %>
-    <div class="sub-row" style="font-weight:700;color:#1e40af;">
+    <div class="sub-row" style="font-weight:700;color:#000;">
       <span>مصاريف التوصيل</span>
       <span>+ <%= fmt(_effectiveDelivery) %> <%= currencyLabel %></span>
     </div>
     <% } %>
     <% if (showEn) { %>
-    <div class="sub-row bold" style="direction:ltr;color:#1e40af;">
+    <div class="sub-row bold" style="direction:ltr;color:#000;">
       <span>Delivery Fee</span>
       <span>+ <%= fmt(_effectiveDelivery) %> <%= currencyEnLabel %></span>
     </div>
@@ -282,10 +293,10 @@ function payMethodEn(m) {
 
     <% if (_totalRet > 0) { %>
     <% if (showAr) { %>
-    <div class="sub-row" style="font-weight:700;color:#c00;"><span>مرتجع</span><span>- <%= fmt(_totalRet) %> <%= currencyLabel %></span></div>
+    <div class="sub-row" style="font-weight:700;color:#000;"><span>مرتجع</span><span>- <%= fmt(_totalRet) %> <%= currencyLabel %></span></div>
     <% } %>
     <% if (showEn) { %>
-    <div class="sub-row bold" style="direction:ltr;color:#c00;"><span>Returns</span><span>- <%= fmt(_totalRet) %> <%= currencyEnLabel %></span></div>
+    <div class="sub-row bold" style="direction:ltr;color:#000;"><span>Returns</span><span>- <%= fmt(_totalRet) %> <%= currencyEnLabel %></span></div>
     <% } %>
     <% } %>
 
