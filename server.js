@@ -4509,7 +4509,11 @@ const randomVisitors = () => Math.floor(Math.random() * 700) + 301;
 
 // Get best available free text model from live cache
 async function getBestFreeModel() {
-  return 'nvidia/nemotron-3-super-120b-a12b:free';
+  try {
+    const cache = await fetchFreeModels();
+    if (cache.text && cache.text.length) return cache.text[0];
+  } catch (_) {}
+  return 'meta-llama/llama-3.3-70b-instruct:free';
 }
 
 // GET /api/ai/test  — diagnostic endpoint
@@ -4538,7 +4542,23 @@ app.get('/api/ai/test', async (req, res) => {
 
 
 // ── Google Gemini Integration ──────────────────────────────────────────────────
-const GEMINI_MODELS = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-2.5-flash', 'gemma-4-31b-it'];
+// Prioritize ultra-fast, stable active models first
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-flash-latest'];
+const _geminiCooldowns = new Map();
+
+function getActiveGeminiModels() {
+  const now = Date.now();
+  const available = GEMINI_MODELS.filter(m => (_geminiCooldowns.get(m) || 0) < now);
+  return available.length ? available : GEMINI_MODELS;
+}
+
+function recordGeminiFailure(model) {
+  _geminiCooldowns.set(model, Date.now() + 120_000); // 2-min cooldown for overloaded/failed model
+}
+
+function recordGeminiSuccess(model) {
+  _geminiCooldowns.delete(model);
+}
 
 function buildGeminiPayload(messages = [], systemPrompt = '', maxTokens = 1000) {
   const contents = [];
@@ -4596,21 +4616,25 @@ function buildGeminiPayload(messages = [], systemPrompt = '', maxTokens = 1000) 
 
 async function callGeminiGenerate(geminiBody, timeout = 25000) {
   if (!GEMINI_API_KEY) return null;
-  for (const m of GEMINI_MODELS) {
+  const models = getActiveGeminiModels();
+  for (const m of models) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${GEMINI_API_KEY}`;
       const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(geminiBody),
-        signal: AbortSignal.timeout(timeout),
+        signal: AbortSignal.timeout(Math.min(timeout, 6000)),
       });
       const data = await resp.json();
       if (resp.ok && data.candidates?.[0]?.content?.parts?.[0]?.text) {
+        recordGeminiSuccess(m);
         return data.candidates[0].content.parts[0].text;
       }
+      recordGeminiFailure(m);
       console.warn(`[Gemini] model ${m} returned:`, resp.status, data.error?.message || 'no text');
     } catch (e) {
+      recordGeminiFailure(m);
       console.warn(`[Gemini] model ${m} failed:`, e.message);
     }
   }
@@ -4619,22 +4643,26 @@ async function callGeminiGenerate(geminiBody, timeout = 25000) {
 
 async function callGeminiStream(geminiBody, res, timeout = 35000) {
   if (!GEMINI_API_KEY) return false;
-  for (const m of GEMINI_MODELS) {
+  const models = getActiveGeminiModels();
+  for (const m of models) {
     try {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
       const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(geminiBody),
-        signal: AbortSignal.timeout(timeout),
+        signal: AbortSignal.timeout(Math.min(timeout, 6000)),
       });
       if (resp.ok) {
+        recordGeminiSuccess(m);
         await pipeGeminiStream(resp, res);
         return true;
       }
+      recordGeminiFailure(m);
       const errText = await resp.text().catch(() => '');
       console.warn(`[Gemini Stream] model ${m} status ${resp.status}:`, errText.slice(0, 150));
     } catch (e) {
+      recordGeminiFailure(m);
       console.warn(`[Gemini Stream] model ${m} failed:`, e.message);
     }
   }
