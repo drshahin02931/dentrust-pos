@@ -1400,8 +1400,10 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
   try {
     await client.query('BEGIN');
     for (const item of items) {
-      const { rows: [prod] } = await client.query('SELECT quantity, product_name, sale_price, variants, checkbox_values FROM products WHERE id=$1', [item.product_id]);
+      let prod = null;
       if (item.product_id) {
+        const { rows: [p] } = await client.query('SELECT quantity, product_name, sale_price, variants, checkbox_values FROM products WHERE id=$1', [item.product_id]);
+        prod = p;
         if (!prod) {
           await client.query('ROLLBACK');
           return res.status(400).json({ error: `المنتج "${item.product_name || '#' + item.product_id}" غير موجود في قاعدة البيانات` });
@@ -1459,7 +1461,7 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
     const { rows: [sale] } = await client.query(
       `INSERT INTO sales (total_amount, payment_method, customer_id, cashier_id, customer_name, amount_received, change_due, payment_split, discount_amount, delivery_amount)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-      [total, method, customerId, req.session.user_id, customerNameFree, amtReceived, changeDue, splitJson, discountAmount, deliveryAmount]
+      [total, method, customerId, req.session?.user_id || null, customerNameFree, amtReceived, changeDue, splitJson, discountAmount, deliveryAmount]
     );
     const saleId = sale.id;
     const lowStockItemIds = [];
@@ -1571,8 +1573,6 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
             if (cbv[selCheckbox] && typeof cbv[selCheckbox] === 'object' && cbv[selCheckbox].stock != null) {
               cbv[selCheckbox].stock = Math.max(0, cbv[selCheckbox].stock - item.quantity);
               // Recalculate main quantity as the sum of all remaining checkbox stocks.
-              // Without this, the earlier GREATEST(0, quantity-N) can drive quantity to 0
-              // while individual option stocks still have items, causing a false "نفذ".
               const totalCbQty = Object.values(cbv).reduce((sum, v) =>
                 sum + (typeof v === 'object' && v.stock != null ? Math.max(0, v.stock) : 0), 0);
               await client.query(
@@ -1585,21 +1585,25 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
       }
 
       // Log movement to audit log
-      await logProductMovement({
-        productId: item.product_id,
-        productName: item.product_name,
-        movementType: 'sale',
-        referenceId: saleId,
-        referenceTitle: `فاتورة مبيعات #${saleId}`,
-        selectedOption: selOptSaved,
-        quantityChange: -Math.abs(parseInt(item.quantity || 0, 10)),
-        quantityBefore: prevQty,
-        quantityAfter: newQty,
-        unitPrice: parseFloat(item.unit_price || 0),
-        unitCost: snapPp,
-        userName: req.session?.username || 'كاشير',
-        notes: `مبيعات للعميل: ${customerNameFree || 'نقدي'}`
-      }, client);
+      try {
+        await logProductMovement({
+          productId: item.product_id,
+          productName: item.product_name,
+          movementType: 'sale',
+          referenceId: saleId,
+          referenceTitle: `فاتورة مبيعات #${saleId}`,
+          selectedOption: selOptSaved,
+          quantityChange: -Math.abs(parseInt(item.quantity || 0, 10)),
+          quantityBefore: prevQty,
+          quantityAfter: newQty,
+          unitPrice: parseFloat(item.unit_price || 0),
+          unitCost: effectiveCostPrice || 0,
+          userName: req.session?.username || 'كاشير',
+          notes: `مبيعات للعميل: ${customerNameFree || 'نقدي'}`
+        }, client);
+      } catch (logErr) {
+        console.error('[logProductMovement error in sale]:', logErr.message);
+      }
       lowStockItemIds.push(item.product_id);
     }
     if (method === 'credit' && customerId) {
@@ -1635,8 +1639,8 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
     res.status(201).json({ ok: true, sale_id: saleId, low_stock: lowStock });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    console.error(err);
-    res.status(500).json({ error: 'خطأ داخلي' });
+    console.error('[API /sales Error]:', err);
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
   } finally { client.release(); }
 });
 
