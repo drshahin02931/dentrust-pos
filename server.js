@@ -4253,61 +4253,146 @@ app.get('/api/storage/*', webCors, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
-// ── Bot Knowledge – cache + loader ────────────────────────────────────────────
+// ── Bot Knowledge & Smart Product Retrieval (DenTrust In-Store Search) ────────
 let _knowledgeCache = null;
 let _knowledgeCacheAt = 0;
-const KNOWLEDGE_TTL = 300_000; // 5 min cache — reduces DB hits on every chat message
+let _productsCache = null;
+let _productsCacheAt = 0;
+const KNOWLEDGE_TTL = 180_000; // 3 min cache
 
-async function getBotKnowledgeText() {
+async function loadStoreProducts() {
   const now = Date.now();
-  if (_knowledgeCache !== null && now - _knowledgeCacheAt < KNOWLEDGE_TTL) {
+  if (_productsCache !== null && (now - _productsCacheAt < KNOWLEDGE_TTL)) {
+    return _productsCache;
+  }
+  try {
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000));
+    const result = await Promise.race([
+      posDb.query("SELECT id, product_name, sale_price, category, quantity, description FROM products WHERE quantity > 0 ORDER BY product_name"),
+      timeout
+    ]);
+    _productsCache = result.rows || [];
+    _productsCacheAt = now;
+    return _productsCache;
+  } catch (err) {
+    console.warn('[Store Products Load]', err.message);
+    return _productsCache || [];
+  }
+}
+
+async function loadStorePolicies() {
+  const now = Date.now();
+  if (_knowledgeCache !== null && (now - _knowledgeCacheAt < KNOWLEDGE_TTL)) {
     return _knowledgeCache;
   }
   try {
-    const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('knowledge timeout')), 4000)
-    );
-
-    const [knowledgeResult, productsResult] = await Promise.race([
-      Promise.all([
-        posDb.query("SELECT category, title, content FROM bot_knowledge WHERE active=true ORDER BY category, id"),
-        posDb.query("SELECT id, product_name, sale_price, category, quantity, description FROM products WHERE quantity > 0 ORDER BY product_name"),
-      ]),
-      timeout,
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000));
+    const result = await Promise.race([
+      posDb.query("SELECT category, title, content FROM bot_knowledge WHERE active=true ORDER BY category, id"),
+      timeout
     ]);
-
     let text = '';
-
-    if (knowledgeResult.rows.length) {
-      const lines = knowledgeResult.rows.map(r => `[${r.category}] ${r.title}: ${r.content}`).join('\n');
-      text += `\n\n=== معلومات مخزّنة من إدارة المتجر — التزم بها تماماً وأجب منها مباشرةً ===\n${lines}\n===`;
+    if (result.rows?.length) {
+      const lines = result.rows.map(r => `[${r.category}] ${r.title}: ${r.content}`).join('\n');
+      text = `\n\n=== معلومات المتجر والسياسات الرسمية (DenTrust) ===\n${lines}\n===`;
     }
-
-    if (productsResult.rows.length) {
-      // Cap the number of products and the length of each line so the system
-      // prompt stays well under Groq's tokens-per-minute limit (12000 TPM on
-      // some models). Sending all products unbounded caused every chat
-      // request to be rejected with "Request too large" once the catalog
-      // grew past ~150 items.
-      const MAX_PRODUCTS = 120;
-      const MAX_DESC_LEN = 60;
-      const productLines = productsResult.rows.slice(0, MAX_PRODUCTS).map(r => {
-        let line = `- [ID:${r.id}] ${r.product_name}`;
-        if (r.category) line += ` (${r.category})`;
-        if (r.sale_price) line += ` — السعر: ${r.sale_price} جنيه`;
-        if (r.description) line += ` — ${String(r.description).slice(0, MAX_DESC_LEN)}`;
-        return line;
-      }).join('\n');
-      const truncatedNote = productsResult.rows.length > MAX_PRODUCTS
-        ? `\n(+ ${productsResult.rows.length - MAX_PRODUCTS} منتج إضافي غير مذكور هنا)`
-        : '';
-      text += `\n\n=== قائمة المنتجات المتوفرة حالياً في المخزون ===\n${productLines}${truncatedNote}\n===`;
-    }
-
     _knowledgeCache = text;
     _knowledgeCacheAt = now;
     return _knowledgeCache;
-  } catch { return ''; }
+  } catch (_) {
+    return _knowledgeCache || '';
+  }
+}
+
+function findRelevantStoreProducts(queryText, allProducts, limit = 5) {
+  if (!queryText || typeof queryText !== 'string' || !allProducts || !allProducts.length) return [];
+  
+  const clean = queryText
+    .toLowerCase()
+    .replace(/[\u064B-\u065F\u0670]/g, '')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/[ة]/g, 'ه')
+    .replace(/[ى]/g, 'ي')
+    .replace(/[^a-z0-9\u0600-\u06FF\s]/g, ' ');
+
+  const stopWords = new Set([
+    'في', 'من', 'على', 'عن', 'هو', 'هي', 'ده', 'دي', 'هل', 'شو', 'مين', 'لو', 'مع', 'انا', 'انت',
+    'the', 'and', 'for', 'with', 'are', 'is', 'was', 'this', 'that', 'what', 'which', 'better', 'than'
+  ]);
+  const tokens = clean.split(/\s+/).filter(t => t.length >= 2 && !stopWords.has(t));
+
+  if (!tokens.length) return [];
+
+  const scored = [];
+  for (const p of allProducts) {
+    const pNameNorm = (p.product_name || '')
+      .toLowerCase()
+      .replace(/[\u064B-\u065F\u0670]/g, '')
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/[ة]/g, 'ه')
+      .replace(/[ى]/g, 'ي');
+    const pCatNorm = (p.category || '').toLowerCase();
+    const pDescNorm = (p.description || '').toLowerCase();
+
+    let score = 0;
+    for (const t of tokens) {
+      if (pNameNorm.includes(t)) score += 10;
+      else if (pCatNorm.includes(t)) score += 4;
+      else if (pDescNorm.includes(t)) score += 2;
+    }
+    if (score > 0) {
+      scored.push({ product: p, score });
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map(s => s.product);
+}
+
+function sanitizeSystemPromptAndMessages(messages = [], matchingProducts = []) {
+  if (!Array.isArray(messages)) return [];
+  return messages.map(m => {
+    if (m.role === 'system' && typeof m.content === 'string' && m.content.includes('DENTRUST PRODUCT CATALOG (live inventory):')) {
+      let clean = m.content.replace(/DENTRUST PRODUCT CATALOG \(live inventory\):[\s\S]*?(?=RULES:|$)/, () => {
+        if (!matchingProducts.length) {
+          return 'DENTRUST PRODUCT CATALOG: (Answer clinical/procedural queries directly as an expert dental consultant. If products are asked for, recommend them).\n\n';
+        }
+        const lines = matchingProducts.map(p => `- ID:${p.id} | "${p.product_name || p.name}" | Price: ${p.sale_price || p.price} EGP`).join('\n');
+        return `DENTRUST MATCHING PRODUCTS IN STORE:\n${lines}\n\n`;
+      });
+      return { ...m, content: clean };
+    }
+    return m;
+  });
+}
+
+async function getBotKnowledgeText(messages = []) {
+  const policies = await loadStorePolicies();
+  const allProducts = await loadStoreProducts();
+
+  let userQuery = '';
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') {
+      const c = messages[i].content;
+      userQuery = typeof c === 'string' ? c : (Array.isArray(c) ? c.map(p => p.text || '').join(' ') : '');
+      break;
+    }
+  }
+
+  const matching = findRelevantStoreProducts(userQuery, allProducts, 5);
+
+  let productsText = '';
+  if (matching.length > 0) {
+    const lines = matching.map(r => {
+      let line = `- [ID:${r.id}] ${r.product_name}`;
+      if (r.category) line += ` (${r.category})`;
+      if (r.sale_price) line += ` — السعر: ${r.sale_price} جنيه`;
+      return line;
+    }).join('\n');
+    productsText = `\n\n=== منتجات مطابقة متوفرة حالياً في متجر DenTrust (اذكر المناسب منها بالاسم مع إضافة [[P:ID]] في سطر منفصل إذا رشحت المنتج) ===\n${lines}\n===`;
+  }
+
+  return { knowledgeText: `${policies}${productsText}`, matching };
 }
 
 // Language restriction — always prepended to every system prompt
@@ -4809,9 +4894,10 @@ async function pipeGeminiStream(geminiResp, res) {
 app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
   try {
     const { messages = [], system = '', max_tokens = 500 } = req.body;
-    const knowledge = await getBotKnowledgeText();
-    const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledge);
-    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
+    const { knowledgeText, matching } = await getBotKnowledgeText(messages);
+    const sanitizedMessages = sanitizeSystemPromptAndMessages(messages, matching);
+    const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledgeText);
+    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...sanitizedMessages] : sanitizedMessages;
 
     // 1. Try Groq (Ultra-fast ~300ms)
     if (GROQ_KEY) {
@@ -4823,7 +4909,7 @@ app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
 
     // 2. Try Gemini 2.5 Flash (~900ms)
     if (GEMINI_API_KEY) {
-      const geminiBody = buildGeminiPayload(messages, combinedSystem, max_tokens);
+      const geminiBody = buildGeminiPayload(sanitizedMessages, combinedSystem, max_tokens);
       const reply = await callGeminiGenerate(geminiBody, 25000);
       if (reply) {
         return res.json({ choices: [{ message: { content: reply } }] });
@@ -4876,9 +4962,10 @@ app.post('/api/ai/fashion-tryon', webCors, async (req, res) => {
 app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
   try {
     const { messages = [], system = '', max_tokens = 600 } = req.body;
-    const knowledge = await getBotKnowledgeText();
-    const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledge);
-    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
+    const { knowledgeText, matching } = await getBotKnowledgeText(messages);
+    const sanitizedMessages = sanitizeSystemPromptAndMessages(messages, matching);
+    const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledgeText);
+    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...sanitizedMessages] : sanitizedMessages;
 
     // 1. Try Groq Ultra-fast SSE stream (~300ms)
     if (GROQ_KEY) {
@@ -4888,7 +4975,7 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
 
     // 2. Try Gemini 2.5 Flash (~900ms)
     if (GEMINI_API_KEY) {
-      const geminiBody = buildGeminiPayload(messages, combinedSystem, max_tokens);
+      const geminiBody = buildGeminiPayload(sanitizedMessages, combinedSystem, max_tokens);
       const ok = await callGeminiStream(geminiBody, res, 35000);
       if (ok) return;
     }
@@ -4919,9 +5006,10 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
 app.post('/api/ai/stylebot', webCors, async (req, res) => {
   try {
     const { messages = [], system = '', max_tokens = 600, stream = false } = req.body;
-    const knowledge = await getBotKnowledgeText();
-    const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledge);
-    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...messages] : messages;
+    const { knowledgeText, matching } = await getBotKnowledgeText(messages);
+    const sanitizedMessages = sanitizeSystemPromptAndMessages(messages, matching);
+    const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledgeText);
+    const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...sanitizedMessages] : sanitizedMessages;
 
     if (stream) {
       if (GROQ_KEY) {
@@ -4929,7 +5017,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
         if (ok) return;
       }
       if (GEMINI_API_KEY) {
-        const geminiBody = buildGeminiPayload(messages, combinedSystem, max_tokens);
+        const geminiBody = buildGeminiPayload(sanitizedMessages, combinedSystem, max_tokens);
         const ok = await callGeminiStream(geminiBody, res, 35000);
         if (ok) return;
       }
@@ -4939,7 +5027,7 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
         if (reply) return res.json({ choices: [{ message: { content: reply } }] });
       }
       if (GEMINI_API_KEY) {
-        const geminiBody = buildGeminiPayload(messages, combinedSystem, max_tokens);
+        const geminiBody = buildGeminiPayload(sanitizedMessages, combinedSystem, max_tokens);
         const reply = await callGeminiGenerate(geminiBody, 25000);
         if (reply) return res.json({ choices: [{ message: { content: reply } }] });
       }
