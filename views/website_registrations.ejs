@@ -8,7 +8,7 @@
         <span>🔑 تسجيل دخول عملاء الموقع</span>
         <span class="text-xs bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-full">إدارة الحسابات وكلمات المرور</span>
       </h1>
-      <p class="text-xs text-gray-500 mt-1">صفحة مخصصة لإدارة حسابات الأطباء المسجلين على الموقع، الأكواد الطبية (DT-XXXX)، أرقام الهواتف، وتصفير كلمة المرور إلى 1234567 فوراً.</p>
+      <p class="text-xs text-gray-500 mt-1">صفحة مخصصة لإدارة حسابات الأطباء المسجلين على الموقع، الأكواد الطبية (6 أرقام)، أرقام الهواتف، وتصفير كلمة المرور إلى 1234567 فوراً.</p>
     </div>
     <div class="flex items-center gap-2">
       <button onclick="loadRegistrations()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm">
@@ -40,7 +40,7 @@
   <!-- Search & Filter Bar -->
   <div class="bg-white rounded-2xl border shadow-sm p-4 flex flex-wrap gap-3 items-center">
     <div class="relative flex-1 min-w-[220px]">
-      <input id="searchInput" type="text" placeholder="🔍 ابحث باسم الطبيب، كود العميل DT-XXXX، أو رقم الهاتف..." oninput="filterList()"
+      <input id="searchInput" type="text" placeholder="🔍 ابحث باسم الطبيب، كود العميل، أو رقم الهاتف..." oninput="filterList()"
         class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
     </div>
     <select id="filterSelect" onchange="filterList()" class="border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none bg-white font-medium text-gray-700">
@@ -151,7 +151,7 @@ function renderRegistrations(list) {
   noRes.classList.add("hidden");
 
   container.innerHTML = list.map(c => {
-    const code = c.customer_code || `DT-${1000 + c.id}`;
+    const code = c.customer_code || c.barcode || String(100000 + c.id);
     const debt = parseFloat(c.total_debt || 0);
     const ordersCount = parseInt(c.orders_count || 0, 10);
     const points = parseInt(c.points_balance || 0, 10);

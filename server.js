@@ -1846,11 +1846,48 @@ app.get(`${BASE}/api/customers`, async (req, res) => {
 async function generateUniqueBarcode(clientOrDb) {
   for (let attempt = 0; attempt < 50; attempt++) {
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const { rows } = await clientOrDb.query('SELECT id FROM customers WHERE barcode=$1 OR customer_code=$1', [code]);
+    const { rows } = await clientOrDb.query('SELECT id FROM customers WHERE barcode=$1 OR customer_code=$1 OR customer_code=$2', [code, `vip${code}`]);
     if (!rows.length) return code;
   }
   return (Date.now() % 900000 + 100000).toString();
 }
+
+// Automatic one-time migration: Convert all legacy DT-XXXX codes to 6-digit random codes/barcodes
+async function migrateLegacyCustomerCodes() {
+  try {
+    const { rows } = await posDb.query(
+      `SELECT id, name, is_vip, barcode, customer_code FROM customers 
+       WHERE customer_code IS NULL 
+          OR customer_code LIKE 'DT-%' 
+          OR customer_code LIKE 'dt%' 
+          OR (is_vip = false AND customer_code !~ '^\\d{6}$') 
+          OR (is_vip = true AND customer_code !~ '^vip\\d{6}$')
+          OR barcode IS NULL 
+          OR barcode !~ '^\\d{6}$'`
+    );
+    if (rows && rows.length > 0) {
+      console.log(`[Customer Migration] Found ${rows.length} customers to migrate to 6-digit unique codes.`);
+      for (const cust of rows) {
+        let code = cust.barcode;
+        if (!code || !/^\d{6}$/.test(code)) {
+          code = await generateUniqueBarcode(posDb);
+        }
+        const isVip = !!cust.is_vip;
+        const newCustCode = isVip ? `vip${code}` : code;
+        await posDb.query(
+          `UPDATE customers SET barcode=$1, customer_code=$2 WHERE id=$3`,
+          [code, newCustCode, cust.id]
+        );
+        console.log(`[Customer Migration] Customer #${cust.id} (${cust.name}): barcode=${code}, customer_code=${newCustCode}`);
+      }
+      console.log(`[Customer Migration] Successfully migrated ${rows.length} customers.`);
+    }
+  } catch (err) {
+    console.error('[Customer Migration] Error migrating legacy customer codes:', err.message);
+  }
+}
+setTimeout(migrateLegacyCustomerCodes, 3000);
+
 
 app.post([`${BASE}/api/customers`, '/api/customers'], async (req, res) => {
   const d = req.body;
@@ -2151,7 +2188,7 @@ app.post(`${BASE}/api/customer/login`, async (req, res) => {
       addrs = typeof customer.addresses === 'string' ? JSON.parse(customer.addresses) : (customer.addresses || []);
     } catch (_) { addrs = []; }
 
-    const custCode = customer.customer_code || `DT-${1000 + customer.id}`;
+    const custCode = customer.customer_code || customer.barcode || String(100000 + customer.id);
 
     res.json({
       ok: true,
@@ -2205,7 +2242,7 @@ app.post(`${BASE}/api/customer/change-password`, async (req, res) => {
     await posDb.query(
       `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
        VALUES ($1, $2, $3, 'change_password', 'تغيير كلمة المرور من حساب الطبيب بالموقع', $4, 'الموقع')`,
-      [customer.id, customer.customer_code || `DT-${1000 + customer.id}`, customer.name, customer.phone]
+      [customer.id, customer.customer_code || customer.barcode || String(100000 + customer.id), customer.name, customer.phone]
     ).catch(() => {});
 
     res.json({ ok: true, message: 'تم تغيير كلمة المرور بنجاح' });
@@ -2227,7 +2264,7 @@ app.post(`${BASE}/api/customer/reset-password-admin`, async (req, res) => {
     await posDb.query(
       `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
        VALUES ($1, $2, $3, 'reset_password_admin', 'تم تصفير كلمة المرور إلى 1234567 بواسطة الإدارة', $4, $5)`,
-      [customer.id, customer.customer_code || `DT-${1000 + customer.id}`, customer.name, customer.phone, adminName]
+      [customer.id, customer.customer_code || customer.barcode || String(100000 + customer.id), customer.name, customer.phone, adminName]
     ).catch(() => {});
 
     res.json({ ok: true, message: 'تم تصفير كلمة المرور إلى 1234567 بنجاح' });
@@ -2289,7 +2326,7 @@ app.post(`${BASE}/api/customer/update-profile`, async (req, res) => {
       await posDb.query(
         `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
          VALUES ($1, $2, $3, 'update_profile', $4, $5, 'الموقع')`,
-        [customer.id, customer.customer_code || `DT-${1000 + customer.id}`, customer.name, changes.join(' | '), allPhonesStr]
+        [customer.id, customer.customer_code || customer.barcode || String(100000 + customer.id), customer.name, changes.join(' | '), allPhonesStr]
       ).catch(() => {});
     }
 
@@ -2300,7 +2337,7 @@ app.post(`${BASE}/api/customer/update-profile`, async (req, res) => {
       ok: true,
       customer: {
         id: customer.id,
-        customer_code: customer.customer_code || `DT-${1000 + customer.id}`,
+        customer_code: customer.customer_code || customer.barcode || String(100000 + customer.id),
         name: customer.name,
         phone: updatedPrimary,
         extra_phones: updatedExtra,
@@ -2413,7 +2450,7 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
       ok: true,
       customer: {
         id: customer.id,
-        customer_code: customer.customer_code || `DT-${1000 + customer.id}`,
+        customer_code: customer.customer_code || customer.barcode || String(100000 + customer.id),
         barcode: customer.barcode || '',
         is_vip: !!(customer.is_vip || (customer.customer_code && customer.customer_code.toLowerCase().startsWith('vip'))),
         name: customer.name,

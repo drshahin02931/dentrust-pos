@@ -279,7 +279,7 @@ function renderCustomers(data) {
   list.innerHTML = data.map((c, idx) => {
     const hasDebt = c.total_debt > 0;
     const purchases = parseFloat(c.total_purchases || 0);
-    const custCode = c.customer_code || `DT-${1000 + c.id}`;
+    const custCode = c.customer_code || c.barcode || String(100000 + c.id);
     const srcBadge = c.source === 'website'
       ? '<span class="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold px-1.5 py-0.5 rounded-md">🌐 الموقع</span>'
       : '<span class="bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold px-1.5 py-0.5 rounded-md">🏪 كاشير</span>';

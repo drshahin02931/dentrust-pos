@@ -595,7 +595,7 @@ function onCustomerSelectChange() {
     return;
   }
 
-  const code = cust.customer_code || `DT-${1000 + cust.id}`;
+  const code = cust.customer_code || cust.barcode || String(100000 + cust.id);
   codeBadge.textContent = code;
   codeBadge.classList.remove("hidden");
 
