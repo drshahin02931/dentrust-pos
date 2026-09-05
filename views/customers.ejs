@@ -126,11 +126,12 @@
     </div>
 
     <!-- Tabs -->
-    <div class="flex border-b shrink-0">
-      <button id="tabOrders"       onclick="switchTab('orders')"       class="flex-1 py-3 text-sm font-semibold text-blue-700 border-b-2 border-blue-700">🧾 الطلبات</button>
-      <button id="tabPayments"     onclick="switchTab('payments')"     class="flex-1 py-3 text-sm font-semibold text-gray-400">💳 الدفعات</button>
-      <button id="tabInstallments" onclick="switchTab('installments')" class="flex-1 py-3 text-sm font-semibold text-gray-400">📅 الأقساط</button>
-      <button id="tabDebts"        onclick="switchTab('debts')"        class="flex-1 py-3 text-sm font-semibold text-gray-400">💰 السلف</button>
+    <div class="flex border-b shrink-0 overflow-x-auto">
+      <button id="tabOrders"       onclick="switchTab('orders')"       class="flex-1 py-3 text-sm font-semibold text-blue-700 border-b-2 border-blue-700 whitespace-nowrap">🧾 الطلبات</button>
+      <button id="tabClinics"      onclick="switchTab('clinics')"      class="flex-1 py-3 text-sm font-semibold text-gray-400 whitespace-nowrap">🏥 العيادات والعناوين</button>
+      <button id="tabPayments"     onclick="switchTab('payments')"     class="flex-1 py-3 text-sm font-semibold text-gray-400 whitespace-nowrap">💳 الدفعات</button>
+      <button id="tabInstallments" onclick="switchTab('installments')" class="flex-1 py-3 text-sm font-semibold text-gray-400 whitespace-nowrap">📅 الأقساط</button>
+      <button id="tabDebts"        onclick="switchTab('debts')"        class="flex-1 py-3 text-sm font-semibold text-gray-400 whitespace-nowrap">💰 السلف</button>
     </div>
 
     <!-- Scrollable content -->
@@ -262,6 +263,11 @@ function renderCustomers(data) {
             ${pointsBadge}
           </div>
           <div class="text-xs text-gray-500 mt-0.5">${c.phone || 'بدون هاتف'} ${c.extra_phones ? `<span class="text-gray-400">(${c.extra_phones.split(',').filter(Boolean).length} إضافي)</span>` : ''}</div>
+          ${(() => {
+            let addrs = [];
+            try { addrs = typeof c.addresses === 'string' ? JSON.parse(c.addresses) : (c.addresses || []); } catch(_) {}
+            return addrs.length ? `<div class="text-[11px] text-gray-600 mt-0.5 flex items-center gap-1"><span>🏥 العيادات:</span> <span class="font-semibold text-blue-700">${addrs.map(a => a.title || 'عيادة').join('، ')}</span></div>` : '';
+          })()}
           <div class="text-xs text-blue-600 font-semibold mt-0.5">🛒 ${purchases.toLocaleString('ar-EG', {minimumFractionDigits:2})} ج مشتريات</div>
         </div>
       </div>
@@ -271,6 +277,11 @@ function renderCustomers(data) {
              <div class="text-xs text-red-400">جنيه آجل</div>`
           : `<div class="text-green-600 font-bold text-sm">✓ مسدّد</div>`
         }
+        <button onclick="event.stopPropagation(); quickResetPassword(${c.id}, '${c.name.replace(/'/g, "\\'")}')"
+          class="mt-1 text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-lg transition-all"
+          title="إعادة تعيين كلمة المرور إلى 1234567">
+          🔑 تصفير الباسورد
+        </button>
       </div>
     </div>`;
   }).join("");
@@ -405,18 +416,165 @@ async function resetCustomerPassword() {
   }
 }
 
+async function quickResetPassword(cid, name) {
+  if (!confirm(`هل أنت متأكد من تصفير كلمة مرور "${name}" إلى 1234567؟`)) return;
+  try {
+    const res = await fetch(`${BASE}/api/customer/reset-password-admin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_id: cid })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'فشل التصفير');
+    alert('✅ تم تصفير كلمة المرور بنجاح إلى: 1234567');
+  } catch (err) {
+    alert('❌ خطأ: ' + err.message);
+  }
+}
+
+async function saveNewClinicForCustomer() {
+  if (!currentCustomer) return;
+  const title = document.getElementById('newClinicTitle').value.trim();
+  const city = document.getElementById('newClinicCity').value.trim();
+  const region = document.getElementById('newClinicRegion').value.trim();
+  const details = document.getElementById('newClinicDetails').value.trim();
+
+  if (!title || !city || !region) {
+    alert('يرجى كتابة اسم العيادة والمحافظة والمنطقة.');
+    return;
+  }
+
+  let addrs = [];
+  try {
+    addrs = typeof currentCustomer.addresses === 'string' ? JSON.parse(currentCustomer.addresses) : (currentCustomer.addresses || []);
+  } catch (_) { addrs = []; }
+
+  const updated = [...addrs, { title, city, region, details }];
+
+  try {
+    const res = await fetch(`${BASE}/api/customer/update-profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customer_id: currentCustomer.id,
+        phone: currentCustomer.phone,
+        addresses: updated
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'فشل الحفظ');
+    currentCustomer.addresses = updated;
+    alert('✅ تم حفظ عنوان العيادة بنجاح');
+    switchTab('clinics');
+    loadCustomers();
+  } catch (err) {
+    alert('❌ خطأ: ' + err.message);
+  }
+}
+
+async function deleteClinicForCustomer(idx) {
+  if (!currentCustomer) return;
+  if (!confirm('هل تريد بالتأكيد حذف هذا العنوان؟')) return;
+
+  let addrs = [];
+  try {
+    addrs = typeof currentCustomer.addresses === 'string' ? JSON.parse(currentCustomer.addresses) : (currentCustomer.addresses || []);
+  } catch (_) { addrs = []; }
+
+  const updated = addrs.filter((_, i) => i !== idx);
+
+  try {
+    const res = await fetch(`${BASE}/api/customer/update-profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customer_id: currentCustomer.id,
+        phone: currentCustomer.phone,
+        addresses: updated
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'فشل الحذف');
+    currentCustomer.addresses = updated;
+    switchTab('clinics');
+    loadCustomers();
+  } catch (err) {
+    alert('❌ خطأ: ' + err.message);
+  }
+}
+
 async function switchTab(tab) {
   currentTab = tab;
-  const tabs = ['orders','payments','installments','debts'];
+  const tabs = ['orders','clinics','payments','installments','debts'];
   tabs.forEach(t => {
-    document.getElementById(`tab${t.charAt(0).toUpperCase()+t.slice(1)}`).className =
-      t === tab
-        ? "flex-1 py-3 text-sm font-semibold text-blue-700 border-b-2 border-blue-700"
-        : "flex-1 py-3 text-sm font-semibold text-gray-400";
+    const el = document.getElementById(`tab${t.charAt(0).toUpperCase()+t.slice(1)}`);
+    if (el) {
+      el.className = t === tab
+        ? "flex-1 py-3 text-sm font-semibold text-blue-700 border-b-2 border-blue-700 whitespace-nowrap"
+        : "flex-1 py-3 text-sm font-semibold text-gray-400 whitespace-nowrap";
+    }
   });
 
   const content = document.getElementById("detailContent");
   content.innerHTML = `<div class="text-center text-gray-400 py-8">جار التحميل...</div>`;
+
+  if (tab === 'clinics') {
+    let addrs = [];
+    try {
+      addrs = typeof currentCustomer.addresses === 'string' ? JSON.parse(currentCustomer.addresses) : (currentCustomer.addresses || []);
+    } catch (_) { addrs = []; }
+
+    content.innerHTML = `
+      <div class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h4 class="font-bold text-gray-800 text-sm">🏥 عيادات الطبيب والعناوين المسجلة (${addrs.length})</h4>
+            <p class="text-xs text-gray-500">العناوين التي يتم توصيل الطلبات إليها أو استلام الفواتير عليها</p>
+          </div>
+          <button onclick="document.getElementById('addClinicBox').classList.toggle('hidden')" class="bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold px-3 py-1.5 rounded-xl shadow-sm">
+            + إضافة عيادة جديدة
+          </button>
+        </div>
+
+        <div id="addClinicBox" class="hidden bg-blue-50/60 border border-blue-200 rounded-xl p-3 space-y-2 text-right">
+          <div class="font-bold text-xs text-blue-900">إضافة عنوان عيادة للطبيب</div>
+          <input id="newClinicTitle" class="w-full border rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="اسم العيادة / الفرع (مثال: عيادة المهندسين)"/>
+          <div class="grid grid-cols-2 gap-2">
+            <input id="newClinicCity" class="border rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="المحافظة (مثال: الجيزة)"/>
+            <input id="newClinicRegion" class="border rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="المنطقة / الشارع (مثال: شارع سوريا)"/>
+          </div>
+          <input id="newClinicDetails" class="w-full border rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="تفاصيل إضافية (رقم الدور / الشقة / علامة مميزة)"/>
+          <div class="flex gap-2 justify-end pt-1">
+            <button onclick="document.getElementById('addClinicBox').classList.add('hidden')" class="bg-gray-200 text-gray-700 text-xs px-3 py-1 rounded-lg">إلغاء</button>
+            <button onclick="saveNewClinicForCustomer()" class="bg-blue-700 text-white text-xs font-bold px-3 py-1 rounded-lg">حفظ العيادة ✓</button>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          ${!addrs.length ? `
+            <div class="text-center py-8 text-gray-400 text-sm bg-gray-50 rounded-xl border border-dashed border-gray-200">
+              <div class="text-2xl mb-1">🏥</div>
+              لا توجد عيادات مسجلة لهذا الطبيب بعد.<br/>
+              <span class="text-xs text-gray-400">اضغط على زر "+ إضافة عيادة جديدة" لإضافة أول عيادة.</span>
+            </div>
+          ` : addrs.map((a, i) => `
+            <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 flex items-start justify-between gap-2">
+              <div>
+                <div class="font-bold text-sm text-gray-800 flex items-center gap-1.5">
+                  <span>🏥</span> ${a.title || 'عيادة #' + (i+1)}
+                </div>
+                <div class="text-xs text-gray-600 mt-1">
+                  ${[a.city, a.region, a.details, a.address].filter(Boolean).join(' — ')}
+                </div>
+              </div>
+              <button onclick="deleteClinicForCustomer(${i})" class="text-red-500 hover:text-red-700 text-xs p-1" title="حذف العيادة">🗑️</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    return;
+  }
 
   if (tab === 'installments') {
     const res  = await fetch(`${BASE}/api/installments?customer_id=${currentCustomer.id}`);
