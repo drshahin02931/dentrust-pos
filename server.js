@@ -2314,41 +2314,119 @@ app.post(`${BASE}/api/customer/update-profile`, async (req, res) => {
   }
 });
 
-app.get(`${BASE}/api/customer/profile`, async (req, res) => {
-  const { identifier } = req.query;
-  if (!identifier) return res.status(400).json({ error: 'المعرف مطلوب' });
+// ── Customer Profile & Invoices Link Endpoint ──────────────────────────────
+app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/customer/orders`, '/api/customer/orders'], async (req, res) => {
+  const identifier = (req.query.identifier || req.query.phone || req.query.customer_code || req.query.code || '').trim();
+  if (!identifier) return res.status(400).json({ error: 'المعرف مطلوب (كود، هاتف، أو اسم)' });
+
   try {
     const { rows: [customer] } = await posDb.query(
       `SELECT * FROM customers 
-       WHERE LOWER(customer_code)=LOWER($1) OR phone=$1 OR extra_phones LIKE $2 LIMIT 1`,
-      [identifier.trim(), `%${identifier.trim()}%`]
+       WHERE LOWER(customer_code)=LOWER($1) 
+          OR barcode=$1 
+          OR phone=$1 
+          OR extra_phones LIKE $2 
+          OR LOWER(TRIM(name))=LOWER(TRIM($1))
+       LIMIT 1`,
+      [identifier, `%${identifier}%`]
     );
     if (!customer) return res.status(404).json({ error: 'العميل غير موجود' });
 
     let addrs = [];
     try { addrs = typeof customer.addresses === 'string' ? JSON.parse(customer.addresses) : (customer.addresses || []); } catch (_) { addrs = []; }
 
+    // Query all sales matching customer ID, exact customer name, or normalized doctor name
     const { rows: sales } = await posDb.query(
-      `SELECT id, total_amount, payment_method, date, delivery_type, clinic_address, promo_code, discount_amount, delivery_amount
-       FROM sales WHERE customer_id=$1 OR (dentrust_order_id IS NOT NULL AND customer_name=$2) ORDER BY id DESC LIMIT 50`,
+      `SELECT s.*,
+              COALESCE(
+                json_agg(
+                  json_build_object(
+                    'id', si.id,
+                    'product_name', si.product_name,
+                    'quantity', si.quantity,
+                    'unit_price', si.unit_price,
+                    'selected_option', si.selected_option
+                  )
+                ) FILTER (WHERE si.id IS NOT NULL), '[]'
+              ) as items
+       FROM sales s
+       LEFT JOIN sale_items si ON si.sale_id = s.id
+       WHERE s.customer_id = $1
+          OR LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($2))
+          OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($2, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
+       GROUP BY s.id
+       ORDER BY s.id DESC
+       LIMIT 100`,
       [customer.id, customer.name]
     );
+
+    // Auto-link any matching unlinked sales to this customer permanently in DB
+    const unlinkedIds = sales.filter(s => !s.customer_id).map(s => s.id);
+    if (unlinkedIds.length > 0) {
+      posDb.query('UPDATE sales SET customer_id=$1 WHERE id=ANY($2::int[])', [customer.id, unlinkedIds]).catch(() => {});
+    }
+
+    // Calculate real-time unpaid debt from credit invoices
+    let calculatedUnpaidDebt = 0;
+    const formattedOrders = sales.map(s => {
+      const totalAmt = parseFloat(s.total_amount || 0);
+      const isCredit = (s.payment_method === 'credit') || (s.payment_method === 'split' && parseFloat(s.change_due || 0) > 0);
+      const isPaid = s.credit_paid === 1 || s.payment_method === 'cash';
+      const remaining = (!isPaid && isCredit) ? totalAmt : 0;
+      if (!isPaid && isCredit) calculatedUnpaidDebt += totalAmt;
+
+      return {
+        id: s.id,
+        invoice_number: `INV-${s.id}`,
+        total_amount: totalAmt,
+        total_price: totalAmt,
+        totalPrice: totalAmt,
+        payment_method: s.payment_method || 'cash',
+        payment_label: s.payment_method === 'credit' ? 'آجل' : (s.payment_method === 'split' ? 'دفع مقسم' : 'نقدي (كاش)'),
+        date: s.date,
+        created_at: s.date,
+        createdAt: s.date,
+        delivery_type: s.delivery_type || 'store_pickup',
+        clinic_address: s.clinic_address || '',
+        is_credit: isCredit,
+        is_paid: isPaid,
+        remaining_debt: remaining,
+        status: isPaid ? 'completed' : (isCredit ? 'credit_unpaid' : 'completed'),
+        items: (s.items || []).map(it => ({
+          product_name: it.product_name,
+          quantity: parseInt(it.quantity || 1, 10),
+          unit_price: parseFloat(it.unit_price || 0),
+          total: parseFloat(it.unit_price || 0) * parseInt(it.quantity || 1, 10),
+          selected_option: it.selected_option
+        }))
+      };
+    });
+
+    const finalDebt = Math.max(parseFloat(customer.total_debt || 0), calculatedUnpaidDebt);
+
+    // Keep customer total_debt in sync with calculated unpaid debt if it was missing
+    if (finalDebt > parseFloat(customer.total_debt || 0)) {
+      posDb.query('UPDATE customers SET total_debt=$1 WHERE id=$2', [finalDebt, customer.id]).catch(() => {});
+    }
 
     res.json({
       ok: true,
       customer: {
         id: customer.id,
         customer_code: customer.customer_code || `DT-${1000 + customer.id}`,
+        barcode: customer.barcode || '',
+        is_vip: !!(customer.is_vip || (customer.customer_code && customer.customer_code.toLowerCase().startsWith('vip'))),
         name: customer.name,
         phone: customer.phone,
         extra_phones: customer.extra_phones || '',
         addresses: addrs,
         points_balance: parseInt(customer.points_balance || 0, 10),
-        total_debt: parseFloat(customer.total_debt || 0),
-        orders: sales
+        total_debt: finalDebt,
+        orders: formattedOrders
       }
     });
   } catch (err) {
+    console.error('[Customer Profile API Error]:', err);
     res.status(500).json({ error: err.message || 'خطأ داخلي' });
   }
 });
