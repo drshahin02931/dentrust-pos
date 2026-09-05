@@ -2650,16 +2650,17 @@ app.get(`${BASE}/api/customers/:cid/statement`, async (req, res) => {
 });
 
 // ── تعديل بيانات عميل ────────────────────────────────────────────────────────
-app.patch(`${BASE}/api/customers/:cid`, async (req, res) => {
+app.patch([`${BASE}/api/customers/:cid`, '/api/customers/:cid'], async (req, res) => {
   if (!isMgr(req) && !hasPerm(req, 'customers')) return res.status(403).json({ error: 'غير مصرح' });
   const cid = parseInt(req.params.cid, 10);
+  if (isNaN(cid)) return res.status(400).json({ error: 'معرف العميل غير صحيح' });
   const { name, phone, address, installment_plan, addresses, city, region } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'الاسم مطلوب' });
   try {
     let normAddrsJson = null;
-    let effectiveCity = city || null;
-    let effectiveRegion = region || null;
-    let effectiveAddress = address || null;
+    let effectiveCity = city ? String(city).trim() : null;
+    let effectiveRegion = region ? String(region).trim() : null;
+    let effectiveAddress = address ? String(address).trim() : null;
 
     if (addresses) {
       const norm = normalizeEgyptianAddresses(addresses, address);
@@ -2687,13 +2688,16 @@ app.patch(`${BASE}/api/customers/:cid`, async (req, res) => {
          installment_plan = COALESCE(NULLIF($4,''), installment_plan),
          city             = COALESCE(NULLIF($5,''), city),
          region           = COALESCE(NULLIF($6,''), region),
-         addresses        = COALESCE($7::jsonb, addresses)
+         addresses        = CASE WHEN $7::text IS NOT NULL AND $7::text <> '' THEN $7::jsonb ELSE addresses END
        WHERE id = $8`,
       [name.trim(), (phone||'').trim(), (effectiveAddress||'').trim(), (installment_plan||'').trim(), (effectiveCity||'').trim(), (effectiveRegion||'').trim(), normAddrsJson, cid]
     );
     if (!rowCount) return res.status(404).json({ error: 'العميل غير موجود' });
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) {
+    console.error('[PATCH /api/customers/:cid] Error:', err);
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
 });
 
 // ── ترحيل العناوين القديمة يدوياً أو عند الطلب ───────────────────────────────
@@ -2766,11 +2770,26 @@ app.post(`${BASE}/api/customers/merge`, async (req, res) => {
   } finally { client.release(); }
 });
 
-app.delete(`${BASE}/api/customers/:cid`, async (req, res) => {
+app.delete([`${BASE}/api/customers/:cid`, '/api/customers/:cid'], async (req, res) => {
+  if (!isMgr(req) && !hasPerm(req, 'customers')) return res.status(403).json({ error: 'غير مصرح' });
+  const cid = parseInt(req.params.cid, 10);
+  if (isNaN(cid)) return res.status(400).json({ error: 'معرف العميل غير صحيح' });
   try {
-    await posDb.query('DELETE FROM customers WHERE id=$1', [parseInt(req.params.cid, 10)]);
+    const { rows: [salesCount] } = await posDb.query('SELECT COUNT(*) as count FROM sales WHERE customer_id=$1', [cid]);
+    if (parseInt(salesCount?.count || 0, 10) > 0) {
+      return res.status(400).json({ error: 'لا يمكن حذف هذا العميل لوجود فواتير ومبيعات سابقة مسجلة باسمه' });
+    }
+    await posDb.query('DELETE FROM customer_payments WHERE customer_id=$1', [cid]).catch(() => {});
+    await posDb.query('DELETE FROM customer_manual_debts WHERE customer_id=$1', [cid]).catch(() => {});
+    await posDb.query('DELETE FROM installment_schedules WHERE customer_id=$1', [cid]).catch(() => {});
+    await posDb.query('DELETE FROM customer_audit_logs WHERE customer_id=$1', [cid]).catch(() => {});
+    const { rowCount } = await posDb.query('DELETE FROM customers WHERE id=$1', [cid]);
+    if (!rowCount) return res.status(404).json({ error: 'العميل غير موجود' });
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) {
+    console.error('[DELETE /api/customers/:cid] Error:', err);
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
 });
 
 // ── Manual Debts ────────────────────────────────────────────────────────────

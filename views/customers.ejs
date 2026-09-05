@@ -1275,7 +1275,12 @@ async function deleteInstallment(id) {
 // ── Delete ────────────────────────────────────────────────────────────────────
 async function confirmDelete() {
   if (!confirm(`حذف العميل "${currentCustomer.name}" نهائياً؟`)) return;
-  await fetch(`${BASE}/api/customers/${currentCustomer.id}`, { method:"DELETE" });
+  const res = await fetch(`${BASE}/api/customers/${currentCustomer.id}`, { method:"DELETE" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(data.error || 'حدث خطأ أثناء حذف العميل');
+    return;
+  }
   closeDetail();
   loadCustomers();
 }
@@ -1705,10 +1710,10 @@ async function saveEditCustomer(e) {
   const res  = await fetch(`${BASE}/api/customers/${currentCustomer.id}`, {
     method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    errEl.textContent = data.error || 'حدث خطأ';
+    errEl.textContent = data.error || 'حدث خطأ أثناء تعديل بيانات العميل';
     errEl.classList.remove('hidden');
     btn.disabled = false; btn.textContent = 'حفظ التعديلات';
     return;
