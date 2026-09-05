@@ -1888,45 +1888,15 @@ async function migrateLegacyCustomerCodes() {
 }
 setTimeout(migrateLegacyCustomerCodes, 3000);
 
-async function fixAllCustomerDebts() {
+// Restore Dr. Samar Amara's original debt balance
+setTimeout(async () => {
   try {
-    // Specifically restore Dr. Samar Amara first
-    await posDb.query("UPDATE customers SET total_debt = 32755 WHERE id = 22 OR name ILIKE '%سمر عمارة%'").catch(() => {});
-
-    // For any customer with recorded payments, ensure total_debt accurately reflects ledger
-    const { rows: payingCusts } = await posDb.query("SELECT DISTINCT customer_id FROM customer_payments");
-    for (const row of payingCusts) {
-      const cid = row.customer_id;
-      if (!cid) continue;
-      const { rows: creditSales } = await posDb.query(
-        "SELECT total_amount, amount_received, payment_method, payment_split FROM sales WHERE customer_id=$1 AND payment_method IN ('credit','split')",
-        [cid]
-      );
-      let totalInvoiced = 0;
-      for (const s of creditSales) {
-        if (s.payment_method === 'split') {
-          try { totalInvoiced += parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
-        } else {
-          totalInvoiced += parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0);
-        }
-      }
-      const { rows: [tp] } = await posDb.query("SELECT COALESCE(SUM(amount),0) as t FROM customer_payments WHERE customer_id=$1", [cid]);
-      const { rows: [tr] } = await posDb.query("SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r JOIN sales s ON s.id=r.sale_id WHERE s.customer_id=$1 AND s.payment_method IN ('credit','split')", [cid]);
-      const { rows: [md] } = await posDb.query("SELECT COALESCE(SUM(amount),0) as t FROM customer_manual_debts WHERE customer_id=$1", [cid]);
-
-      const totalReturned = parseFloat(tr?.t || 0);
-      const totalPaid = parseFloat(tp?.t || 0);
-      const manualDebts = parseFloat(md?.t || 0);
-      const ledgerDebt = Math.round(Math.max(0, (totalInvoiced - totalReturned + manualDebts) - totalPaid) * 100) / 100;
-
-      await posDb.query("UPDATE customers SET total_debt = $1 WHERE id = $2", [ledgerDebt, cid]);
-      console.log(`[Debt Fix] Restored customer #${cid} total_debt to true ledger: ${ledgerDebt}`);
-    }
+    await posDb.query("UPDATE customers SET total_debt = 32755 WHERE id = 22 OR name ILIKE '%سمر عمارة%'");
+    console.log("[Debt Fix] Restored Dr. Samar Amara debt to 32,755 EGP.");
   } catch (err) {
-    console.error('[Debt Fix] Error fixing customer debts:', err.message);
+    console.error('[Debt Fix] Error:', err.message);
   }
-}
-setTimeout(fixAllCustomerDebts, 4000);
+}, 3000);
 
 
 
