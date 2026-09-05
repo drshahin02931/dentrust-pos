@@ -5,7 +5,7 @@
    • Push notifications
 ═══════════════════════════════════════════════ */
 
-const CACHE = 'dentrust-pos-v7';
+const CACHE = 'dentrust-pos-v9';
 const STATIC_ASSETS = [
   '/',
   '/static/manifest.json',
@@ -30,13 +30,16 @@ self.addEventListener('activate', e => {
   );
 });
 
-/* ── Fetch: network-first for pages/API, cache-first for static ── */
+/* ── Fetch: network-first for pages, cache-first for static, NEVER intercept API ── */
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
 
   /* Skip non-GET and cross-origin */
   if (e.request.method !== 'GET') return;
   if (url.origin !== location.origin) return;
+
+  /* NEVER intercept API calls — browser must handle directly */
+  if (url.pathname.includes('/api/')) return;
 
   /* Static assets → cache first */
   if (url.pathname.includes('/static/') || url.pathname.includes('/uploads/')) {
@@ -52,7 +55,7 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  /* Pages & API → network first, fall back to cache */
+  /* Pages → network first, fall back to cache */
   e.respondWith(
     fetch(e.request)
       .then(res => {
@@ -62,7 +65,18 @@ self.addEventListener('fetch', e => {
         }
         return res;
       })
-      .catch(() => caches.match(e.request))
+      .catch(async () => {
+        const cached = await caches.match(e.request);
+        if (cached) return cached;
+        if (e.request.mode === 'navigate') {
+          const offlinePage = await caches.match('/');
+          if (offlinePage) return offlinePage;
+        }
+        return new Response('Network error', {
+          status: 503,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+        });
+      })
   );
 });
 
