@@ -2206,6 +2206,8 @@ app.post(`${BASE}/api/customer/login`, async (req, res) => {
       customer: {
         id: customer.id,
         customer_code: custCode,
+        barcode: customer.barcode || '',
+        is_vip: !!(customer.is_vip || (customer.customer_code && customer.customer_code.toLowerCase().startsWith('vip'))),
         name: customer.name,
         phone: customer.phone,
         extra_phones: customer.extra_phones || '',
