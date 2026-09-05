@@ -1888,6 +1888,47 @@ async function migrateLegacyCustomerCodes() {
 }
 setTimeout(migrateLegacyCustomerCodes, 3000);
 
+async function fixAllCustomerDebts() {
+  try {
+    // Specifically restore Dr. Samar Amara first
+    await posDb.query("UPDATE customers SET total_debt = 32755 WHERE id = 22 OR name ILIKE '%سمر عمارة%'").catch(() => {});
+
+    // For any customer with recorded payments, ensure total_debt accurately reflects ledger
+    const { rows: payingCusts } = await posDb.query("SELECT DISTINCT customer_id FROM customer_payments");
+    for (const row of payingCusts) {
+      const cid = row.customer_id;
+      if (!cid) continue;
+      const { rows: creditSales } = await posDb.query(
+        "SELECT total_amount, amount_received, payment_method, payment_split FROM sales WHERE customer_id=$1 AND payment_method IN ('credit','split')",
+        [cid]
+      );
+      let totalInvoiced = 0;
+      for (const s of creditSales) {
+        if (s.payment_method === 'split') {
+          try { totalInvoiced += parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
+        } else {
+          totalInvoiced += parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0);
+        }
+      }
+      const { rows: [tp] } = await posDb.query("SELECT COALESCE(SUM(amount),0) as t FROM customer_payments WHERE customer_id=$1", [cid]);
+      const { rows: [tr] } = await posDb.query("SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r JOIN sales s ON s.id=r.sale_id WHERE s.customer_id=$1 AND s.payment_method IN ('credit','split')", [cid]);
+      const { rows: [md] } = await posDb.query("SELECT COALESCE(SUM(amount),0) as t FROM customer_manual_debts WHERE customer_id=$1", [cid]);
+
+      const totalReturned = parseFloat(tr?.t || 0);
+      const totalPaid = parseFloat(tp?.t || 0);
+      const manualDebts = parseFloat(md?.t || 0);
+      const ledgerDebt = Math.round(Math.max(0, (totalInvoiced - totalReturned + manualDebts) - totalPaid) * 100) / 100;
+
+      await posDb.query("UPDATE customers SET total_debt = $1 WHERE id = $2", [ledgerDebt, cid]);
+      console.log(`[Debt Fix] Restored customer #${cid} total_debt to true ledger: ${ledgerDebt}`);
+    }
+  } catch (err) {
+    console.error('[Debt Fix] Error fixing customer debts:', err.message);
+  }
+}
+setTimeout(fixAllCustomerDebts, 4000);
+
+
 
 app.post([`${BASE}/api/customers`, '/api/customers'], async (req, res) => {
   const d = req.body;
@@ -2403,14 +2444,10 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
       posDb.query('UPDATE sales SET customer_id=$1 WHERE id=ANY($2::int[])', [customer.id, unlinkedIds]).catch(() => {});
     }
 
-    // Calculate real-time unpaid debt from credit invoices
-    let calculatedUnpaidDebt = 0;
     const formattedOrders = sales.map(s => {
       const totalAmt = parseFloat(s.total_amount || 0);
       const isCredit = (s.payment_method === 'credit') || (s.payment_method === 'split' && parseFloat(s.change_due || 0) > 0);
       const isPaid = s.credit_paid === 1 || s.payment_method === 'cash';
-      const remaining = (!isPaid && isCredit) ? totalAmt : 0;
-      if (!isPaid && isCredit) calculatedUnpaidDebt += totalAmt;
 
       return {
         id: s.id,
@@ -2427,7 +2464,6 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
         clinic_address: s.clinic_address || '',
         is_credit: isCredit,
         is_paid: isPaid,
-        remaining_debt: remaining,
         status: isPaid ? 'completed' : (isCredit ? 'credit_unpaid' : 'completed'),
         items: (s.items || []).map(it => ({
           product_name: it.product_name,
@@ -2439,12 +2475,7 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
       };
     });
 
-    const finalDebt = Math.max(parseFloat(customer.total_debt || 0), calculatedUnpaidDebt);
-
-    // Keep customer total_debt in sync with calculated unpaid debt if it was missing
-    if (finalDebt > parseFloat(customer.total_debt || 0)) {
-      posDb.query('UPDATE customers SET total_debt=$1 WHERE id=$2', [finalDebt, customer.id]).catch(() => {});
-    }
+    const trueCustomerDebt = parseFloat(customer.total_debt || 0);
 
     res.json({
       ok: true,
@@ -2458,7 +2489,7 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
         extra_phones: customer.extra_phones || '',
         addresses: addrs,
         points_balance: parseInt(customer.points_balance || 0, 10),
-        total_debt: finalDebt,
+        total_debt: trueCustomerDebt,
         orders: formattedOrders
       }
     });
