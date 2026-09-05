@@ -183,7 +183,7 @@ const upload = multer({
 
 // ── Page Routes ──────────────────────────────────────────────────────────────
 
-app.get([`${BASE}`, `${BASE}/`], (req, res) => {
+app.get([`${BASE}`, `${BASE}/`, `${BASE}/pos`, '/pos', '/'], (req, res) => {
   if (!hasPerm(req, 'pos')) {
     const fallbacks = [
       ['inventory',  `${BASE}/inventory`],
@@ -199,20 +199,20 @@ app.get([`${BASE}`, `${BASE}/`], (req, res) => {
   }
   return renderPage(req, res, 'pos');
 });
-app.get(`${BASE}/inventory`, (req, res) => {
+app.get([`${BASE}/inventory`, '/inventory'], (req, res) => {
   if (!hasPerm(req, 'inventory')) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'inventory');
 });
-app.get(`${BASE}/customers`, (req, res) => {
+app.get([`${BASE}/customers`, '/customers'], (req, res) => {
   if (!hasPerm(req, 'customers')) return res.redirect(`${BASE}/`);
   res.set('Cache-Control', 'no-store');
   return renderPage(req, res, 'customers');
 });
-app.get(`${BASE}/accounting`, (req, res) => {
+app.get([`${BASE}/accounting`, '/accounting'], (req, res) => {
   if (!hasPerm(req, 'accounting')) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'accounting');
 });
-app.get(`${BASE}/invoices`, (req, res) => {
+app.get([`${BASE}/invoices`, '/invoices'], (req, res) => {
   if (!hasPerm(req, 'invoices') && !hasPerm(req, 'process_returns')) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'invoices');
 });
@@ -800,7 +800,7 @@ app.get(`${BASE}/api/products/search`, async (req, res) => {
     res.set('Pragma', 'no-cache');
     res.set('Expires', '0');
 
-    const isPosRequest = !!(req.session && req.session.user) || req.headers['x-pos-app'] === '1' || req.query.manage === 'true';
+    const isPosRequest = !!(req.session && (req.session.user || req.session.user_id)) || req.headers['x-pos-app'] === '1' || req.query.manage === 'true';
     const hideCond = isPosRequest ? '' : `AND (COALESCE(is_hidden_from_website, false) = false) AND (section != 'hidden' OR section IS NULL)`;
 
     const q = (req.query.q || '').trim();
@@ -833,7 +833,7 @@ app.get(`${BASE}/api/products`, async (req, res) => {
     res.set('Expires', '0');
 
     // POS requests have an authenticated manager/cashier session or x-pos-app header
-    const isPosRequest = !!(req.session && req.session.user) || req.headers['x-pos-app'] === '1' || req.query.manage === 'true';
+    const isPosRequest = !!(req.session && (req.session.user || req.session.user_id)) || req.headers['x-pos-app'] === '1' || req.query.manage === 'true';
 
     const q = (req.query.q || '').trim();
 

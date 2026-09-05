@@ -70,7 +70,7 @@
 </div>
 
 <script>
-const BASE = (typeof window !== 'undefined' && window.BASE) ? window.BASE : '<%= typeof base !== "undefined" ? base : "" %>';
+const BASE = "<%- base %>";
 let allLogs = [];
 
 async function loadAuditLogs() {
