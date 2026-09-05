@@ -1843,9 +1843,18 @@ app.get(`${BASE}/api/customers`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
-app.post(`${BASE}/api/customers`, async (req, res) => {
+async function generateUniqueBarcode(clientOrDb) {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const { rows } = await clientOrDb.query('SELECT id FROM customers WHERE barcode=$1 OR customer_code=$1', [code]);
+    if (!rows.length) return code;
+  }
+  return (Date.now() % 900000 + 100000).toString();
+}
+
+app.post([`${BASE}/api/customers`, '/api/customers'], async (req, res) => {
   const d = req.body;
-  if (!d.name) return res.status(400).json({ error: 'الاسم مطلوب' });
+  if (!d.name || !d.name.trim()) return res.status(400).json({ error: 'الاسم مطلوب' });
   try {
     // Check duplicate phone before inserting
     if (d.phone && d.phone.trim()) {
@@ -1859,24 +1868,167 @@ app.post(`${BASE}/api/customers`, async (req, res) => {
         });
       }
     }
-    const { rows: [newCust] } = await posDb.query(
-      `INSERT INTO customers (name, phone, address, installment_plan, source, password_hash, points_balance)
-       VALUES ($1,$2,$3,$4,'pos','1234567',0) RETURNING id`,
-      [d.name, d.phone?.trim() || '', d.address || '', d.installment_plan || '']
-    );
-    const custCode = `DT-${1000 + newCust.id}`;
-    await posDb.query('UPDATE customers SET customer_code=$1 WHERE id=$2', [custCode, newCust.id]);
 
-    // ── Sync new customer to website (Supabase) ──────────────────────────────
+    let barcode = (d.barcode || '').toString().trim();
+    if (barcode) {
+      if (!/^\d{6}$/.test(barcode)) {
+        return res.status(400).json({ error: 'الباركود يجب أن يتكون من 6 أرقام فقط' });
+      }
+      const { rows: [dup] } = await posDb.query('SELECT id, name FROM customers WHERE barcode=$1 OR customer_code=$1', [barcode]);
+      if (dup) {
+        return res.status(409).json({ error: `عفواً، هذا الباركود مسجل لعميل آخر مسبقاً (${dup.name})` });
+      }
+    } else {
+      barcode = await generateUniqueBarcode(posDb);
+    }
+
+    const isVip = !!d.is_vip;
+    const custCode = isVip ? `vip${barcode}` : barcode;
+    const extraPhonesStr = Array.isArray(d.extra_phones) ? d.extra_phones.filter(Boolean).join(',') : (d.extra_phones || '');
+    let addrsJson = '[]';
+    if (d.addresses) {
+      addrsJson = typeof d.addresses === 'string' ? d.addresses : JSON.stringify(d.addresses);
+    } else if (d.address && d.address.trim()) {
+      addrsJson = JSON.stringify([{ id: 'addr_' + Date.now(), title: 'العيادة الرئيسية', address: d.address.trim(), city: d.city || 'القاهرة', region: d.region || '' }]);
+    }
+
+    const { rows: [newCust] } = await posDb.query(
+      `INSERT INTO customers (name, phone, address, installment_plan, source, password_hash, points_balance, barcode, is_vip, customer_code, extra_phones, addresses)
+       VALUES ($1,$2,$3,$4,'pos','1234567',0,$5,$6,$7,$8,$9) RETURNING *`,
+      [d.name.trim(), d.phone?.trim() || '', d.address || '', d.installment_plan || '', barcode, isVip, custCode, extraPhonesStr, addrsJson]
+    );
+
+    // Sync new customer to website (Supabase)
     try {
-      const { rows: [cRow] } = await posDb.query('SELECT id, name, phone, customer_code FROM customers WHERE id=$1', [newCust.id]);
-      if (cRow) syncCustomerToSupabase(cRow).catch(() => {});
+      syncCustomerToSupabase(newCust).catch(() => {});
     } catch (syncErr) {
       console.error('[sync] POS→Supabase customer sync failed:', syncErr.message);
     }
-    // ────────────────────────────────────────────────────────────────────────
-    res.status(201).json({ ok: true, customer_id: newCust.id, customer_code: custCode });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+
+    // Audit log
+    await posDb.query(
+      `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+       VALUES ($1, $2, $3, 'registration', 'إضافة عميل جديد من الكاشير/POS', $4, $5)`,
+      [newCust.id, custCode, newCust.name, newCust.phone || '—', req.session?.username || 'الكاشير']
+    ).catch(() => {});
+
+    res.status(201).json({ ok: true, customer: newCust, customer_id: newCust.id, customer_code: custCode, barcode });
+  } catch (err) {
+    console.error('Error creating customer:', err);
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+// GET /api/customer/generate-barcode
+app.get([`${BASE}/api/customer/generate-barcode`, '/api/customer/generate-barcode'], async (req, res) => {
+  try {
+    const barcode = await generateUniqueBarcode(posDb);
+    res.json({ ok: true, barcode });
+  } catch (err) {
+    res.status(500).json({ error: 'تعذر توليد الباركود' });
+  }
+});
+
+// POST /api/customer/update-barcode
+app.post([`${BASE}/api/customer/update-barcode`, '/api/customer/update-barcode'], async (req, res) => {
+  const { customer_id, barcode } = req.body;
+  if (!customer_id) return res.status(400).json({ error: 'معرف العميل مطلوب' });
+  const cleanCode = (barcode || '').toString().trim();
+  if (!/^\d{6}$/.test(cleanCode)) {
+    return res.status(400).json({ error: 'الباركود يجب أن يتكون من 6 أرقام فقط بدون حروف أو رموز' });
+  }
+  try {
+    const { rows: [dup] } = await posDb.query(
+      'SELECT id, name FROM customers WHERE (barcode=$1 OR customer_code=$1 OR customer_code=$2) AND id!=$3',
+      [cleanCode, `vip${cleanCode}`, customer_id]
+    );
+    if (dup) {
+      return res.status(409).json({ error: `عفواً، هذا الباركود مسجل لعميل آخر مسبقاً (${dup.name})` });
+    }
+    const { rows: [cust] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [customer_id]);
+    if (!cust) return res.status(404).json({ error: 'العميل غير موجود' });
+
+    const newCustCode = cust.is_vip ? `vip${cleanCode}` : cleanCode;
+    await posDb.query('UPDATE customers SET barcode=$1, customer_code=$2 WHERE id=$3', [cleanCode, newCustCode, customer_id]);
+
+    await posDb.query(
+      `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+       VALUES ($1, $2, $3, 'update_barcode', $4, $5, $6)`,
+      [customer_id, newCustCode, cust.name, `تعديل الباركود إلى: ${cleanCode}`, cust.phone || '—', req.session?.username || 'الإدارة']
+    ).catch(() => {});
+
+    res.json({ ok: true, barcode: cleanCode, customer_code: newCustCode });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+// POST /api/customer/toggle-vip
+app.post([`${BASE}/api/customer/toggle-vip`, '/api/customer/toggle-vip'], async (req, res) => {
+  const { customer_id } = req.body;
+  if (!customer_id) return res.status(400).json({ error: 'معرف العميل مطلوب' });
+  try {
+    const { rows: [cust] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [customer_id]);
+    if (!cust) return res.status(404).json({ error: 'العميل غير موجود' });
+
+    let barcode = cust.barcode;
+    if (!barcode || !/^\d{6}$/.test(barcode)) {
+      barcode = await generateUniqueBarcode(posDb);
+      await posDb.query('UPDATE customers SET barcode=$1 WHERE id=$2', [barcode, customer_id]);
+    }
+
+    const nextVip = !cust.is_vip;
+    const newCode = nextVip ? `vip${barcode}` : barcode;
+    await posDb.query('UPDATE customers SET is_vip=$1, customer_code=$2 WHERE id=$3', [nextVip, newCode, customer_id]);
+
+    await posDb.query(
+      `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+       VALUES ($1, $2, $3, 'toggle_vip', $4, $5, $6)`,
+      [customer_id, newCode, cust.name, nextVip ? 'ترقية العميل إلى عضوية 👑 VIP' : 'إلغاء عضوية VIP والعودة للكود العادي', cust.phone || '—', req.session?.username || 'الإدارة']
+    ).catch(() => {});
+
+    res.json({ ok: true, is_vip: nextVip, customer_code: newCode, barcode });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+// POST /api/customer/add-address
+app.post([`${BASE}/api/customer/add-address`, '/api/customer/add-address'], async (req, res) => {
+  const { customer_id, title, city, region, details } = req.body;
+  if (!customer_id) return res.status(400).json({ error: 'معرف العميل مطلوب' });
+  if (!title || !city) return res.status(400).json({ error: 'اسم العيادة والمحافظة مطلوبان' });
+  try {
+    const { rows: [cust] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [customer_id]);
+    if (!cust) return res.status(404).json({ error: 'العميل غير موجود' });
+
+    let addrs = [];
+    try {
+      addrs = typeof cust.addresses === 'string' ? JSON.parse(cust.addresses) : (cust.addresses || []);
+    } catch (_) { addrs = []; }
+
+    const newAddr = {
+      id: 'addr_' + Date.now(),
+      title: title.trim(),
+      city: city.trim(),
+      region: (region || '').trim(),
+      details: (details || '').trim(),
+      address: `${city.trim()} - ${(region||'').trim()} - ${(details||'').trim()}`.replace(/\s*-\s*-\s*/g, ' - ').trim()
+    };
+    addrs.push(newAddr);
+
+    await posDb.query('UPDATE customers SET addresses=$1 WHERE id=$2', [JSON.stringify(addrs), customer_id]);
+
+    await posDb.query(
+      `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+       VALUES ($1, $2, $3, 'add_address', $4, $5, $6)`,
+      [customer_id, cust.customer_code, cust.name, `إضافة عيادة جديدة: ${newAddr.title} (${newAddr.address})`, cust.phone || '—', req.session?.username || 'الكاشير']
+    ).catch(() => {});
+
+    res.json({ ok: true, addresses: addrs, new_address: newAddr });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
 });
 
 // ── Customer Auth & Profile Routes ──────────────────────────────────────────
@@ -1917,16 +2069,16 @@ app.post(`${BASE}/api/customer/register`, async (req, res) => {
     }
 
     const extraStr = Array.isArray(extra_phones) ? extra_phones.filter(Boolean).join(',') : (extra_phones || '');
+    const barcode = await generateUniqueBarcode(posDb);
 
     const { rows: [ins] } = await posDb.query(
-      `INSERT INTO customers (name, phone, password_hash, extra_phones, addresses, source, points_balance, is_verified)
-       VALUES ($1, $2, $3, $4, $5, 'website', 0, false)
+      `INSERT INTO customers (name, phone, password_hash, extra_phones, addresses, source, points_balance, is_verified, barcode, customer_code)
+       VALUES ($1, $2, $3, $4, $5, 'website', 0, false, $6, $6)
        RETURNING id`,
-      [name.trim(), cleanPhone, passHash, extraStr, JSON.stringify(initialAddresses)]
+      [name.trim(), cleanPhone, passHash, extraStr, JSON.stringify(initialAddresses), barcode]
     );
 
-    const customerCode = `DT-${1000 + ins.id}`;
-    await posDb.query('UPDATE customers SET customer_code=$1 WHERE id=$2', [customerCode, ins.id]);
+    const customerCode = barcode;
 
     await posDb.query(
       `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
@@ -2240,19 +2392,30 @@ app.post(`${BASE}/api/promo/validate`, async (req, res) => {
   }
 });
 
-app.get(`${BASE}/api/customer-audit-logs`, async (req, res) => {
+app.get([`${BASE}/api/customer-audit-logs`, '/api/customer-audit-logs'], async (req, res) => {
   try {
+    await posDb.query(`CREATE TABLE IF NOT EXISTS customer_audit_logs (
+      id SERIAL PRIMARY KEY,
+      customer_id INTEGER,
+      customer_code TEXT,
+      customer_name TEXT,
+      action_type TEXT NOT NULL,
+      details TEXT,
+      current_phones TEXT,
+      user_name TEXT DEFAULT 'الموقع',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
     const { rows } = await posDb.query('SELECT * FROM customer_audit_logs ORDER BY id DESC LIMIT 300');
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) { res.status(500).json({ error: err.message || 'خطأ داخلي' }); }
 });
 
-app.get(`${BASE}/customer-audit-logs`, (req, res) => {
+app.get([`${BASE}/customer-audit-logs`, '/customer-audit-logs'], (req, res) => {
   if (!hasPerm(req, 'customers')) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'customer_audit_logs');
 });
 
-app.get(`${BASE}/api/website-registrations`, async (req, res) => {
+app.get([`${BASE}/api/website-registrations`, '/api/website-registrations'], async (req, res) => {
   try {
     const { rows } = await posDb.query(
       `SELECT c.*, 
@@ -2262,17 +2425,17 @@ app.get(`${BASE}/api/website-registrations`, async (req, res) => {
        ORDER BY c.id DESC LIMIT 300`
     );
     res.json(rows);
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) { res.status(500).json({ error: err.message || 'خطأ داخلي' }); }
 });
 
-app.get(`${BASE}/api/website-registrations/count`, async (req, res) => {
+app.get([`${BASE}/api/website-registrations/count`, '/api/website-registrations/count'], async (req, res) => {
   try {
     const { rows: [row] } = await posDb.query("SELECT COUNT(*) as count FROM customers WHERE source='website'");
     res.json({ count: parseInt(row?.count || 0, 10) });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) { res.status(500).json({ error: err.message || 'خطأ داخلي' }); }
 });
 
-app.get(`${BASE}/website-registrations`, (req, res) => {
+app.get([`${BASE}/website-registrations`, '/website-registrations'], (req, res) => {
   if (!hasPerm(req, 'customers')) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'website_registrations');
 });
@@ -6282,7 +6445,7 @@ app.get(`${BASE}/bot-knowledge`, (req, res) => {
 });
 
 // ── Website Orders Dashboard (page) ──────────────────────────────────────────
-app.get(`${BASE}/website-orders`, (req, res) => {
+app.get([`${BASE}/website-orders`, '/website-orders'], (req, res) => {
   if (!req.session?.user_id) return res.redirect(`${BASE}/login`);
   return renderPage(req, res, 'website_orders');
 });

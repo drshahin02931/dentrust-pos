@@ -89,19 +89,21 @@
 </div>
 
 <script>
+const BASE = (typeof window !== 'undefined' && window.BASE) ? window.BASE : '<%= typeof base !== "undefined" ? base : "" %>';
 let allRegistrations = [];
 let pendingResetCustId = null;
 
 async function loadRegistrations() {
   const container = document.getElementById("registrationsContainer");
   try {
-    const res = await fetch(`${BASE}/api/website-registrations`);
-    if (!res.ok) throw new Error("فشل الجلب");
+    const res = await fetch(`${BASE}/api/website-registrations`, { credentials: 'include' });
+    if (!res.ok) throw new Error("فشل الجلب (كود: " + res.status + ")");
     allRegistrations = await res.json();
     updateStats(allRegistrations);
     filterList();
   } catch (err) {
-    container.innerHTML = `<div class="bg-red-50 border border-red-200 text-red-700 p-6 rounded-2xl text-center text-sm font-semibold">تعذر تحميل بيانات التسجيلات. يرجى إعادة المحاولة.</div>`;
+    console.error("Error loading registrations:", err);
+    container.innerHTML = `<div class="bg-red-50 border border-red-200 text-red-700 p-6 rounded-2xl text-center text-sm font-semibold">تعذر تحميل بيانات التسجيلات (${err.message}). يرجى إعادة المحاولة.</div>`;
   }
 }
 

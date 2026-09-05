@@ -15,7 +15,11 @@
   <script>
     tailwind.config = {
       theme: { extend: { fontFamily: { sans: ['Segoe UI', 'Arial', 'sans-serif'] } } }
-    }
+    };
+    window.BASE = '<%= base %>';
+    window.BASE_PATH = '<%= base %>';
+    var BASE = '<%= base %>';
+    var BASE_PATH = '<%= base %>';
   </script>
   <style>
     @media print { .no-print { display: none !important; } }

@@ -38,32 +38,68 @@
 
 <!-- ══════════════════════ Add Customer Modal ══════════════════════ -->
 <div id="addModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-  <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl">
-    <div class="p-5 border-b flex items-center justify-between">
+  <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] flex flex-col">
+    <div class="p-5 border-b flex items-center justify-between shrink-0">
       <h3 class="font-bold text-gray-800 text-lg">إضافة عميل جديد</h3>
       <button onclick="closeAddModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
     </div>
-    <form onsubmit="addCustomer(event)" class="p-5 space-y-4">
+    <form onsubmit="addCustomer(event)" class="p-5 space-y-3.5 overflow-y-auto">
       <div>
-        <label class="text-xs font-medium text-gray-600" data-ar="الاسم *" data-en="Name *">الاسم *</label>
-        <input id="f-name" required class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="اسم الدكتور"/>
+        <label class="text-xs font-bold text-gray-700 block mb-1">اسم الطبيب / العميل <span class="text-red-500">*</span></label>
+        <input id="f-name" required class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="د. أحمد محمد"/>
       </div>
+      
+      <!-- Barcode 6 digits -->
       <div>
-        <label class="text-xs font-medium text-gray-600" data-ar="رقم الهاتف" data-en="Phone">رقم الهاتف</label>
-        <input id="f-phone" type="tel" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="01xxxxxxxxx"/>
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-xs font-bold text-gray-700">الباركود (6 أرقام عشوائية) <span class="text-red-500">*</span></label>
+          <button type="button" onclick="generateNewBarcodeForModal('f-barcode')" class="text-xs text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1">
+            <span>🔄</span> توليد باركود جديد
+          </button>
+        </div>
+        <input id="f-barcode" required type="text" maxlength="6" pattern="[0-9]{6}"
+          class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm font-mono font-bold text-blue-800 tracking-wider focus:outline-none focus:ring-2 focus:ring-blue-300"
+          placeholder="مثال: 849201"/>
+        <p class="text-[11px] text-gray-400 mt-0.5">باركود رقمي فريد خاص بالطبيب مكون من 6 أرقام يمنع التكرار.</p>
       </div>
+
+      <!-- Primary Phone -->
       <div>
-        <label class="text-xs font-medium text-gray-600" data-ar="العنوان" data-en="Address">العنوان</label>
-        <input id="f-address" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="العنوان / المنطقة"/>
+        <label class="text-xs font-bold text-gray-700 block mb-1">رقم الهاتف الأساسي</label>
+        <input id="f-phone" type="tel" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="01xxxxxxxxx"/>
       </div>
+
+      <!-- Extra phones (up to 3) -->
       <div>
-        <label class="text-xs font-medium text-gray-600" data-ar="خطة التقسيط" data-en="Installment Plan">خطة التقسيط</label>
-        <input id="f-plan" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="مثال: 500 جنيه شهرياً"/>
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-xs font-semibold text-gray-600">أرقام هواتف إضافية (العيادة / المساعد)</label>
+          <button type="button" onclick="addExtraPhoneField('extraPhonesContainer')" class="text-xs text-emerald-600 hover:text-emerald-800 font-bold">
+            ＋ إضافة رقم
+          </button>
+        </div>
+        <div id="extraPhonesContainer" class="space-y-1.5"></div>
       </div>
+
+      <!-- Clinic Address -->
+      <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2">
+        <label class="text-xs font-bold text-gray-700 block">🏥 عنوان العيادة الرئيسية (اختياري)</label>
+        <input id="f-clinic-name" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="اسم العيادة (مثال: عيادة الدقي)"/>
+        <div class="grid grid-cols-2 gap-2">
+          <input id="f-clinic-city" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="المحافظة (مثال: الجيزة)"/>
+          <input id="f-clinic-region" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="المنطقة (مثال: الدقي)"/>
+        </div>
+        <input id="f-clinic-details" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="الشارع والتفاصيل (مثال: ش التحرير، عمارة 15، الدور 3)"/>
+      </div>
+
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1">خطة التقسيط / ملاحظات</label>
+        <input id="f-plan" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="مثال: 500 جنيه شهرياً"/>
+      </div>
+
       <div id="addModalErr" class="hidden bg-red-50 border border-red-300 text-red-700 text-sm rounded-xl px-3 py-2"></div>
-      <div class="flex gap-3 pt-2">
-        <button type="submit" id="addModalBtn" class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800" data-ar="إضافة" data-en="Add">إضافة</button>
-        <button type="button" onclick="closeAddModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl" data-ar="إلغاء" data-en="Cancel">إلغاء</button>
+      <div class="flex gap-3 pt-2 shrink-0">
+        <button type="submit" id="addModalBtn" class="flex-1 bg-blue-700 text-white font-bold py-2.5 rounded-xl hover:bg-blue-800 shadow-sm text-sm">حفظ وإضافة العميل</button>
+        <button type="button" onclick="closeAddModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">إلغاء</button>
       </div>
     </form>
   </div>
@@ -82,6 +118,12 @@
         <div class="flex items-center gap-3 mt-2">
           <span id="detailDebtBadge" class="text-sm font-bold px-3 py-1 rounded-full"></span>
           <span id="detailPlan" class="text-xs text-gray-400"></span>
+        </div>
+        <div class="flex items-center gap-2 mt-2 flex-wrap">
+          <span class="text-xs text-gray-500 font-semibold">🏷️ الباركود:</span>
+          <span id="detailBarcodeText" class="font-mono font-black text-sm text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-md border border-blue-200"></span>
+          <button onclick="promptEditBarcode()" class="text-xs text-blue-600 hover:text-blue-800 font-bold underline">✏️ تعديل الباركود</button>
+          <span id="detailVipBadge" class="hidden bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-900 font-black text-xs px-2.5 py-0.5 rounded-md shadow-xs">👑 VIP MEMBER</span>
         </div>
         <!-- Statement summary strip -->
         <div id="statementStrip" class="hidden mt-3 grid grid-cols-3 gap-2 text-center">
@@ -104,6 +146,9 @@
 
     <!-- Action buttons -->
     <div class="px-5 py-3 border-b bg-gray-50 flex gap-2 flex-wrap shrink-0">
+      <button id="btnToggleVip" onclick="toggleCustomerVip()" class="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold px-4 py-2 rounded-xl shadow-sm">
+        👑 تحويل إلى VIP
+      </button>
       <button id="btnWhatsapp" onclick="openWhatsapp()" class="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-sm">
         <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.123 1.532 5.855L.054 23.5l5.819-1.527A11.938 11.938 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.012-1.375l-.36-.213-3.727.977.994-3.63-.235-.374A9.818 9.818 0 1112 21.818z"/></svg>
         واتساب
@@ -258,7 +303,8 @@ function renderCustomers(data) {
         <div class="min-w-0">
           <div class="flex items-center gap-1.5 flex-wrap">
             <span class="font-bold text-gray-800">${c.name}</span>
-            <span class="bg-blue-100 text-blue-800 font-mono font-black text-[11px] px-1.5 py-0.5 rounded-md">${custCode}</span>
+            <span class="bg-blue-100 text-blue-800 font-mono font-black text-[11px] px-1.5 py-0.5 rounded-md">${c.barcode || custCode}</span>
+            ${c.is_vip ? '<span class="bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-900 font-black text-[10px] px-2 py-0.5 rounded-md shadow-xs flex items-center gap-1">👑 VIP</span>' : ''}
             ${srcBadge}
             ${pointsBadge}
           </div>
@@ -277,11 +323,18 @@ function renderCustomers(data) {
              <div class="text-xs text-red-400">جنيه آجل</div>`
           : `<div class="text-green-600 font-bold text-sm">✓ مسدّد</div>`
         }
-        <button onclick="event.stopPropagation(); quickResetPassword(${c.id}, '${c.name.replace(/'/g, "\\'")}')"
-          class="mt-1 text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-lg transition-all"
-          title="إعادة تعيين كلمة المرور إلى 1234567">
-          🔑 تصفير الباسورد
-        </button>
+        <div class="flex items-center gap-1 mt-1 justify-end">
+          <button onclick="event.stopPropagation(); quickToggleVip(${c.id}, '${c.name.replace(/'/g, "\\'")}')"
+            class="text-[11px] font-bold ${c.is_vip ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300' : 'bg-gray-100 hover:bg-amber-50 text-gray-700 hover:text-amber-700 border border-gray-200'} px-2 py-0.5 rounded-lg transition-all"
+            title="${c.is_vip ? 'إلغاء عضوية VIP' : 'ترقية العميل إلى VIP'}">
+            ${c.is_vip ? '👑 VIP' : '+ ترقية VIP'}
+          </button>
+          <button onclick="event.stopPropagation(); quickResetPassword(${c.id}, '${c.name.replace(/'/g, "\\'")}')"
+            class="text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-lg transition-all"
+            title="إعادة تعيين كلمة المرور إلى 1234567">
+            🔑 تصفير
+          </button>
+        </div>
       </div>
     </div>`;
   }).join("");
@@ -316,47 +369,176 @@ function filterCustomers() {
 }
 
 // ── Add customer ──────────────────────────────────────────────────────────────
-function openAddModal() { document.getElementById("addModal").classList.remove("hidden"); }
+async function generateNewBarcodeForModal(targetInputId) {
+  const inp = document.getElementById(targetInputId);
+  if (!inp) return;
+  inp.value = "جاري التوليد...";
+  try {
+    const res = await fetch(`${BASE}/api/customer/generate-barcode`);
+    const data = await res.json();
+    if (data.ok && data.barcode) inp.value = data.barcode;
+    else inp.value = Math.floor(100000 + Math.random() * 900000).toString();
+  } catch (_) {
+    inp.value = Math.floor(100000 + Math.random() * 900000).toString();
+  }
+}
+
+function addExtraPhoneField(containerId, initialVal = "") {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const currentCount = container.querySelectorAll("input").length;
+  if (currentCount >= 3) {
+    alert("الحد الأقصى للأرقام الإضافية هو 3 أرقام فقط.");
+    return;
+  }
+  const div = document.createElement("div");
+  div.className = "flex items-center gap-2";
+  div.innerHTML = `
+    <input type="tel" value="${initialVal}" placeholder="رقم إضافي (عيادة / مساعد)"
+      class="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-mono bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"/>
+    <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:text-red-700 text-sm font-black px-1.5 leading-none">✕</button>
+  `;
+  container.appendChild(div);
+}
+
+function openAddModal() {
+  document.getElementById("addModal").classList.remove("hidden");
+  generateNewBarcodeForModal("f-barcode");
+}
+
 function closeAddModal() {
   document.getElementById("addModal").classList.add("hidden");
-  ["f-name","f-phone","f-address","f-plan"].forEach(id => document.getElementById(id).value="");
+  ["f-name","f-phone","f-barcode","f-clinic-name","f-clinic-city","f-clinic-region","f-clinic-details","f-plan"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  const container = document.getElementById("extraPhonesContainer");
+  if (container) container.innerHTML = "";
   const errEl = document.getElementById("addModalErr");
   if (errEl) { errEl.classList.add("hidden"); errEl.textContent=""; }
   const btn = document.getElementById("addModalBtn");
-  if (btn) { btn.disabled=false; btn.textContent="إضافة"; }
+  if (btn) { btn.disabled=false; btn.textContent="حفظ وإضافة العميل"; }
 }
+
 async function addCustomer(e) {
   e.preventDefault();
   const errEl = document.getElementById("addModalErr");
   const btn   = document.getElementById("addModalBtn");
   errEl.classList.add("hidden");
   btn.disabled = true; btn.textContent = "جارٍ الإضافة...";
+
+  const name = document.getElementById("f-name").value.trim();
+  const barcode = (document.getElementById("f-barcode")?.value || "").trim();
+  const phone = document.getElementById("f-phone").value.trim();
+  const plan = document.getElementById("f-plan")?.value.trim() || "";
+
+  // Extra phones
+  const extraInps = document.querySelectorAll("#extraPhonesContainer input");
+  const extraPhones = Array.from(extraInps).map(inp => inp.value.trim()).filter(Boolean);
+
+  // Clinic address
+  const cName = document.getElementById("f-clinic-name")?.value.trim() || "";
+  const cCity = document.getElementById("f-clinic-city")?.value.trim() || "";
+  const cRegion = document.getElementById("f-clinic-region")?.value.trim() || "";
+  const cDetails = document.getElementById("f-clinic-details")?.value.trim() || "";
+  let addresses = [];
+  if (cName || cCity || cRegion || cDetails) {
+    addresses.push({
+      id: 'addr_' + Date.now(),
+      title: cName || 'العيادة الرئيسية',
+      city: cCity || 'القاهرة',
+      region: cRegion || '',
+      details: cDetails || '',
+      address: `${cCity} - ${cRegion} - ${cDetails}`.replace(/\s*-\s*-\s*/g, ' - ').trim()
+    });
+  }
+
   try {
     const res  = await fetch(`${BASE}/api/customers`, {
       method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({
-        name:             document.getElementById("f-name").value,
-        phone:            document.getElementById("f-phone").value,
-        address:          document.getElementById("f-address").value,
-        installment_plan: document.getElementById("f-plan").value
+        name, phone, barcode,
+        extra_phones: extraPhones,
+        addresses,
+        installment_plan: plan
       })
     });
     const data = await res.json();
     if (!res.ok) {
-      errEl.textContent = data.error || "حدث خطأ";
+      errEl.textContent = data.error || "حدث خطأ أثناء الحفظ";
       errEl.classList.remove("hidden");
-      btn.disabled = false; btn.textContent = "إضافة";
+      btn.disabled = false; btn.textContent = "حفظ وإضافة العميل";
       return;
     }
     closeAddModal(); loadCustomers();
   } catch(_) {
     errEl.textContent = "حدث خطأ في الاتصال";
     errEl.classList.remove("hidden");
-    btn.disabled = false; btn.textContent = "إضافة";
+    btn.disabled = false; btn.textContent = "حفظ وإضافة العميل";
   }
 }
 
 // ── Detail modal ──────────────────────────────────────────────────────────────
+async function promptEditBarcode() {
+  if (!currentCustomer) return;
+  const oldBarcode = currentCustomer.barcode || currentCustomer.customer_code?.replace(/^vip/i, '') || '';
+  const newCode = prompt("أدخل الباركود الجديد للعميل (يجب أن يكون 6 أرقام فقط):", oldBarcode);
+  if (newCode === null) return;
+  const clean = newCode.trim();
+  if (!/^\d{6}$/.test(clean)) {
+    alert("❌ عذراً، يجب أن يتكون الباركود من 6 أرقام فقط (مثال: 849201).");
+    return;
+  }
+  try {
+    const res = await fetch(`${BASE}/api/customer/update-barcode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_id: currentCustomer.id, barcode: clean })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "فشل تعديل الباركود");
+    alert("✅ تم حفظ الباركود الجديد بنجاح: " + clean);
+    currentCustomer.barcode = clean;
+    currentCustomer.customer_code = data.customer_code;
+    document.getElementById("detailBarcodeText").textContent = clean;
+    loadCustomers();
+  } catch (err) {
+    alert("❌ " + err.message);
+  }
+}
+
+async function quickToggleVip(cid, name) {
+  const cust = allCustomers.find(x => x.id === cid);
+  const isVip = cust ? cust.is_vip : false;
+  const msg = isVip
+    ? `هل تريد إلغاء عضوية VIP للطبيب "${name}" والعودة للكود العادي؟`
+    : `هل تريد ترقية الطبيب "${name}" إلى عضوية VIP الفخمة (توصيل مجاني 100%)؟`;
+  if (!confirm(msg)) return;
+  try {
+    const res = await fetch(`${BASE}/api/customer/toggle-vip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_id: cid })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "فشل تعديل حالة VIP");
+    alert(data.is_vip ? "✅ تم ترقية العميل إلى 👑 VIP بنجاح!" : "✅ تم إلغاء عضوية VIP بنجاح.");
+    await loadCustomers();
+    if (currentCustomer && currentCustomer.id === cid) {
+      currentCustomer.is_vip = data.is_vip;
+      currentCustomer.customer_code = data.customer_code;
+      openDetail(cid);
+    }
+  } catch (err) {
+    alert("❌ " + err.message);
+  }
+}
+
+async function toggleCustomerVip() {
+  if (!currentCustomer) return;
+  await quickToggleVip(currentCustomer.id, currentCustomer.name);
+}
+
 async function openDetail(cid) {
   const c = allCustomers.find(x => x.id === cid);
   if (!c) return;
@@ -366,6 +548,22 @@ async function openDetail(cid) {
   document.getElementById("detailName").textContent = c.name;
   document.getElementById("detailPhone").textContent = c.phone ? `📞 ${c.phone}` : "";
   document.getElementById("detailAddress").textContent = c.address ? `📍 ${c.address}` : "";
+  
+  const barcode = c.barcode || c.customer_code?.replace(/^vip/i, '') || '';
+  document.getElementById("detailBarcodeText").textContent = barcode || '—';
+  
+  const vipBadge = document.getElementById("detailVipBadge");
+  const btnToggleVip = document.getElementById("btnToggleVip");
+  if (c.is_vip) {
+    vipBadge.classList.remove("hidden");
+    btnToggleVip.textContent = "👑 VIP (مفعل - إلغاء)";
+    btnToggleVip.className = "flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold px-4 py-2 rounded-xl shadow-sm";
+  } else {
+    vipBadge.classList.add("hidden");
+    btnToggleVip.textContent = "👑 تحويل إلى VIP";
+    btnToggleVip.className = "flex items-center gap-1.5 bg-gray-100 hover:bg-amber-100 text-gray-700 hover:text-amber-800 text-sm font-bold px-4 py-2 rounded-xl shadow-sm border border-gray-200";
+  }
+
   const badge = document.getElementById("detailDebtBadge");
   if (c.total_debt > 0) {
     badge.textContent = `متبقي: ${c.total_debt.toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه`;

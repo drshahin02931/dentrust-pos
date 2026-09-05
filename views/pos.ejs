@@ -151,11 +151,11 @@
         <div id="customerSection" class="space-y-1.5">
           <!-- Live Search Input -->
           <input id="customerSearchInput" type="text" oninput="onCustomerSearch(this.value)"
-            placeholder="🔍 ابحث بالاسم، كود DT-XXXX، أو أي رقم هاتف..."
+            placeholder="🔍 ابحث باسم الطبيب، الباركود (6 أرقام)، أو أي رقم هاتف..."
             class="w-full border rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300"/>
 
           <!-- Customer select -->
-          <select id="customerSelect" onchange="onCustomerSelectChange()" class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200">
+          <select id="customerSelect" onchange="onCustomerSelectChange()" class="w-full border rounded-xl px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-200">
             <option value="" data-ar="-- اختر عميل (اختياري) --" data-en="-- Select customer (optional) --">-- اختر عميل (اختياري) --</option>
           </select>
 
@@ -163,7 +163,12 @@
           <div id="clinicAddressBox" class="hidden bg-gray-50 border border-gray-200 rounded-xl p-2.5 space-y-1.5">
             <div class="text-[11px] font-bold text-gray-700 flex items-center justify-between">
               <span>🏥 عنوان العيادة للفاتورة:</span>
-              <span id="addressesCountBadge" class="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded"></span>
+              <div class="flex items-center gap-1.5">
+                <span id="addressesCountBadge" class="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded"></span>
+                <button type="button" onclick="openQuickAddClinicModal()" class="text-[11px] text-blue-700 hover:text-blue-900 font-bold bg-white hover:bg-blue-50 px-2 py-0.5 rounded border border-blue-200 shadow-2xs">
+                  ＋ تسجيل عنوان جديد
+                </button>
+              </div>
             </div>
             <select id="clinicAddressSelect" class="w-full border rounded-lg px-2.5 py-1.5 text-xs bg-white focus:outline-none">
               <option value="">-- العنوان المسجل الرئيسي --</option>
@@ -303,48 +308,112 @@
 
 <!-- ══════════════ Quick Add Customer Modal ══════════════ -->
 <div id="quickAddCustomerModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-  <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl">
-    <div class="p-5 border-b flex items-center justify-between">
-      <h3 class="font-bold text-gray-800 text-lg" data-ar="👤 إضافة عميل جديد" data-en="👤 Add New Customer">👤 إضافة عميل جديد</h3>
+  <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] flex flex-col">
+    <div class="p-5 border-b flex items-center justify-between shrink-0">
+      <h3 class="font-bold text-gray-800 text-lg">👤 إضافة عميل جديد</h3>
       <button onclick="closeQuickAddCustomer()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
     </div>
-    <form onsubmit="submitQuickAddCustomer(event)" class="p-5 space-y-3">
+    <form onsubmit="submitQuickAddCustomer(event)" class="p-5 space-y-3 overflow-y-auto">
       <div>
-        <label class="text-xs font-medium text-gray-600" data-ar="الاسم *" data-en="Name *">الاسم *</label>
+        <label class="text-xs font-bold text-gray-700 block mb-1">اسم الطبيب / العميل <span class="text-red-500">*</span></label>
         <input id="qc-name" required
-          class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200"
-          placeholder="اسم الدكتور / العيادة"
-          data-ar-placeholder="اسم الدكتور / العيادة"
-          data-en-placeholder="Doctor / Clinic name"/>
+          class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+          placeholder="د. أحمد محمد"/>
       </div>
+      
+      <!-- Barcode 6 digits -->
       <div>
-        <label class="text-xs font-medium text-gray-600" data-ar="رقم الهاتف" data-en="Phone">رقم الهاتف</label>
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-xs font-bold text-gray-700">الباركود (6 أرقام عشوائية) <span class="text-red-500">*</span></label>
+          <button type="button" onclick="generateNewBarcodeForModal('qc-barcode')" class="text-xs text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1">
+            <span>🔄</span> توليد باركود
+          </button>
+        </div>
+        <input id="qc-barcode" required type="text" maxlength="6" pattern="[0-9]{6}"
+          class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm font-mono font-bold text-blue-800 tracking-wider focus:outline-none focus:ring-2 focus:ring-blue-300"
+          placeholder="مثال: 849201"/>
+      </div>
+
+      <div>
+        <label class="text-xs font-bold text-gray-700 block mb-1">رقم الهاتف الأساسي</label>
         <input id="qc-phone" type="tel"
-          class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200"
+          class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-300"
           placeholder="01xxxxxxxxx"/>
       </div>
+
+      <!-- Extra phones -->
       <div>
-        <label class="text-xs font-medium text-gray-600" data-ar="العنوان" data-en="Address">العنوان</label>
-        <input id="qc-address"
-          class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200"
-          placeholder="المنطقة / العنوان"
-          data-ar-placeholder="المنطقة / العنوان"
-          data-en-placeholder="Area / Address"/>
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-xs font-semibold text-gray-600">أرقام هواتف إضافية</label>
+          <button type="button" onclick="addExtraPhoneField('qcExtraPhonesContainer')" class="text-xs text-emerald-600 hover:text-emerald-800 font-bold">
+            ＋ إضافة رقم
+          </button>
+        </div>
+        <div id="qcExtraPhonesContainer" class="space-y-1.5"></div>
       </div>
+
+      <!-- Clinic address -->
+      <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2">
+        <label class="text-xs font-bold text-gray-700 block">🏥 عنوان العيادة الرئيسية (اختياري)</label>
+        <input id="qc-clinic-name" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="اسم العيادة"/>
+        <div class="grid grid-cols-2 gap-2">
+          <input id="qc-clinic-city" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="المحافظة"/>
+          <input id="qc-clinic-region" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="المنطقة"/>
+        </div>
+        <input id="qc-clinic-details" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="الشارع والتفاصيل"/>
+      </div>
+
       <div id="qcError" class="hidden text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2"></div>
-      <div class="flex gap-3 pt-1">
+      <div class="flex gap-3 pt-1 shrink-0">
         <button type="submit" id="qcSubmitBtn"
-          class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800 text-sm"
-          data-ar="إضافة وتحديد" data-en="Add & Select">
-          إضافة وتحديد
+          class="flex-1 bg-blue-700 text-white font-bold py-2.5 rounded-xl hover:bg-blue-800 text-sm shadow-sm">
+          حفظ وتحديد العميل فوراً
         </button>
         <button type="button" onclick="closeQuickAddCustomer()"
-          class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl text-sm"
-          data-ar="إلغاء" data-en="Cancel">
+          class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">
           إلغاء
         </button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- ══════════════ Quick Add Clinic Modal (During Sale) ══════════════ -->
+<div id="quickAddClinicModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl p-5 space-y-3">
+    <div class="flex items-center justify-between border-b pb-3">
+      <h3 class="font-bold text-gray-800 text-base flex items-center gap-1.5">
+        <span>🏥</span> تسجيل عنوان عيادة جديد للعميل
+      </h3>
+      <button onclick="closeQuickAddClinicModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+    </div>
+    <div>
+      <label class="text-xs font-semibold text-gray-700 block mb-1">اسم الفرع / العيادة *</label>
+      <input id="qcl-title" class="w-full border rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="مثال: عيادة مدينة نصر"/>
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+      <div>
+        <label class="text-xs font-semibold text-gray-700 block mb-1">المحافظة *</label>
+        <input id="qcl-city" class="w-full border rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="القاهرة"/>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-gray-700 block mb-1">المنطقة</label>
+        <input id="qcl-region" class="w-full border rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="مدينة نصر"/>
+      </div>
+    </div>
+    <div>
+      <label class="text-xs font-semibold text-gray-700 block mb-1">الشارع والتفاصيل</label>
+      <input id="qcl-details" class="w-full border rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="ش عباس العقاد، عمارة 10"/>
+    </div>
+    <div id="qclError" class="hidden text-xs text-red-600 bg-red-50 rounded-lg p-2 font-medium"></div>
+    <div class="flex gap-2 pt-2">
+      <button type="button" id="qclSubmitBtn" onclick="submitQuickAddClinic()" class="flex-1 bg-blue-700 hover:bg-blue-800 text-white font-bold py-2.5 rounded-xl text-xs shadow-sm">
+        حفظ وتحديد هذا العنوان
+      </button>
+      <button type="button" onclick="closeQuickAddClinicModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-xs">
+        إلغاء
+      </button>
+    </div>
   </div>
 </div>
 
@@ -474,10 +543,9 @@ function populateCustomerSelect(list) {
   (list || customers).forEach(c => {
     const opt = document.createElement("option");
     opt.value = c.id;
-    const code = c.customer_code || `DT-${1000 + c.id}`;
-    const debtStr = c.total_debt > 0 ? ` (دين: ${parseFloat(c.total_debt).toFixed(2)} ج)` : '';
-    const phoneStr = c.phone ? ` - ${c.phone}` : '';
-    opt.textContent = `[${code}] ${c.name}${phoneStr}${debtStr}`;
+    const debt = parseFloat(c.total_debt || 0);
+    const debtLabel = debt > 0 ? ` (عليه: ${debt.toLocaleString('ar-EG', {minimumFractionDigits:2})} ج)` : ' (مسدد)';
+    opt.textContent = `${c.name}${debtLabel}`;
     sel.appendChild(opt);
   });
   if (currentVal) sel.value = currentVal;
@@ -497,9 +565,15 @@ function onCustomerSearch(query) {
   const filtered = customers.filter(c => {
     const nameMatch = (c.name || '').toLowerCase().includes(q);
     const codeMatch = (c.customer_code || '').toLowerCase().includes(q);
+    const barcodeMatch = (c.barcode || '').includes(q);
     const phoneMatch = (c.phone || '').includes(q);
     const extraMatch = (c.extra_phones || '').includes(q);
-    return nameMatch || codeMatch || phoneMatch || extraMatch;
+    let addrMatch = false;
+    try {
+      const addrs = typeof c.addresses === 'string' ? JSON.parse(c.addresses) : (c.addresses || []);
+      addrMatch = addrs.some(a => (a.title || '').toLowerCase().includes(q) || (a.city || '').toLowerCase().includes(q) || (a.region || '').toLowerCase().includes(q) || (a.address || '').toLowerCase().includes(q));
+    } catch (_) {}
+    return nameMatch || codeMatch || barcodeMatch || phoneMatch || extraMatch || addrMatch;
   });
   populateCustomerSelect(filtered);
   if (filtered.length === 1) {
@@ -1662,12 +1736,51 @@ function newInvoice() {
   scanInput.focus();
 }
 
+// ── Barcode & Extra Phone Helpers ──────────────────────────────────────────────
+async function generateNewBarcodeForModal(targetInputId) {
+  const inp = document.getElementById(targetInputId);
+  if (!inp) return;
+  inp.value = "جاري التوليد...";
+  try {
+    const res = await fetch(`${BASE}/api/customer/generate-barcode`);
+    const data = await res.json();
+    if (data.ok && data.barcode) inp.value = data.barcode;
+    else inp.value = Math.floor(100000 + Math.random() * 900000).toString();
+  } catch (_) {
+    inp.value = Math.floor(100000 + Math.random() * 900000).toString();
+  }
+}
+
+function addExtraPhoneField(containerId, initialVal = "") {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const currentCount = container.querySelectorAll("input").length;
+  if (currentCount >= 3) {
+    alert("الحد الأقصى للأرقام الإضافية هو 3 أرقام فقط.");
+    return;
+  }
+  const div = document.createElement("div");
+  div.className = "flex items-center gap-2";
+  div.innerHTML = `
+    <input type="tel" value="${initialVal}" placeholder="رقم إضافي (عيادة / مساعد)"
+      class="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-mono bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"/>
+    <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:text-red-700 text-sm font-black px-1.5 leading-none">✕</button>
+  `;
+  container.appendChild(div);
+}
+
 // ── Quick Add Customer ────────────────────────────────────────────────────────
 function openQuickAddCustomer() {
-  ["qc-name","qc-phone","qc-address"].forEach(id => document.getElementById(id).value = "");
+  ["qc-name","qc-phone","qc-barcode","qc-clinic-name","qc-clinic-city","qc-clinic-region","qc-clinic-details"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  const container = document.getElementById("qcExtraPhonesContainer");
+  if (container) container.innerHTML = "";
   document.getElementById("qcError").classList.add("hidden");
   document.getElementById("qcSubmitBtn").disabled = false;
   document.getElementById("quickAddCustomerModal").classList.remove("hidden");
+  generateNewBarcodeForModal("qc-barcode");
   setTimeout(() => document.getElementById("qc-name").focus(), 100);
 }
 
@@ -1678,47 +1791,130 @@ function closeQuickAddCustomer() {
 async function submitQuickAddCustomer(e) {
   e.preventDefault();
   const name    = document.getElementById("qc-name").value.trim();
+  const barcode = (document.getElementById("qc-barcode")?.value || "").trim();
   const phone   = document.getElementById("qc-phone").value.trim();
-  const address = document.getElementById("qc-address").value.trim();
   if (!name) return;
+
+  const extraInps = document.querySelectorAll("#qcExtraPhonesContainer input");
+  const extraPhones = Array.from(extraInps).map(inp => inp.value.trim()).filter(Boolean);
+
+  const cName = document.getElementById("qc-clinic-name")?.value.trim() || "";
+  const cCity = document.getElementById("qc-clinic-city")?.value.trim() || "";
+  const cRegion = document.getElementById("qc-clinic-region")?.value.trim() || "";
+  const cDetails = document.getElementById("qc-clinic-details")?.value.trim() || "";
+  let addresses = [];
+  if (cName || cCity || cRegion || cDetails) {
+    addresses.push({
+      id: 'addr_' + Date.now(),
+      title: cName || 'العيادة الرئيسية',
+      city: cCity || 'القاهرة',
+      region: cRegion || '',
+      details: cDetails || '',
+      address: `${cCity} - ${cRegion} - ${cDetails}`.replace(/\s*-\s*-\s*/g, ' - ').trim()
+    });
+  }
 
   const btn = document.getElementById("qcSubmitBtn");
   btn.disabled = true;
-  btn.textContent = "...";
+  btn.textContent = "جارٍ الحفظ...";
 
   try {
     const res  = await fetch(`${BASE}/api/customers`, {
       method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ name, phone, address })
+      body: JSON.stringify({ name, phone, barcode, extra_phones: extraPhones, addresses })
     });
-    if (!res.ok) throw new Error("فشل الحفظ");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "فشل الحفظ");
 
     // Reload customers list
     const updated = await fetch(`${BASE}/api/customers`).then(r => r.json());
     customers = updated;
-
-    // Rebuild the select options
-    const sel = document.getElementById("customerSelect");
-    // keep first placeholder option, remove the rest
-    while (sel.options.length > 1) sel.remove(1);
-    updated.forEach(c => {
-      const opt = document.createElement("option");
-      opt.value = c.id;
-      opt.textContent = `${c.name}${c.total_debt > 0 ? ' (دين: '+c.total_debt.toFixed(2)+' ج)' : ''}`;
-      sel.appendChild(opt);
-    });
+    populateCustomerSelect(updated);
 
     // Auto-select the newly added customer
-    const newCustomer = updated.find(c => c.name === name && (c.phone||'') === (phone||''));
-    if (newCustomer) sel.value = newCustomer.id;
+    const newCustId = data.customer_id || (data.customer && data.customer.id);
+    if (newCustId) {
+      document.getElementById("customerSelect").value = newCustId;
+      onCustomerSelectChange();
+    }
 
     closeQuickAddCustomer();
   } catch(err) {
     const errEl = document.getElementById("qcError");
-    errEl.textContent = "حدث خطأ، حاول مرة أخرى";
+    errEl.textContent = err.message || "حدث خطأ، حاول مرة أخرى";
     errEl.classList.remove("hidden");
     btn.disabled = false;
-    btn.textContent = btn.getAttribute("data-ar") || "إضافة وتحديد";
+    btn.textContent = "حفظ وتحديد العميل فوراً";
+  }
+}
+
+// ── Quick Add Clinic Address During Sale ─────────────────────────────────────
+function openQuickAddClinicModal() {
+  const custId = document.getElementById("customerSelect").value;
+  if (!custId) {
+    alert("يرجى اختيار العميل أولاً لتسجيل عنوان عيادة له.");
+    return;
+  }
+  ["qcl-title","qcl-city","qcl-region","qcl-details"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  document.getElementById("qclError").classList.add("hidden");
+  document.getElementById("qclSubmitBtn").disabled = false;
+  document.getElementById("quickAddClinicModal").classList.remove("hidden");
+  setTimeout(() => document.getElementById("qcl-title").focus(), 100);
+}
+
+function closeQuickAddClinicModal() {
+  document.getElementById("quickAddClinicModal").classList.add("hidden");
+}
+
+async function submitQuickAddClinic() {
+  const custId = parseInt(document.getElementById("customerSelect").value, 10);
+  if (!custId) return;
+  const title   = document.getElementById("qcl-title").value.trim();
+  const city    = document.getElementById("qcl-city").value.trim();
+  const region  = document.getElementById("qcl-region").value.trim();
+  const details = document.getElementById("qcl-details").value.trim();
+
+  const errEl = document.getElementById("qclError");
+  if (!title || !city) {
+    errEl.textContent = "اسم العيادة والمحافظة مطلوبان.";
+    errEl.classList.remove("hidden");
+    return;
+  }
+
+  const btn = document.getElementById("qclSubmitBtn");
+  btn.disabled = true;
+  btn.textContent = "جارٍ الحفظ...";
+
+  try {
+    const res = await fetch(`${BASE}/api/customer/add-address`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customer_id: custId, title, city, region, details })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "فشل تسجيل العنوان");
+
+    // Update customer's addresses in memory
+    const cust = customers.find(c => c.id === custId);
+    if (cust) cust.addresses = data.addresses;
+
+    // Refresh clinic dropdown and select this new address
+    onCustomerSelectChange();
+    const clinicSelect = document.getElementById("clinicAddressSelect");
+    if (data.new_address && clinicSelect) {
+      const fullText = `${data.new_address.title}: ${data.new_address.address} (${data.new_address.city})`;
+      clinicSelect.value = fullText;
+    }
+
+    closeQuickAddClinicModal();
+  } catch (err) {
+    errEl.textContent = err.message || "حدث خطأ أثناء الحفظ";
+    errEl.classList.remove("hidden");
+    btn.disabled = false;
+    btn.textContent = "حفظ وتحديد هذا العنوان";
   }
 }
 

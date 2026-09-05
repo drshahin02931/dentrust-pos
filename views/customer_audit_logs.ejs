@@ -70,18 +70,20 @@
 </div>
 
 <script>
+const BASE = (typeof window !== 'undefined' && window.BASE) ? window.BASE : '<%= typeof base !== "undefined" ? base : "" %>';
 let allLogs = [];
 
 async function loadAuditLogs() {
   const container = document.getElementById("logsContainer");
   try {
-    const res = await fetch(`${BASE}/api/customer-audit-logs`);
-    if (!res.ok) throw new Error("فشل الجلب");
+    const res = await fetch(`${BASE}/api/customer-audit-logs`, { credentials: 'include' });
+    if (!res.ok) throw new Error("فشل الجلب (كود: " + res.status + ")");
     allLogs = await res.json();
     updateStats(allLogs);
     filterLogs();
   } catch (err) {
-    container.innerHTML = `<div class="bg-red-50 border border-red-200 text-red-700 p-6 rounded-2xl text-center text-sm font-semibold">تعذر تحميل سجل الحركات. يرجى إعادة المحاولة.</div>`;
+    console.error("Error loading audit logs:", err);
+    container.innerHTML = `<div class="bg-red-50 border border-red-200 text-red-700 p-6 rounded-2xl text-center text-sm font-semibold">تعذر تحميل سجل الحركات (${err.message}). يرجى إعادة المحاولة.</div>`;
   }
 }
 

@@ -361,6 +361,8 @@ const MIGRATIONS = [
   "ALTER TABLE customers ADD COLUMN IF NOT EXISTS points_balance INTEGER DEFAULT 0",
   "ALTER TABLE customers ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'pos'",
   "ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE",
+  "ALTER TABLE customers ADD COLUMN IF NOT EXISTS barcode TEXT",
+  "ALTER TABLE customers ADD COLUMN IF NOT EXISTS is_vip BOOLEAN DEFAULT FALSE",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS promo_code TEXT",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_type TEXT DEFAULT 'pickup'",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS clinic_address TEXT",
@@ -723,9 +725,19 @@ async function initDb() {
     try { await client.query(DELETE_TRIGGER_FN_SQL); } catch (e) { console.error('[initDb] Failed to create products_delete_fn:', e.message); }
     try { await client.query(DELETE_TRIGGER_SQL);    } catch (e) { console.error('[initDb] Failed to create products_instead_of_delete trigger:', e.message); }
 
-    // 7. Auto backfill customer codes & default passwords for existing customers
+    // 7. Auto backfill 6-digit random barcodes & default passwords for existing customers
     try {
-      await client.query("UPDATE customers SET customer_code = 'DT-' || (1000 + id) WHERE customer_code IS NULL OR customer_code = ''");
+      const { rows: unassigned } = await client.query("SELECT id FROM customers WHERE barcode IS NULL OR barcode = '' OR LENGTH(barcode) != 6");
+      for (const c of unassigned) {
+        let code = '';
+        let ok = false;
+        while (!ok) {
+          code = Math.floor(100000 + Math.random() * 900000).toString();
+          const { rows } = await client.query("SELECT id FROM customers WHERE barcode=$1", [code]);
+          if (!rows.length) ok = true;
+        }
+        await client.query("UPDATE customers SET barcode=$1, customer_code=COALESCE(NULLIF(customer_code,''), $1) WHERE id=$2", [code, c.id]);
+      }
       await client.query("UPDATE customers SET password_hash = '1234567' WHERE password_hash IS NULL OR password_hash = ''");
       await client.query(`
         INSERT INTO promo_codes (code, discount_type, discount_value, min_order)
