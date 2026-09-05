@@ -2287,11 +2287,18 @@ app.post(`${BASE}/api/customer/reset-password-admin`, async (req, res) => {
 });
 
 app.post(`${BASE}/api/customer/update-profile`, async (req, res) => {
-  const { customer_id, phone, new_primary_phone, extra_phones, addresses } = req.body;
+  const { customer_id, customer_code, identifier, phone, new_primary_phone, extra_phones, addresses } = req.body;
   try {
     let customer = null;
     if (customer_id) {
       const { rows } = await posDb.query('SELECT * FROM customers WHERE id=$1', [customer_id]);
+      customer = rows[0];
+    } else if (customer_code || identifier) {
+      const idCode = (customer_code || identifier).trim();
+      const { rows } = await posDb.query(
+        'SELECT * FROM customers WHERE LOWER(customer_code)=LOWER($1) OR barcode=$1 OR phone=$1',
+        [idCode]
+      );
       customer = rows[0];
     } else if (phone) {
       const { rows } = await posDb.query('SELECT * FROM customers WHERE phone=$1', [phone.trim()]);

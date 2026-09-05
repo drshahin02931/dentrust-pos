@@ -609,9 +609,14 @@ function onCustomerSelectChange() {
     document.getElementById("addressesCountBadge").textContent = `${addresses.length} عيادة`;
     addresses.forEach((a, idx) => {
       const opt = document.createElement("option");
-      const fullText = `${a.title || 'عيادة ' + (idx+1)}: ${a.address || ''} ${a.city ? '('+a.city+')' : ''}`;
+      const clinicTitle = a.title || ('عيادة ' + (idx + 1));
+      const details = a.details || a.address || '';
+      const fullLocation = [a.city, a.region, details].filter(Boolean).join(' - ');
+      const isDef = a.is_default ? '⭐ ' : '';
+      const fullText = `${isDef}${clinicTitle}: ${fullLocation}${a.phone ? ' (' + a.phone + ')' : ''}`;
       opt.value = fullText;
       opt.textContent = fullText;
+      if (a.is_default) opt.selected = true;
       clinicSelect.appendChild(opt);
     });
   } else {
