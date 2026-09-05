@@ -81,14 +81,39 @@
       </div>
 
       <!-- Clinic Address -->
-      <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2">
-        <label class="text-xs font-bold text-gray-700 block">🏥 عنوان العيادة الرئيسية (اختياري)</label>
-        <input id="f-clinic-name" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="اسم العيادة (مثال: عيادة الدقي)"/>
-        <div class="grid grid-cols-2 gap-2">
-          <input id="f-clinic-city" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="المحافظة (مثال: الجيزة)"/>
-          <input id="f-clinic-region" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="المنطقة (مثال: الدقي)"/>
+      <div class="bg-blue-50/50 border border-blue-200 rounded-xl p-3.5 space-y-2.5">
+        <div class="flex items-center justify-between">
+          <label class="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+            <span>🏥</span> عنوان العيادة الرئيسية (اختياري)
+          </label>
+          <span class="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full border border-blue-200">⭐ عنوان افتراضي</span>
         </div>
-        <input id="f-clinic-details" class="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="الشارع والتفاصيل (مثال: ش التحرير، عمارة 15، الدور 3)"/>
+        <input id="f-clinic-name" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="اسم العيادة (مثال: عيادة المهندسين / د. فلان)"/>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[11px] font-bold text-gray-700 block mb-1">المحافظة *</label>
+            <select id="f-clinic-city" onchange="onGovChange('f-clinic-city','f-clinic-region','f-clinic-region-custom-box')" class="w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-300">
+              <option value="">اختر المحافظة...</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[11px] font-bold text-gray-700 block mb-1">المنطقة / الحي *</label>
+            <select id="f-clinic-region" onchange="onDistrictChange('f-clinic-region','f-clinic-region-custom-box')" class="w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-300">
+              <option value="">اختر المنطقة...</option>
+            </select>
+          </div>
+        </div>
+        <div id="f-clinic-region-custom-box" class="hidden">
+          <input id="f-clinic-region-custom" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white" placeholder="اكتب اسم الحي / القرية يدوياً..."/>
+        </div>
+        <div>
+          <label class="text-[11px] font-bold text-gray-700 block mb-1">الشارع والعمارة بالتفصيل</label>
+          <input id="f-clinic-details" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="مثال: 15 شارع سوريا - الدور 3 - عمارة الأطباء"/>
+        </div>
+        <div>
+          <label class="text-[11px] font-bold text-gray-700 block mb-1">هاتف العيادة / السكرتير (اختياري)</label>
+          <input id="f-clinic-phone" type="tel" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="01xxxxxxxxx"/>
+        </div>
       </div>
 
       <div>
@@ -254,6 +279,92 @@ let currentCustomer = null;
 let currentTab = 'orders';
 let _debtorsOnly = false;
 
+// ── Egyptian Governorates & Key Districts ──────────────────────────────────
+const EGYPT_GOVERNORATES = {
+  "القاهرة": ["النزهة", "مدينة نصر", "المعادي", "مصر الجديدة", "الزيتون", "شبرا", "المطرية", "عين شمس", "الزمالك", "وسط البلد", "المنيل", "الدقي", "بولاق", "السيدة زينب", "الخليفة", "مصر القديمة", "حلوان", "المعصرة", "15 مايو", "التجمع الخامس", "التجمع", "القاهرة الجديدة", "القطامية", "البساتين", "دار السلام", "الأميرية", "منشأة ناصر", "الشرابية", "روض الفرج", "العمرانية", "فيصل", "الهرم", "عين الصيرة", "طره", "الباجور", "المقطم", "الخصوص", "شبرا الخيمة الجديدة", "مدينة بدر", "العبور", "أكتوبر (جيزة)", "الشيخ زايد", "مدينتي", "الرحاب", "الشروق"],
+  "الجيزة": ["الدقي", "العجوزة", "المهندسين", "فيصل", "الهرم", "البدرشين", "البراجيل", "أوسيم", "أبو رواش", "العياط", "الواحات البحرية", "الصف", "6 أكتوبر", "أكتوبر", "الشيخ زايد", "حدائق الأهرام", "طموه", "الحوامدية", "إمبابة", "بولاق الدكرور", "أبو النمرس", "كرداسة", "أبو الغيط", "العمرانية", "ميدان الجيزة"],
+  "الاسكندرية": ["المنتزه", "شرق", "وسط", "غرب", "الجمرك", "العجمي", "العامرية", "برج العرب", "سيدي جابر", "سموحة", "محرم بك", "ميامي", "لوران", "سيدي بشر", "رشدي", "كفر عبده", "ستانلي", "جليم", "الإبراهيمية", "كامب شيزار", "الشاطبي", "بحري", "المندرة", "العصافرة", "المعمورة", "أبو قير"],
+  "الدقهلية": ["المنصورة", "ميت غمر", "السنبلاوين", "دكرنس", "بلقاس", "شربين", "المنزلة", "طلخا", "الجمالية", "منية النصر", "أجا", "بني عبيد", "تمى الأمديد", "ميت سلسيل", "نبروه"],
+  "الشرقية": ["الزقازيق", "العاشر من رمضان", "منيا القمح", "بلبيس", "مشتول السوق", "القنايات", "أبو حماد", "القرين", "فاقوس", "أبو كبير", "الحسينية", "كفر صقر", "أولاد صقر", "ديرب نجم", "الإبراهيمية", "صان الحجر"],
+  "الغربية": ["طنطا", "المحلة الكبرى", "المحلة", "كفر الزيات", "زفتى", "السنطة", "قطور", "بسيون", "سمنود"],
+  "المنوفية": ["شبين الكوم", "مدينة السادات", "السادات", "منوف", "أشمون", "الباجور", "قويسنا", "بركة السبع", "تلا", "الشهداء"],
+  "القليوبية": ["بنها", "قليوب", "شبرا الخيمة", "القناطر الخيرية", "الخانكة", "كفر شكر", "طوخ", "قها", "العبور", "الخصوص", "شبين القناطر"],
+  "البحيرة": ["دمنهور", "كفر الدوار", "رشيد", "إدكو", "أبو المطامير", "أبو حمص", "الدلنجات", "المحمودية", "الرحمانية", "إيتاي البارود", "حوش عيسى", "كوم حمادة", "بدر", "وادي النطرون", "النوبارية"],
+  "كفر الشيخ": ["كفر الشيخ", "دسوق", "فوه", "مطوبس", "قلين", "سيدي سالم", "الرياض", "بيلا", "الحامول", "بلطيم", "سيدي غازي"],
+  "دمياط": ["دمياط", "دمياط الجديدة", "رأس البر", "فارسكور", "الزرقا", "كفر سعد", "كفر البطيخ", "عزبة البرج"],
+  "بورسعيد": ["حي الشرق", "حي العرب", "حي المناخ", "حي الضواحي", "حي الزهور", "بورفؤاد", "بورسعيد"],
+  "الإسماعيلية": ["الإسماعيلية", "فايد", "القنطرة شرق", "القنطرة غرب", "التل الكبير", "أبو صوير", "القصاصين"],
+  "السويس": ["السويس", "حي الأربعين", "حي عتاقة", "حي فيصل", "العين السخنة"],
+  "بني سويف": ["بني سويف", "الواسطى", "ناصر", "إهناسيا", "ببا", "سمسطا", "الفشن"],
+  "الفيوم": ["الفيوم", "سنورس", "إطسا", "طامية", "أبشواي"],
+  "المنيا": ["المنيا", "ملوي", "مغاغة", "بني مزار", "مطاي", "سمالوط", "أبو قرقاص", "دير مواس"],
+  "أسيوط": ["أسيوط", "ديروط", "القوصية", "أبنوب", "منفلوط", "أبو تيج"],
+  "سوهاج": ["سوهاج", "أخميم", "جرجا", "طهطا", "طما", "البلينا", "المراغة"],
+  "قنا": ["قنا", "نجع حمادي", "دشنا", "قوص", "فرشوط", "أبو تشت"],
+  "الأقصر": ["الأقصر", "إسنا", "أرمنت"],
+  "أسوان": ["أسوان", "إدفو", "كوم أمبو", "نصر النوبة"],
+  "البحر الأحمر": ["الغردقة", "الجونة", "سفاجا", "القصير", "مرسى علم"],
+  "مطروح": ["مرسى مطروح", "العلمين", "الحمام", "الساحل الشمالي", "مارينا", "سيدي عبد الرحمن"],
+  "جنوب سيناء": ["شرم الشيخ", "طور سيناء", "دهب", "نويبع", "طابا", "رأس سدر"],
+  "شمال سيناء": ["العريش", "بئر العبد"]
+};
+
+function populateGovSelect(citySelectId, initialCity) {
+  const sel = document.getElementById(citySelectId);
+  if (!sel) return;
+  sel.innerHTML = '<option value="">اختر المحافظة...</option>' +
+    Object.keys(EGYPT_GOVERNORATES).map(gov => `<option value="${gov}" ${gov === initialCity ? 'selected' : ''}>${gov}</option>`).join('');
+}
+
+function populateDistrictSelect(cityVal, regionSelectId, customBoxId, initialRegion) {
+  const sel = document.getElementById(regionSelectId);
+  const box = customBoxId ? document.getElementById(customBoxId) : null;
+  if (!sel) return;
+  const list = EGYPT_GOVERNORATES[cityVal] || [];
+  if (!cityVal || !list.length) {
+    sel.innerHTML = '<option value="">اختر المحافظة أولاً...</option>';
+    if (box) box.classList.add('hidden');
+    return;
+  }
+  let isKnown = false;
+  let html = '<option value="">اختر المنطقة / الحي...</option>';
+  list.forEach(d => {
+    const isSel = (d === initialRegion);
+    if (isSel) isKnown = true;
+    html += `<option value="${d}" ${isSel ? 'selected' : ''}>${d}</option>`;
+  });
+  html += `<option value="__custom__" ${(!isKnown && initialRegion) ? 'selected' : ''}>+ منطقة أخرى (كتابة يدوية)</option>`;
+  sel.innerHTML = html;
+
+  if (box) {
+    if (!isKnown && initialRegion) {
+      box.classList.remove('hidden');
+      const customInput = box.querySelector('input');
+      if (customInput) customInput.value = initialRegion;
+    } else {
+      box.classList.add('hidden');
+    }
+  }
+}
+
+function onGovChange(citySelectId, regionSelectId, customBoxId) {
+  const cityVal = document.getElementById(citySelectId)?.value || '';
+  populateDistrictSelect(cityVal, regionSelectId, customBoxId, '');
+}
+
+function onDistrictChange(regionSelectId, customBoxId) {
+  const regVal = document.getElementById(regionSelectId)?.value || '';
+  const box = customBoxId ? document.getElementById(customBoxId) : null;
+  if (!box) return;
+  if (regVal === '__custom__') {
+    box.classList.remove('hidden');
+    const inp = box.querySelector('input');
+    if (inp) { inp.value = ''; inp.focus(); }
+  } else {
+    box.classList.add('hidden');
+  }
+}
+
 // ── Load customers ────────────────────────────────────────────────────────────
 // لو الجلسة انتهت أو مش موجودة، السيرفر بيرجع 401 (JSON) — هنا بنتعامل معاه
 // بإعادة تحويل نظيفة لصفحة تسجيل الدخول، بدل ما نحاول نعمل res.json() على
@@ -404,14 +515,21 @@ function addExtraPhoneField(containerId, initialVal = "") {
 function openAddModal() {
   document.getElementById("addModal").classList.remove("hidden");
   generateNewBarcodeForModal("f-barcode");
+  populateGovSelect("f-clinic-city", "القاهرة");
+  populateDistrictSelect("القاهرة", "f-clinic-region", "f-clinic-region-custom-box", "");
 }
 
 function closeAddModal() {
   document.getElementById("addModal").classList.add("hidden");
-  ["f-name","f-phone","f-barcode","f-clinic-name","f-clinic-city","f-clinic-region","f-clinic-details","f-plan"].forEach(id => {
+  ["f-name","f-phone","f-barcode","f-clinic-name","f-clinic-details","f-clinic-phone","f-clinic-region-custom","f-plan"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
+  const cityEl = document.getElementById("f-clinic-city");
+  if (cityEl) cityEl.value = "";
+  const regEl = document.getElementById("f-clinic-region");
+  if (regEl) regEl.innerHTML = '<option value="">اختر المحافظة أولاً...</option>';
+  document.getElementById("f-clinic-region-custom-box")?.classList.add("hidden");
   const container = document.getElementById("extraPhonesContainer");
   if (container) container.innerHTML = "";
   const errEl = document.getElementById("addModalErr");
@@ -439,17 +557,24 @@ async function addCustomer(e) {
   // Clinic address
   const cName = document.getElementById("f-clinic-name")?.value.trim() || "";
   const cCity = document.getElementById("f-clinic-city")?.value.trim() || "";
-  const cRegion = document.getElementById("f-clinic-region")?.value.trim() || "";
+  const cRegSelect = document.getElementById("f-clinic-region")?.value.trim() || "";
+  const cRegCustom = document.getElementById("f-clinic-region-custom")?.value.trim() || "";
+  const cRegion = (cRegSelect === '__custom__' ? cRegCustom : cRegSelect);
   const cDetails = document.getElementById("f-clinic-details")?.value.trim() || "";
+  const cPhone = document.getElementById("f-clinic-phone")?.value.trim() || "";
+
   let addresses = [];
   if (cName || cCity || cRegion || cDetails) {
+    const full = [cCity, cRegion, cDetails].filter(Boolean).join(' - ');
     addresses.push({
       id: 'addr_' + Date.now(),
-      title: cName || 'العيادة الرئيسية',
+      title: cName || (cRegion ? `عيادة ${cRegion}` : 'العيادة الرئيسية'),
       city: cCity || 'القاهرة',
       region: cRegion || '',
       details: cDetails || '',
-      address: `${cCity} - ${cRegion} - ${cDetails}`.replace(/\s*-\s*-\s*/g, ' - ').trim()
+      phone: cPhone || '',
+      address: full,
+      is_default: true
     });
   }
 
@@ -634,11 +759,15 @@ async function saveNewClinicForCustomer() {
   if (!currentCustomer) return;
   const title = document.getElementById('newClinicTitle').value.trim();
   const city = document.getElementById('newClinicCity').value.trim();
-  const region = document.getElementById('newClinicRegion').value.trim();
+  const regSel = document.getElementById('newClinicRegion').value.trim();
+  const regCustom = document.getElementById('newClinicRegionCustom')?.value.trim() || '';
+  const region = (regSel === '__custom__' ? regCustom : regSel);
   const details = document.getElementById('newClinicDetails').value.trim();
+  const phone = document.getElementById('newClinicPhone')?.value.trim() || '';
+  const isDefault = !!document.getElementById('newClinicDefault')?.checked;
 
   if (!title || !city || !region) {
-    alert('يرجى كتابة اسم العيادة والمحافظة والمنطقة.');
+    alert('يرجى كتابة اسم العيادة واختيار المحافظة والمنطقة.');
     return;
   }
 
@@ -647,7 +776,23 @@ async function saveNewClinicForCustomer() {
     addrs = typeof currentCustomer.addresses === 'string' ? JSON.parse(currentCustomer.addresses) : (currentCustomer.addresses || []);
   } catch (_) { addrs = []; }
 
-  const updated = [...addrs, { title, city, region, details }];
+  const makeDefault = isDefault || addrs.length === 0;
+  if (makeDefault) {
+    addrs = addrs.map(a => ({ ...a, is_default: false }));
+  }
+
+  const newObj = {
+    id: 'addr_' + Date.now(),
+    title,
+    city,
+    region,
+    details,
+    phone,
+    address: `${city} - ${region} - ${details}`.replace(/\s*-\s*-\s*/g, ' - ').trim(),
+    is_default: makeDefault
+  };
+
+  const updated = [...addrs, newObj];
 
   try {
     const res = await fetch(`${BASE}/api/customer/update-profile`, {
@@ -656,13 +801,58 @@ async function saveNewClinicForCustomer() {
       body: JSON.stringify({
         customer_id: currentCustomer.id,
         phone: currentCustomer.phone,
+        city: makeDefault ? city : currentCustomer.city,
+        region: makeDefault ? region : currentCustomer.region,
+        address: makeDefault ? newObj.address : currentCustomer.address,
         addresses: updated
       })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'فشل الحفظ');
     currentCustomer.addresses = updated;
+    if (makeDefault) {
+      currentCustomer.city = city;
+      currentCustomer.region = region;
+      currentCustomer.address = newObj.address;
+    }
     alert('✅ تم حفظ عنوان العيادة بنجاح');
+    switchTab('clinics');
+    loadCustomers();
+  } catch (err) {
+    alert('❌ خطأ: ' + err.message);
+  }
+}
+
+async function setDefaultClinicForCustomer(idx) {
+  if (!currentCustomer) return;
+  let addrs = [];
+  try {
+    addrs = typeof currentCustomer.addresses === 'string' ? JSON.parse(currentCustomer.addresses) : (currentCustomer.addresses || []);
+  } catch (_) { addrs = []; }
+
+  if (!addrs[idx]) return;
+  const updated = addrs.map((a, i) => ({ ...a, is_default: i === idx }));
+  const chosen = updated[idx];
+
+  try {
+    const res = await fetch(`${BASE}/api/customer/update-profile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customer_id: currentCustomer.id,
+        phone: currentCustomer.phone,
+        city: chosen.city,
+        region: chosen.region,
+        address: chosen.address || chosen.details,
+        addresses: updated
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'فشل التعيين');
+    currentCustomer.addresses = updated;
+    currentCustomer.city = chosen.city;
+    currentCustomer.region = chosen.region;
+    currentCustomer.address = chosen.address || chosen.details;
     switchTab('clinics');
     loadCustomers();
   } catch (err) {
@@ -734,17 +924,33 @@ async function switchTab(tab) {
           </button>
         </div>
 
-        <div id="addClinicBox" class="hidden bg-blue-50/60 border border-blue-200 rounded-xl p-3 space-y-2 text-right">
-          <div class="font-bold text-xs text-blue-900">إضافة عنوان عيادة للطبيب</div>
-          <input id="newClinicTitle" class="w-full border rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="اسم العيادة / الفرع (مثال: عيادة المهندسين)"/>
-          <div class="grid grid-cols-2 gap-2">
-            <input id="newClinicCity" class="border rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="المحافظة (مثال: الجيزة)"/>
-            <input id="newClinicRegion" class="border rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="المنطقة / الشارع (مثال: شارع سوريا)"/>
+        <div id="addClinicBox" class="hidden bg-blue-50/70 border border-blue-200 rounded-xl p-3.5 space-y-2.5 text-right">
+          <div class="font-bold text-xs text-blue-900 flex items-center justify-between">
+            <span class="flex items-center gap-1"><span>🏥</span> إضافة عنوان عيادة للطبيب</span>
+            <label class="text-[11px] text-gray-700 flex items-center gap-1.5 cursor-pointer font-bold bg-white px-2 py-1 rounded-lg border border-blue-200">
+              <input type="checkbox" id="newClinicDefault" class="rounded text-blue-600"/>
+              <span>تعيين كعنوان افتراضي ⭐</span>
+            </label>
           </div>
-          <input id="newClinicDetails" class="w-full border rounded-lg px-2.5 py-1.5 text-xs bg-white" placeholder="تفاصيل إضافية (رقم الدور / الشقة / علامة مميزة)"/>
+          <input id="newClinicTitle" class="w-full border rounded-xl px-3 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="اسم العيادة / الفرع (مثال: عيادة المهندسين)"/>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[10px] font-bold text-gray-600 block mb-0.5">المحافظة</label>
+              <select id="newClinicCity" onchange="onGovChange('newClinicCity','newClinicRegion','newClinicRegionCustomBox')" class="w-full border rounded-xl px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300"></select>
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-gray-600 block mb-0.5">المنطقة / الحي</label>
+              <select id="newClinicRegion" onchange="onDistrictChange('newClinicRegion','newClinicRegionCustomBox')" class="w-full border rounded-xl px-2.5 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300"></select>
+            </div>
+          </div>
+          <div id="newClinicRegionCustomBox" class="hidden">
+            <input id="newClinicRegionCustom" class="w-full border rounded-xl px-3 py-1.5 text-xs bg-white" placeholder="اكتب اسم الحي / القرية يدوياً..."/>
+          </div>
+          <input id="newClinicDetails" class="w-full border rounded-xl px-3 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="تفاصيل العنوان (الشارع / رقم الدور / العمارة)"/>
+          <input id="newClinicPhone" type="tel" class="w-full border rounded-xl px-3 py-1.5 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="هاتف العيادة / السكرتير (اختياري)"/>
           <div class="flex gap-2 justify-end pt-1">
-            <button onclick="document.getElementById('addClinicBox').classList.add('hidden')" class="bg-gray-200 text-gray-700 text-xs px-3 py-1 rounded-lg">إلغاء</button>
-            <button onclick="saveNewClinicForCustomer()" class="bg-blue-700 text-white text-xs font-bold px-3 py-1 rounded-lg">حفظ العيادة ✓</button>
+            <button onclick="document.getElementById('addClinicBox').classList.add('hidden')" class="bg-gray-200 text-gray-700 text-xs px-3.5 py-1.5 rounded-xl font-semibold">إلغاء</button>
+            <button onclick="saveNewClinicForCustomer()" class="bg-blue-700 text-white text-xs font-bold px-4 py-1.5 rounded-xl shadow-sm hover:bg-blue-800">حفظ العيادة ✓</button>
           </div>
         </div>
 
@@ -757,8 +963,8 @@ async function switchTab(tab) {
             </div>
           ` : addrs.map((a, i) => `
             <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 flex items-start justify-between gap-2">
-              <div>
-                <div class="font-bold text-sm text-gray-800 flex items-center gap-2">
+              <div class="min-w-0 flex-1">
+                <div class="font-bold text-sm text-gray-800 flex items-center gap-2 flex-wrap">
                   <span>🏥</span> ${a.title || 'عيادة #' + (i+1)}
                   ${a.is_default ? '<span class="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-300">⭐ العنوان الافتراضي</span>' : ''}
                 </div>
@@ -767,12 +973,21 @@ async function switchTab(tab) {
                 </div>
                 ${a.phone ? `<div class="text-[11px] text-blue-600 mt-0.5">📞 هاتف العيادة: ${a.phone}</div>` : ''}
               </div>
-              <button onclick="deleteClinicForCustomer(${i})" class="text-red-500 hover:text-red-700 text-xs p-1" title="حذف العيادة">🗑️</button>
+              <div class="flex items-center gap-1.5 shrink-0">
+                ${!a.is_default ? `
+                  <button onclick="setDefaultClinicForCustomer(${i})" class="text-[11px] bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-1 rounded-lg font-bold transition-all" title="تعيين كعنوان افتراضي">
+                    ⭐ افتراضي
+                  </button>
+                ` : ''}
+                <button onclick="deleteClinicForCustomer(${i})" class="text-red-500 hover:text-red-700 text-xs p-1.5 hover:bg-red-50 rounded-lg transition-all" title="حذف العيادة">🗑️</button>
+              </div>
             </div>
           `).join('')}
         </div>
       </div>
     `;
+    populateGovSelect('newClinicCity', 'القاهرة');
+    populateDistrictSelect('القاهرة', 'newClinicRegion', 'newClinicRegionCustomBox', '');
     return;
   }
 
@@ -1243,30 +1458,63 @@ loadCustomers();
 
 <!-- ══════════════════════ Edit Customer Modal ══════════════════════ -->
 <div id="editCustomerModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4">
-  <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl">
-    <div class="p-5 border-b flex items-center justify-between">
+  <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] flex flex-col">
+    <div class="p-5 border-b flex items-center justify-between shrink-0">
       <h3 class="font-bold text-gray-800 text-lg">✏️ تعديل بيانات العميل</h3>
       <button onclick="closeEditCustomerModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
     </div>
-    <form onsubmit="saveEditCustomer(event)" class="p-5 space-y-4">
+    <form onsubmit="saveEditCustomer(event)" class="p-5 space-y-3.5 overflow-y-auto">
       <div>
-        <label class="text-xs font-medium text-gray-600">الاسم *</label>
-        <input id="ec-name" required class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+        <label class="text-xs font-bold text-gray-700 block mb-1">اسم الطبيب / العميل *</label>
+        <input id="ec-name" required class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
       </div>
       <div>
-        <label class="text-xs font-medium text-gray-600">رقم الهاتف</label>
-        <input id="ec-phone" type="tel" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+        <label class="text-xs font-bold text-gray-700 block mb-1">رقم الهاتف الأساسي</label>
+        <input id="ec-phone" type="tel" class="w-full border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200"/>
       </div>
-      <div>
-        <label class="text-xs font-medium text-gray-600">العنوان</label>
-        <input id="ec-address" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+
+      <!-- Structured Clinic Address in Edit modal -->
+      <div class="bg-blue-50/50 border border-blue-200 rounded-xl p-3.5 space-y-2.5">
+        <div class="flex items-center justify-between">
+          <label class="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+            <span>🏥</span> عنوان العيادة الرئيسية
+          </label>
+          <span class="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full border border-blue-200">⭐ عنوان افتراضي</span>
+        </div>
+        <input id="ec-clinic-title" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="اسم العيادة (مثال: عيادة المهندسين)"/>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[11px] font-bold text-gray-700 block mb-1">المحافظة</label>
+            <select id="ec-clinic-city" onchange="onGovChange('ec-clinic-city','ec-clinic-region','ec-clinic-region-custom-box')" class="w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-300">
+              <option value="">اختر المحافظة...</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-[11px] font-bold text-gray-700 block mb-1">المنطقة / الحي</label>
+            <select id="ec-clinic-region" onchange="onDistrictChange('ec-clinic-region','ec-clinic-region-custom-box')" class="w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-300">
+              <option value="">اختر المنطقة...</option>
+            </select>
+          </div>
+        </div>
+        <div id="ec-clinic-region-custom-box" class="hidden">
+          <input id="ec-clinic-region-custom" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white" placeholder="اكتب اسم الحي / القرية يدوياً..."/>
+        </div>
+        <div>
+          <label class="text-[11px] font-bold text-gray-700 block mb-1">الشارع والعمارة بالتفصيل</label>
+          <input id="ec-clinic-details" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="الشارع ورقم العمارة والدور"/>
+        </div>
+        <div>
+          <label class="text-[11px] font-bold text-gray-700 block mb-1">هاتف العيادة (اختياري)</label>
+          <input id="ec-clinic-phone" type="tel" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="01xxxxxxxxx"/>
+        </div>
       </div>
+
       <div>
         <label class="text-xs font-medium text-gray-600">خطة التقسيط</label>
         <input id="ec-plan" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="مثال: 500 جنيه شهرياً"/>
       </div>
       <div id="ecErr" class="hidden bg-red-50 border border-red-300 text-red-700 text-sm rounded-xl px-3 py-2"></div>
-      <div class="flex gap-3 pt-1">
+      <div class="flex gap-3 pt-1 shrink-0">
         <button type="submit" id="ecSubmitBtn" class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800 text-sm">حفظ التعديلات</button>
         <button type="button" onclick="closeEditCustomerModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">إلغاء</button>
       </div>
@@ -1367,9 +1615,27 @@ function openEditCustomerModal() {
   if (!currentCustomer) return;
   document.getElementById('ec-name').value    = currentCustomer.name || '';
   document.getElementById('ec-phone').value   = currentCustomer.phone || '';
-  document.getElementById('ec-address').value = currentCustomer.address || '';
   document.getElementById('ec-plan').value    = currentCustomer.installment_plan || '';
   document.getElementById('ecErr').classList.add('hidden');
+
+  let addrs = [];
+  try {
+    addrs = typeof currentCustomer.addresses === 'string' ? JSON.parse(currentCustomer.addresses) : (currentCustomer.addresses || []);
+  } catch (_) { addrs = []; }
+
+  const def = addrs.find(a => a.is_default) || addrs[0] || {};
+  const cityVal = def.city || currentCustomer.city || 'القاهرة';
+  const regVal = def.region || currentCustomer.region || '';
+  const titleVal = def.title || (regVal ? `عيادة ${regVal}` : 'العيادة الرئيسية');
+  const detailsVal = def.details || currentCustomer.address || '';
+  const phoneVal = def.phone || '';
+
+  document.getElementById('ec-clinic-title').value = titleVal;
+  populateGovSelect('ec-clinic-city', cityVal);
+  populateDistrictSelect(cityVal, 'ec-clinic-region', 'ec-clinic-region-custom-box', regVal);
+  document.getElementById('ec-clinic-details').value = detailsVal;
+  document.getElementById('ec-clinic-phone').value = phoneVal;
+
   const btn = document.getElementById('ecSubmitBtn');
   btn.disabled = false; btn.textContent = 'حفظ التعديلات';
   document.getElementById('editCustomerModal').classList.remove('hidden');
@@ -1387,11 +1653,53 @@ async function saveEditCustomer(e) {
   errEl.classList.add('hidden');
   btn.disabled = true; btn.textContent = '⏳ جارٍ الحفظ...';
 
+  const name = document.getElementById('ec-name').value.trim();
+  const phone = document.getElementById('ec-phone').value.trim();
+  const plan = document.getElementById('ec-plan').value.trim();
+
+  const cTitle = document.getElementById('ec-clinic-title').value.trim();
+  const cCity = document.getElementById('ec-clinic-city').value.trim();
+  const cRegSel = document.getElementById('ec-clinic-region').value.trim();
+  const cRegCustom = document.getElementById('ec-clinic-region-custom')?.value.trim() || '';
+  const cRegion = (cRegSel === '__custom__' ? cRegCustom : cRegSel);
+  const cDetails = document.getElementById('ec-clinic-details').value.trim();
+  const cPhone = document.getElementById('ec-clinic-phone').value.trim();
+
+  let addrs = [];
+  try {
+    addrs = typeof currentCustomer.addresses === 'string' ? JSON.parse(currentCustomer.addresses) : (currentCustomer.addresses || []);
+  } catch (_) { addrs = []; }
+
+  const fullAddr = [cCity, cRegion, cDetails].filter(Boolean).join(' - ');
+  const defaultObj = {
+    id: (addrs[0] && addrs[0].id) || ('addr_' + Date.now()),
+    title: cTitle || (cRegion ? `عيادة ${cRegion}` : 'العيادة الرئيسية'),
+    city: cCity || 'القاهرة',
+    region: cRegion || '',
+    details: cDetails || '',
+    phone: cPhone || '',
+    address: fullAddr,
+    is_default: true
+  };
+
+  let updatedAddrs = [];
+  const defIdx = addrs.findIndex(a => a.is_default);
+  if (defIdx >= 0) {
+    updatedAddrs = addrs.map((a, i) => i === defIdx ? defaultObj : { ...a, is_default: false });
+  } else if (addrs.length > 0) {
+    updatedAddrs = [defaultObj, ...addrs.slice(1).map(a => ({ ...a, is_default: false }))];
+  } else {
+    updatedAddrs = [defaultObj];
+  }
+
   const body = {
-    name:             document.getElementById('ec-name').value.trim(),
-    phone:            document.getElementById('ec-phone').value.trim(),
-    address:          document.getElementById('ec-address').value.trim(),
-    installment_plan: document.getElementById('ec-plan').value.trim(),
+    name,
+    phone,
+    installment_plan: plan,
+    city: cCity,
+    region: cRegion,
+    address: fullAddr,
+    addresses: updatedAddrs
   };
 
   const res  = await fetch(`${BASE}/api/customers/${currentCustomer.id}`, {

@@ -2,6 +2,7 @@
 const { Pool, types } = require('pg');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const { normalizeEgyptianAddresses, parseEgyptianAddress } = require('./address-parser');
 
 types.setTypeParser(1700, val => val === null ? null : parseFloat(val));
 types.setTypeParser(20, val => val === null ? null : parseInt(val, 10));
@@ -745,6 +746,38 @@ async function initDb() {
         ON CONFLICT (code) DO NOTHING
       `);
     } catch (_) {}
+
+    // 8. Auto backfill & migrate legacy customer addresses permanently
+    try {
+      const { rows: legacyList } = await client.query(`
+        SELECT id, address, addresses, city, region
+        FROM customers
+        WHERE (
+          addresses IS NULL
+          OR addresses::text = '[]'
+          OR addresses::text = 'null'
+          OR jsonb_array_length(CASE WHEN addresses IS NULL OR addresses::text = 'null' THEN '[]'::jsonb ELSE addresses END) = 0
+        )
+        AND address IS NOT NULL
+        AND TRIM(address) <> ''
+      `);
+      for (const cust of legacyList) {
+        const normalized = normalizeEgyptianAddresses(cust.addresses, cust.address);
+        if (normalized && normalized.length > 0) {
+          const def = normalized.find(a => a.is_default) || normalized[0];
+          await client.query(
+            `UPDATE customers
+             SET addresses = $1::jsonb,
+                 city = COALESCE(NULLIF(city, ''), $2),
+                 region = COALESCE(NULLIF(region, ''), $3)
+             WHERE id = $4`,
+            [JSON.stringify(normalized), def.city || 'القاهرة', def.region || '', cust.id]
+          );
+        }
+      }
+    } catch (migErr) {
+      console.error('[initDb] Legacy address migration notice:', migErr.message);
+    }
 
   } finally {
     client.release();

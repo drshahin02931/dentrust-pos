@@ -14,6 +14,7 @@ const rateLimit = require('express-rate-limit');
 const bwip = require('bwip-js');
 const webpush = require('web-push');
 const { posDb, dentrustDb, sessionDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
+const { EGYPT_GOVERNORATES, normalizeArabicText, parseEgyptianAddress, normalizeEgyptianAddresses } = require('./address-parser');
 
 const BASE = (process.env.BASE_PATH || '').replace(/\/$/, '');
 const PORT = parseInt(process.env.PORT || '5000', 10);
@@ -1933,17 +1934,18 @@ app.post([`${BASE}/api/customers`, '/api/customers'], async (req, res) => {
     const isVip = !!d.is_vip;
     const custCode = isVip ? `vip${barcode}` : barcode;
     const extraPhonesStr = Array.isArray(d.extra_phones) ? d.extra_phones.filter(Boolean).join(',') : (d.extra_phones || '');
-    let addrsJson = '[]';
-    if (d.addresses) {
-      addrsJson = typeof d.addresses === 'string' ? d.addresses : JSON.stringify(d.addresses);
-    } else if (d.address && d.address.trim()) {
-      addrsJson = JSON.stringify([{ id: 'addr_' + Date.now(), title: 'العيادة الرئيسية', address: d.address.trim(), city: d.city || 'القاهرة', region: d.region || '' }]);
-    }
+    
+    const normAddrs = normalizeEgyptianAddresses(d.addresses, d.address || (d.city ? `${d.city} ${d.region||''} ${d.details||''}` : ''));
+    const addrsJson = JSON.stringify(normAddrs);
+    const defAddr = normAddrs.find(a => a.is_default) || normAddrs[0] || {};
+    const effectiveCity = d.city || defAddr.city || 'القاهرة';
+    const effectiveRegion = d.region || defAddr.region || '';
+    const effectiveAddress = d.address || defAddr.address || `${effectiveCity} - ${effectiveRegion}`.trim();
 
     const { rows: [newCust] } = await posDb.query(
-      `INSERT INTO customers (name, phone, address, installment_plan, source, password_hash, points_balance, barcode, is_vip, customer_code, extra_phones, addresses)
-       VALUES ($1,$2,$3,$4,'pos','1234567',0,$5,$6,$7,$8,$9) RETURNING *`,
-      [d.name.trim(), d.phone?.trim() || '', d.address || '', d.installment_plan || '', barcode, isVip, custCode, extraPhonesStr, addrsJson]
+      `INSERT INTO customers (name, phone, address, city, region, installment_plan, source, password_hash, points_balance, barcode, is_vip, customer_code, extra_phones, addresses)
+       VALUES ($1,$2,$3,$4,$5,$6,'pos','1234567',0,$7,$8,$9,$10,$11) RETURNING *`,
+      [d.name.trim(), d.phone?.trim() || '', effectiveAddress, effectiveCity, effectiveRegion, d.installment_plan || '', barcode, isVip, custCode, extraPhonesStr, addrsJson]
     );
 
     // Sync new customer to website (Supabase)
@@ -2043,7 +2045,7 @@ app.post([`${BASE}/api/customer/toggle-vip`, '/api/customer/toggle-vip'], async 
 
 // POST /api/customer/add-address
 app.post([`${BASE}/api/customer/add-address`, '/api/customer/add-address'], async (req, res) => {
-  const { customer_id, title, city, region, details } = req.body;
+  const { customer_id, title, city, region, details, phone, is_default } = req.body;
   if (!customer_id) return res.status(400).json({ error: 'معرف العميل مطلوب' });
   if (!title || !city) return res.status(400).json({ error: 'اسم العيادة والمحافظة مطلوبان' });
   try {
@@ -2055,17 +2057,32 @@ app.post([`${BASE}/api/customer/add-address`, '/api/customer/add-address'], asyn
       addrs = typeof cust.addresses === 'string' ? JSON.parse(cust.addresses) : (cust.addresses || []);
     } catch (_) { addrs = []; }
 
+    const makeDefault = is_default !== undefined ? !!is_default : (addrs.length === 0);
+
+    if (makeDefault) {
+      addrs = addrs.map(a => ({ ...a, is_default: false }));
+    }
+
     const newAddr = {
       id: 'addr_' + Date.now(),
       title: title.trim(),
       city: city.trim(),
       region: (region || '').trim(),
       details: (details || '').trim(),
-      address: `${city.trim()} - ${(region||'').trim()} - ${(details||'').trim()}`.replace(/\s*-\s*-\s*/g, ' - ').trim()
+      phone: (phone || '').trim(),
+      address: `${city.trim()} - ${(region||'').trim()} - ${(details||'').trim()}`.replace(/\s*-\s*-\s*/g, ' - ').trim(),
+      is_default: makeDefault
     };
     addrs.push(newAddr);
 
-    await posDb.query('UPDATE customers SET addresses=$1 WHERE id=$2', [JSON.stringify(addrs), customer_id]);
+    if (makeDefault) {
+      await posDb.query(
+        'UPDATE customers SET addresses=$1, city=$2, region=$3, address=$4 WHERE id=$5',
+        [JSON.stringify(addrs), newAddr.city, newAddr.region, newAddr.address, customer_id]
+      );
+    } else {
+      await posDb.query('UPDATE customers SET addresses=$1 WHERE id=$2', [JSON.stringify(addrs), customer_id]);
+    }
 
     await posDb.query(
       `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
@@ -2159,164 +2176,6 @@ app.post(`${BASE}/api/customer/register`, async (req, res) => {
     res.status(500).json({ error: err.message || 'خطأ داخلي في الخادم' });
   }
 });
-
-// ── Smart Egyptian Address Parser & Normalizer ──────────────────────────────
-const EGYPT_GOVERNORATES = {
-  'القاهرة': ['النزهة', 'مدينة نصر', 'المعادي', 'مصر الجديدة', 'الزيتون', 'شبرا', 'المطرية', 'عين شمس', 'الزمالك', 'وسط البلد', 'المنيل', 'الدقي', 'بولاق', 'السيدة زينب', 'الخليفة', 'مصر القديمة', 'حلوان', 'المعصرة', '15 مايو', 'التجمع الخامس', 'التجمع', 'القاهرة الجديدة', 'القطامية', 'البساتين', 'دار السلام', 'الأميرية', 'منشأة ناصر', 'الشرابية', 'روض الفرج', 'العمرانية', 'فيصل', 'الهرم', 'عين الصيرة', 'طره', 'الباجور', 'المقطم', 'الخصوص', 'شبرا الخيمة الجديدة', 'مدينة بدر', 'العبور', 'أكتوبر (جيزة)', 'الشيخ زايد', 'مدينتي', 'الرحاب', 'الشروق'],
-  'الجيزة': ['الدقي', 'العجوزة', 'المهندسين', 'فيصل', 'الهرم', 'البدرشين', 'البراجيل', 'أوسيم', 'أبو رواش', 'العياط', 'الواحات البحرية', 'الصف', '6 أكتوبر', 'أكتوبر', 'الشيخ زايد', 'حدائق الأهرام', 'طموه', 'الحوامدية', 'إمبابة', 'بولاق الدكرور', 'أبو النمرس', 'كرداسة', 'أبو الغيط', 'العمرانية', 'ميدان الجيزة'],
-  'الاسكندرية': ['المنتزه', 'شرق', 'وسط', 'غرب', 'الجمرك', 'العجمي', 'العامرية', 'برج العرب', 'سيدي جابر', 'سموحة', 'محرم بك', 'ميامي', 'لوران', 'سيدي بشر', 'رشدي', 'كفر عبده', 'ستانلي', 'جليم', 'الإبراهيمية', 'كامب شيزار', 'الشاطبي', 'بحري', 'المندرة', 'العصافرة', 'المعمورة', 'أبو قير'],
-  'الدقهلية': ['المنصورة', 'ميت غمر', 'السنبلاوين', 'دكرنس', 'بلقاس', 'شربين', 'المنزلة', 'طلخا', 'الجمالية', 'منية النصر', 'أجا', 'بني عبيد', 'تمى الأمديد', 'ميت سلسيل', 'نبروه'],
-  'الشرقية': ['الزقازيق', 'العاشر من رمضان', 'منيا القمح', 'بلبيس', 'مشتول السوق', 'القنايات', 'أبو حماد', 'القرين', 'فاقوس', 'أبو كبير', 'الحسينية', 'كفر صقر', 'أولاد صقر', 'ديرب نجم', 'الإبراهيمية', 'صان الحجر'],
-  'الغربية': ['طنطا', 'المحلة الكبرى', 'المحلة', 'كفر الزيات', 'زفتى', 'السنطة', 'قطور', 'بسيون', 'سمنود'],
-  'المنوفية': ['شبين الكوم', 'مدينة السادات', 'السادات', 'منوف', 'أشمون', 'الباجور', 'قويسنا', 'بركة السبع', 'تلا', 'الشهداء'],
-  'القليوبية': ['بنها', 'قليوب', 'شبرا الخيمة', 'القناطر الخيرية', 'الخانكة', 'كفر شكر', 'طوخ', 'قها', 'العبور', 'الخصوص', 'شبين القناطر'],
-  'البحيرة': ['دمنهور', 'كفر الدوار', 'رشيد', 'إدكو', 'أبو المطامير', 'أبو حمص', 'الدلنجات', 'المحمودية', 'الرحمانية', 'إيتاي البارود', 'حوش عيسى', 'كوم حمادة', 'بدر', 'وادي النطرون', 'النوبارية'],
-  'كفر الشيخ': ['كفر الشيخ', 'دسوق', 'فوه', 'مطوبس', 'قلين', 'سيدي سالم', 'الرياض', 'بيلا', 'الحامول', 'بلطيم', 'سيدي غازي'],
-  'دمياط': ['دمياط', 'دمياط الجديدة', 'رأس البر', 'فارسكور', 'الزرقا', 'كفر سعد', 'كفر البطيخ', 'عزبة البرج'],
-  'بورسعيد': ['حي الشرق', 'حي العرب', 'حي المناخ', 'حي الضواحي', 'حي الزهور', 'بورفؤاد', 'بورسعيد'],
-  'الإسماعيلية': ['الإسماعيلية', 'فايد', 'القنطرة شرق', 'القنطرة غرب', 'التل الكبير', 'أبو صوير', 'القصاصين'],
-  'السويس': ['السويس', 'حي الأربعين', 'حي عتاقة', 'حي فيصل', 'العين السخنة'],
-  'بني سويف': ['بني سويف', 'الواسطى', 'ناصر', 'إهناسيا', 'ببا', 'سمسطا', 'الفشن'],
-  'الفيوم': ['الفيوم', 'سنورس', 'إطسا', 'طامية', 'أبشواي'],
-  'المنيا': ['المنيا', 'ملوي', 'مغاغة', 'بني مزار', 'مطاي', 'سمالوط', 'أبو قرقاص', 'دير مواس'],
-  'أسيوط': ['أسيوط', 'ديروط', 'القوصية', 'أبنوب', 'منفلوط', 'أبو تيج'],
-  'سوهاج': ['سوهاج', 'أخميم', 'جرجا', 'طهطا', 'طما', 'البلينا', 'المراغة'],
-  'قنا': ['قنا', 'نجع حمادي', 'دشنا', 'قوص', 'فرشوط', 'أبو تشت'],
-  'الأقصر': ['الأقصر', 'إسنا', 'أرمنت'],
-  'أسوان': ['أسوان', 'إدفو', 'كوم أمبو', 'نصر النوبة'],
-  'البحر الأحمر': ['الغردقة', 'الجونة', 'سفاجا', 'القصير', 'مرسى علم'],
-  'مطروح': ['مرسى مطروح', 'العلمين', 'الحمام', 'الساحل الشمالي', 'مارينا', 'سيدي عبد الرحمن'],
-  'جنوب سيناء': ['شرم الشيخ', 'دهب', 'نويبع', 'طابا', 'رأس سدر'],
-  'شمال سيناء': ['العريش', 'بئر العبد']
-};
-
-function normalizeArabicText(str) {
-  return (str || '')
-    .replace(/[أإآ]/g, 'ا')
-    .replace(/[ة]/g, 'ه')
-    .replace(/[ى]/g, 'ي')
-    .replace(/[\u064B-\u065F]/g, '')
-    .toLowerCase();
-}
-
-function parseEgyptianAddress(raw) {
-  if (!raw || typeof raw !== 'string') return null;
-  const cleanRaw = raw.trim();
-  if (!cleanRaw) return null;
-
-  const normRaw = normalizeArabicText(cleanRaw);
-
-  let detectedCity = '';
-  let detectedRegion = '';
-
-  for (const city of Object.keys(EGYPT_GOVERNORATES)) {
-    const normCity = normalizeArabicText(city);
-    if (normRaw.includes(normCity)) {
-      detectedCity = city;
-      break;
-    }
-  }
-
-  const allRegions = [];
-  for (const [gov, districts] of Object.entries(EGYPT_GOVERNORATES)) {
-    for (const d of districts) {
-      allRegions.push({ gov, district: d, norm: normalizeArabicText(d) });
-    }
-  }
-  allRegions.sort((a, b) => b.norm.length - a.norm.length);
-
-  for (const item of allRegions) {
-    if (normRaw.includes(item.norm)) {
-      detectedRegion = item.district;
-      if (!detectedCity) {
-        detectedCity = item.gov;
-      }
-      break;
-    }
-  }
-
-  if (!detectedCity && !detectedRegion) {
-    detectedCity = 'القاهرة';
-    detectedRegion = 'وسط البلد';
-  } else if (!detectedCity && detectedRegion) {
-    detectedCity = 'القاهرة';
-  } else if (detectedCity && !detectedRegion) {
-    const govDistricts = EGYPT_GOVERNORATES[detectedCity];
-    detectedRegion = (govDistricts && govDistricts[0]) || detectedCity;
-  }
-
-  let title = 'العيادة الرئيسية';
-  if (detectedRegion && detectedRegion !== 'وسط البلد') {
-    title = 'عيادة ' + detectedRegion;
-  } else if (detectedCity && detectedCity !== 'القاهرة') {
-    title = 'عيادة ' + detectedCity;
-  }
-
-  let details = cleanRaw;
-  const parts = cleanRaw.split(/[-–—,،|\/]/).map(p => p.trim()).filter(Boolean);
-  if (parts.length > 1) {
-    const filtered = parts.filter(p => {
-      const np = normalizeArabicText(p);
-      return np !== normalizeArabicText(detectedCity) && np !== normalizeArabicText(detectedRegion);
-    });
-    if (filtered.length > 0) {
-      details = filtered.join(' - ');
-    }
-  }
-
-  return {
-    id: 'addr_' + Math.random().toString(36).substring(2, 9),
-    title,
-    city: detectedCity,
-    region: detectedRegion,
-    details,
-    address: cleanRaw,
-    is_default: true
-  };
-}
-
-function normalizeEgyptianAddresses(addrs, legacyAddress) {
-  let list = Array.isArray(addrs) ? addrs : [];
-  if (typeof addrs === 'string') {
-    try { list = JSON.parse(addrs); } catch (_) { list = []; }
-  }
-
-  if ((!list || list.length === 0) && legacyAddress && typeof legacyAddress === 'string' && legacyAddress.trim()) {
-    const parsed = parseEgyptianAddress(legacyAddress.trim());
-    if (parsed) list = [parsed];
-  }
-
-  list = list.map((item, idx) => {
-    if (typeof item === 'string') {
-      return parseEgyptianAddress(item) || {
-        id: 'addr_' + (idx + 1),
-        title: 'عيادة #' + (idx + 1),
-        city: 'القاهرة',
-        region: 'وسط البلد',
-        details: item,
-        address: item,
-        is_default: idx === 0
-      };
-    }
-    if (item && (!item.city || !item.region)) {
-      const rawText = item.address || item.details || item.title || '';
-      const parsed = parseEgyptianAddress(rawText);
-      if (parsed) {
-        return {
-          ...item,
-          city: item.city || parsed.city,
-          region: item.region || parsed.region,
-          details: item.details || parsed.details || rawText,
-          address: item.address || parsed.address || rawText,
-          is_default: item.is_default !== undefined ? item.is_default : (idx === 0)
-        };
-      }
-    }
-    return item;
-  });
-
-  return list;
-}
 
 app.post(`${BASE}/api/customer/login`, async (req, res) => {
   const { identifier, password } = req.body;
@@ -2794,21 +2653,89 @@ app.get(`${BASE}/api/customers/:cid/statement`, async (req, res) => {
 app.patch(`${BASE}/api/customers/:cid`, async (req, res) => {
   if (!isMgr(req) && !hasPerm(req, 'customers')) return res.status(403).json({ error: 'غير مصرح' });
   const cid = parseInt(req.params.cid, 10);
-  const { name, phone, address, installment_plan } = req.body;
+  const { name, phone, address, installment_plan, addresses, city, region } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'الاسم مطلوب' });
   try {
+    let normAddrsJson = null;
+    let effectiveCity = city || null;
+    let effectiveRegion = region || null;
+    let effectiveAddress = address || null;
+
+    if (addresses) {
+      const norm = normalizeEgyptianAddresses(addresses, address);
+      normAddrsJson = JSON.stringify(norm);
+      const def = norm.find(a => a.is_default) || norm[0];
+      if (def) {
+        effectiveCity = def.city || effectiveCity;
+        effectiveRegion = def.region || effectiveRegion;
+        effectiveAddress = def.address || def.details || effectiveAddress;
+      }
+    } else if (effectiveAddress && !effectiveCity) {
+      const parsed = parseEgyptianAddress(effectiveAddress);
+      if (parsed) {
+        effectiveCity = parsed.city;
+        effectiveRegion = parsed.region;
+        normAddrsJson = JSON.stringify([parsed]);
+      }
+    }
+
     const { rowCount } = await posDb.query(
       `UPDATE customers SET
          name             = $1,
          phone            = COALESCE(NULLIF($2,''), phone),
          address          = COALESCE(NULLIF($3,''), address),
-         installment_plan = COALESCE(NULLIF($4,''), installment_plan)
-       WHERE id = $5`,
-      [name.trim(), (phone||'').trim(), (address||'').trim(), (installment_plan||'').trim(), cid]
+         installment_plan = COALESCE(NULLIF($4,''), installment_plan),
+         city             = COALESCE(NULLIF($5,''), city),
+         region           = COALESCE(NULLIF($6,''), region),
+         addresses        = COALESCE($7::jsonb, addresses)
+       WHERE id = $8`,
+      [name.trim(), (phone||'').trim(), (effectiveAddress||'').trim(), (installment_plan||'').trim(), (effectiveCity||'').trim(), (effectiveRegion||'').trim(), normAddrsJson, cid]
     );
     if (!rowCount) return res.status(404).json({ error: 'العميل غير موجود' });
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── ترحيل العناوين القديمة يدوياً أو عند الطلب ───────────────────────────────
+app.post([`${BASE}/api/customers/migrate-addresses`, '/api/customers/migrate-addresses'], async (req, res) => {
+  try {
+    const { rows: legacyList } = await posDb.query(`
+      SELECT id, name, address, addresses, city, region
+      FROM customers
+      WHERE (
+        addresses IS NULL
+        OR addresses::text = '[]'
+        OR addresses::text = 'null'
+        OR jsonb_array_length(CASE WHEN addresses IS NULL OR addresses::text = 'null' THEN '[]'::jsonb ELSE addresses END) = 0
+      )
+      AND address IS NOT NULL
+      AND TRIM(address) <> ''
+    `);
+
+    let migrated = 0;
+    const details = [];
+
+    for (const cust of legacyList) {
+      const normalized = normalizeEgyptianAddresses(cust.addresses, cust.address);
+      if (normalized && normalized.length > 0) {
+        const def = normalized.find(a => a.is_default) || normalized[0];
+        await posDb.query(
+          `UPDATE customers
+           SET addresses = $1::jsonb,
+               city = COALESCE(NULLIF(city, ''), $2),
+               region = COALESCE(NULLIF(region, ''), $3)
+           WHERE id = $4`,
+          [JSON.stringify(normalized), def.city || 'القاهرة', def.region || '', cust.id]
+        );
+        migrated++;
+        details.push({ id: cust.id, name: cust.name, old: cust.address, parsed: def });
+      }
+    }
+
+    res.json({ ok: true, migrated_count: migrated, total_found: legacyList.length, details });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ أثناء الترحيل' });
+  }
 });
 
 // ── دمج عميلين ────────────────────────────────────────────────────────────────
