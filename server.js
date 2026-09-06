@@ -114,6 +114,7 @@ const OPEN_API = [
   '/api/customer/profile',
   '/api/customer/change-password',
   '/api/customer/update-profile',
+  '/api/customer/redeem',
   '/api/promo/validate',
   '/api/website-registrations/count',
 ];
@@ -2402,6 +2403,59 @@ app.post(`${BASE}/api/customer/update-profile`, async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+// POST /api/customer/redeem — Doctor redeems points for clinic gift
+app.post([`${BASE}/api/customer/redeem`, '/api/customer/redeem'], async (req, res) => {
+  const { identifier, reward_id, reward_name, points_cost } = req.body;
+  if (!identifier) return res.status(400).json({ error: 'معرّف الطبيب مطلوب' });
+  const cost = parseInt(points_cost, 10);
+  if (!cost || cost <= 0) return res.status(400).json({ error: 'تكلفة النقاط غير صحيحة' });
+
+  try {
+    const { rows: [customer] } = await posDb.query(
+      'SELECT id, name, phone, points_balance, is_vip, customer_code, barcode FROM customers WHERE customer_code=$1 OR phone=$1 OR barcode=$1',
+      [identifier.trim()]
+    );
+    if (!customer) return res.status(404).json({ error: 'حساب الطبيب غير موجود' });
+
+    const currentPoints = parseInt(customer.points_balance || 0, 10);
+    if (currentPoints < cost) {
+      return res.status(400).json({ error: `رصيد نقاطك (${currentPoints}) لا يكفي لاستبدال هذه الهدية (${cost} نقطة)` });
+    }
+
+    const newPoints = currentPoints - cost;
+    await posDb.query('UPDATE customers SET points_balance=$1 WHERE id=$2', [newPoints, customer.id]);
+
+    const code = customer.customer_code || customer.barcode || String(100000 + customer.id);
+    const giftTitle = reward_name || 'هدية عيادة مجانية';
+
+    // Audit log
+    await posDb.query(
+      `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+       VALUES ($1, $2, $3, 'redeem_gift', $4, $5, 'الموقع')`,
+      [customer.id, code, customer.name, `استبدال هدية نقاط: ${giftTitle} بـ ${cost} نقطة`, customer.phone]
+    ).catch(() => {});
+
+    // Alert POS staff: new reward redemption
+    await posDb.query(
+      `INSERT INTO website_order_alerts
+         (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id, total_amount, items_count, items_summary, seen)
+       VALUES ($1, $2, '', '', 'gift_redeem', 0, 1, $3, false)`,
+      [customer.name, customer.phone, `🎁 طلب استبدال هدية: ${giftTitle} (${cost} نقطة)`]
+    ).catch(() => {});
+
+    res.json({
+      ok: true,
+      success: true,
+      message: `تم استبدال ${giftTitle} بنجاح!`,
+      new_points_balance: newPoints,
+      reward: { id: reward_id, name: giftTitle, cost: cost }
+    });
+  } catch (err) {
+    console.error('[Redeem Gift Error]:', err);
+    res.status(500).json({ error: 'حدث خطأ أثناء استبدال الهدية' });
   }
 });
 
