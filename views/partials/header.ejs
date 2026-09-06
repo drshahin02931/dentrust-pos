@@ -122,6 +122,10 @@
         📋 سجل التعديلات
       </a>
 
+      <a href="<%= base %>/rewards" class="nav-link <%= reqPath.includes('/rewards') ? 'active' : '' %>">
+        🎁 هدايا النقاط
+      </a>
+
       <% if (typeof isMgr !== 'undefined' && isMgr) { %>
       <div class="h-5 w-px bg-blue-500 mx-1"></div>
       <a href="<%= base %>/warehouse" class="nav-link <%= reqPath.includes('/warehouse') ? 'active' : '' %>">

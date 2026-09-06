@@ -1,0 +1,420 @@
+<%- include('partials/header', Object.assign({pageTitle: 'هدايا النقاط والمكافآت'}, locals)) %>
+
+<div class="space-y-6">
+  <!-- Header Banner -->
+  <div class="flex flex-wrap items-center justify-between gap-4 bg-gradient-to-r from-blue-700 via-indigo-700 to-slate-900 rounded-3xl p-6 text-white shadow-md">
+    <div>
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-3xl">🎁</span>
+        <h1 class="text-2xl font-black tracking-tight">كتالوج هدايا ومكافآت النقاط</h1>
+      </div>
+      <p class="text-xs text-blue-100 max-w-2xl leading-relaxed">
+        تحكم في المنتجات المتاحة كـ هدايا للأطباء في المتجر الإلكتروني وعند الكاشير بالـ POS، وحدد عدد النقاط المطلوبة لكل صنف بسهولة من مخزونك المباشر.
+      </p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick="openAddRewardModal()" class="bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-black px-5 py-3 rounded-2xl flex items-center gap-2 transition-all shadow-lg hover:shadow-emerald-500/25 active:scale-95">
+        <span class="text-lg">✨</span> + إضافة منتج كهدية نقاط
+      </button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 text-center shadow-sm">
+      <div id="stat-total" class="text-2xl font-black text-gray-800">0</div>
+      <div class="text-xs text-gray-500 mt-0.5">إجمالي أصناف الهدايا</div>
+    </div>
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 text-center shadow-sm">
+      <div id="stat-min-pts" class="text-2xl font-black text-emerald-600">0</div>
+      <div class="text-xs text-emerald-600 mt-0.5">أول مستوى هدايا (نقطة)</div>
+    </div>
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 text-center shadow-sm">
+      <div id="stat-max-pts" class="text-2xl font-black text-indigo-600">0</div>
+      <div class="text-xs text-indigo-600 mt-0.5">أعلى مستوى هدايا VIP</div>
+    </div>
+    <div class="bg-white border border-gray-100 rounded-2xl p-4 text-center shadow-sm">
+      <div id="stat-in-stock" class="text-2xl font-black text-blue-600">0</div>
+      <div class="text-xs text-blue-600 mt-0.5">أصناف متوفرة بالمخزن</div>
+    </div>
+  </div>
+
+  <!-- Search Filter -->
+  <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-center gap-3">
+    <div class="relative flex-1">
+      <input id="searchInput" type="text" placeholder="🔍 ابحث في الهدايا الحالية بالاسم أو الفئة..." oninput="filterRewards()"
+        class="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+    </div>
+    <button onclick="loadRewards()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold px-4 py-2.5 rounded-xl transition-all">
+      🔄 تحديث القائمة
+    </button>
+  </div>
+
+  <!-- Rewards Cards Grid -->
+  <div id="rewardsContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div class="col-span-full text-center py-16 text-gray-400">
+      <div class="animate-spin inline-block w-6 h-6 border-2 border-current border-t-transparent rounded-full mb-2"></div>
+      <div>جارٍ تحميل كتالوج الهدايا...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Add Product as Reward -->
+<div id="addRewardModal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+  <div class="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
+    <div class="flex items-center justify-between border-b pb-3">
+      <h3 class="text-lg font-black text-gray-800 flex items-center gap-2">
+        <span>🎁</span> إضافة منتج من المخزن كـ هدية نقاط
+      </h3>
+      <button onclick="closeAddRewardModal()" class="text-gray-400 hover:text-gray-600 text-xl font-bold p-1">✕</button>
+    </div>
+
+    <!-- Step 1: Search Inventory Product -->
+    <div>
+      <label class="block text-xs font-bold text-gray-700 mb-1.5">1. ابحث عن المنتج في المخزن بالاسم أو الباركود:</label>
+      <div class="relative">
+        <input id="modalSearchProdInput" type="text" placeholder="اكتب اسم الصنف مثلاً (قفازات، كومبوزيت، إيتش...)" oninput="searchProductsForModal(this.value)"
+          class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+        <span id="modalSearchSpinner" class="hidden absolute left-3 top-2.5 text-xs text-gray-400">جاري البحث...</span>
+      </div>
+
+      <!-- Product Search Results Dropdown -->
+      <div id="modalProdResults" class="max-h-48 overflow-y-auto border border-gray-100 rounded-xl mt-1.5 bg-gray-50 divide-y divide-gray-100 hidden">
+      </div>
+    </div>
+
+    <!-- Selected Product Card -->
+    <div id="selectedProdCard" class="hidden bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="w-12 h-12 rounded-xl bg-white border flex items-center justify-center text-xl overflow-hidden flex-shrink-0" id="selProdImgBox">
+          📦
+        </div>
+        <div>
+          <div class="text-sm font-black text-gray-800 line-clamp-1" id="selProdName">اسم المنتج</div>
+          <div class="text-xs text-emerald-700 mt-0.5 flex gap-2">
+            <span id="selProdStock">المتوفر: 0</span>
+            <span>•</span>
+            <span id="selProdPrice">السعر: 0 ج</span>
+          </div>
+        </div>
+      </div>
+      <button onclick="clearSelectedProduct()" class="text-xs text-red-500 font-bold hover:underline">تغيير</button>
+    </div>
+
+    <!-- Step 2: Points Cost Input -->
+    <div>
+      <label class="block text-xs font-bold text-gray-700 mb-1.5">2. كم عدد النقاط المطلوبة لاستبدال هذه الهدية؟ *</label>
+      <div class="relative">
+        <input id="modalPointsCostInput" type="number" min="1" step="5" placeholder="مثلاً: 100 أو 250"
+          class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+        <span class="absolute left-3 top-2.5 text-xs font-bold text-gray-400">⭐ نقطة</span>
+      </div>
+      <p class="text-[11px] text-gray-500 mt-1">
+        💡 تذكير: الهدية الترحيبية للعميل = 50 نقطة، وكل 100 ج كاش تعطي 1 نقطة (و 5 نقاط للـ VIP).
+      </p>
+    </div>
+
+    <div id="modalErrBox" class="hidden text-xs text-red-600 font-bold bg-red-50 p-2.5 rounded-xl border border-red-200"></div>
+
+    <!-- Actions -->
+    <div class="flex gap-2 pt-2">
+      <button id="saveRewardBtn" onclick="submitSaveReward()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3 rounded-xl text-sm transition-all shadow-md">
+        حفظ ونشر الهدية في المتجر فوراً 🚀
+      </button>
+      <button onclick="closeAddRewardModal()" class="px-5 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl text-sm transition-all">
+        إلغاء
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let allRewards = [];
+  let selectedProductForReward = null;
+  let prodSearchTimeout = null;
+
+  async function loadRewards() {
+    const container = document.getElementById('rewardsContainer');
+    try {
+      const res = await fetch('<%= base %>/api/loyalty-rewards').then(r => r.json());
+      if (res.ok && Array.isArray(res.rewards)) {
+        allRewards = res.rewards;
+        updateStats();
+        renderRewardsGrid(allRewards);
+      } else {
+        container.innerHTML = `<div class="col-span-full text-center py-12 text-red-500 font-bold">فشل جلب الهدايا: ${res.error || 'خطأ غير متوقع'}</div>`;
+      }
+    } catch (e) {
+      container.innerHTML = '<div class="col-span-full text-center py-12 text-red-500 font-bold">تعذر الاتصال بالسيرفر</div>';
+    }
+  }
+
+  function updateStats() {
+    document.getElementById('stat-total').textContent = allRewards.length;
+    if (allRewards.length > 0) {
+      const costs = allRewards.map(r => r.points_cost);
+      document.getElementById('stat-min-pts').textContent = Math.min(...costs) + ' ⭐';
+      document.getElementById('stat-max-pts').textContent = Math.max(...costs) + ' ⭐';
+      const inStock = allRewards.filter(r => (parseInt(r.quantity, 10) || 0) > 0).length;
+      document.getElementById('stat-in-stock').textContent = inStock;
+    } else {
+      document.getElementById('stat-min-pts').textContent = '0';
+      document.getElementById('stat-max-pts').textContent = '0';
+      document.getElementById('stat-in-stock').textContent = '0';
+    }
+  }
+
+  function renderRewardsGrid(list) {
+    const container = document.getElementById('rewardsContainer');
+    if (!list || list.length === 0) {
+      container.innerHTML = `
+        <div class="col-span-full bg-white rounded-3xl border border-dashed border-gray-300 p-12 text-center">
+          <span class="text-4xl block mb-2">🎁</span>
+          <h3 class="text-base font-black text-gray-800">لا توجد هدايا مسجلة حتى الآن</h3>
+          <p class="text-xs text-gray-500 mt-1 mb-4">اضغط على زر "إضافة منتج كهدية نقاط" بالاعلى لاختيار أول هدية من مخزونك وتحديد نقاطها.</p>
+          <button onclick="openAddRewardModal()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow">
+            + إضافة أول هدية الآن
+          </button>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = list.map(r => {
+      const stock = parseInt(r.quantity, 10) || 0;
+      const isOut = stock <= 0;
+      return `
+        <div class="bg-white border rounded-2xl p-4 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+          <div>
+            <div class="flex items-start justify-between gap-3 mb-3">
+              <div class="w-14 h-14 rounded-xl bg-gray-50 border flex items-center justify-center overflow-hidden flex-shrink-0">
+                ${r.image_url ? `<img src="${r.image_url}" class="w-full h-full object-cover" alt="" onerror="this.src='/static/logo-icon.png'" />` : '<span class="text-2xl">🎁</span>'}
+              </div>
+              <div class="text-left">
+                <span class="inline-block bg-amber-50 text-amber-800 border border-amber-200 text-xs font-black px-2.5 py-1 rounded-lg">
+                  ⭐ ${r.points_cost} نقطة
+                </span>
+              </div>
+            </div>
+
+            <h4 class="text-sm font-black text-gray-800 line-clamp-2 mb-1">${r.product_name}</h4>
+            <div class="flex items-center gap-2 text-xs text-gray-500 mb-3">
+              <span class="bg-gray-100 px-2 py-0.5 rounded-md font-medium">${r.category || 'عام'}</span>
+              <span>•</span>
+              <span class="${isOut ? 'text-red-500 font-bold' : 'text-emerald-600 font-bold'}">
+                ${isOut ? 'نفد من المخزن (0)' : `المتوفر: ${stock} قطعة`}
+              </span>
+            </div>
+          </div>
+
+          <div class="border-t pt-3 flex items-center justify-between gap-2 mt-2">
+            <span class="text-xs text-gray-400">سعر البيع: ${parseFloat(r.sale_price || 0).toLocaleString()} ج</span>
+            <div class="flex items-center gap-1.5">
+              <button onclick="editRewardPoints(${r.id}, ${r.points_cost}, '${encodeURIComponent(r.product_name)}')" class="bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold px-2.5 py-1.5 rounded-lg transition-all">
+                ✏️ تعديل النقاط
+              </button>
+              <button onclick="deleteReward(${r.id}, '${encodeURIComponent(r.product_name)}')" class="bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold px-2.5 py-1.5 rounded-lg transition-all" title="حذف الهدية">
+                🗑️
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function filterRewards() {
+    const q = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+    if (!q) return renderRewardsGrid(allRewards);
+    const filtered = allRewards.filter(r => 
+      (r.product_name || '').toLowerCase().includes(q) ||
+      (r.category || '').toLowerCase().includes(q)
+    );
+    renderRewardsGrid(filtered);
+  }
+
+  // Modal logic
+  function openAddRewardModal() {
+    selectedProductForReward = null;
+    document.getElementById('modalSearchProdInput').value = '';
+    document.getElementById('modalProdResults').classList.add('hidden');
+    document.getElementById('modalProdResults').innerHTML = '';
+    document.getElementById('selectedProdCard').classList.add('hidden');
+    document.getElementById('modalPointsCostInput').value = '';
+    document.getElementById('modalErrBox').classList.add('hidden');
+    document.getElementById('addRewardModal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('modalSearchProdInput').focus(), 50);
+  }
+
+  function closeAddRewardModal() {
+    document.getElementById('addRewardModal').classList.add('hidden');
+  }
+
+  function searchProductsForModal(query) {
+    clearTimeout(prodSearchTimeout);
+    const resultsBox = document.getElementById('modalProdResults');
+    const q = (query || '').trim();
+    if (!q) {
+      resultsBox.classList.add('hidden');
+      return;
+    }
+
+    prodSearchTimeout = setTimeout(async () => {
+      document.getElementById('modalSearchSpinner').classList.remove('hidden');
+      try {
+        const res = await fetch(`<%= base %>/api/products?q=${encodeURIComponent(q)}`).then(r => r.json());
+        document.getElementById('modalSearchSpinner').classList.add('hidden');
+        const items = Array.isArray(res) ? res : (res.products || []);
+        if (items.length === 0) {
+          resultsBox.innerHTML = '<div class="p-3 text-xs text-gray-400 text-center">لا توجد منتجات تطابق هذا البحث</div>';
+          resultsBox.classList.remove('hidden');
+          return;
+        }
+
+        resultsBox.innerHTML = items.slice(0, 15).map(p => `
+          <div onclick="selectProductForReward(${p.id}, '${encodeURIComponent(p.product_name)}', ${p.quantity || 0}, ${p.sale_price || 0}, '${p.image_url || ''}')"
+               class="p-2.5 hover:bg-emerald-50 cursor-pointer flex items-center justify-between gap-3 text-xs transition-colors">
+            <div class="font-bold text-gray-800 line-clamp-1">${p.product_name}</div>
+            <div class="flex items-center gap-2 flex-shrink-0 text-[11px] text-gray-500">
+              <span class="bg-gray-200 px-1.5 py-0.5 rounded">${p.category || 'عام'}</span>
+              <span class="text-emerald-600 font-bold">مخزون: ${p.quantity || 0}</span>
+            </div>
+          </div>
+        `).join('');
+        resultsBox.classList.remove('hidden');
+      } catch (_) {
+        document.getElementById('modalSearchSpinner').classList.add('hidden');
+      }
+    }, 200);
+  }
+
+  function selectProductForReward(id, encName, stock, price, img) {
+    const name = decodeURIComponent(encName);
+    selectedProductForReward = { id, name, stock, price, img };
+
+    document.getElementById('selProdName').textContent = name;
+    document.getElementById('selProdStock').textContent = `المتوفر: ${stock} قطعة`;
+    document.getElementById('selProdPrice').textContent = `سعر البيع: ${price} ج`;
+
+    const imgBox = document.getElementById('selProdImgBox');
+    if (img) {
+      imgBox.innerHTML = `<img src="${img}" class="w-full h-full object-cover" alt="" onerror="this.src='/static/logo-icon.png'" />`;
+    } else {
+      imgBox.innerHTML = '📦';
+    }
+
+    document.getElementById('modalProdResults').classList.add('hidden');
+    document.getElementById('selectedProdCard').classList.remove('hidden');
+    document.getElementById('modalPointsCostInput').focus();
+  }
+
+  function clearSelectedProduct() {
+    selectedProductForReward = null;
+    document.getElementById('selectedProdCard').classList.add('hidden');
+    document.getElementById('modalSearchProdInput').value = '';
+    document.getElementById('modalSearchProdInput').focus();
+  }
+
+  async function submitSaveReward() {
+    const errBox = document.getElementById('modalErrBox');
+    errBox.classList.add('hidden');
+
+    if (!selectedProductForReward || !selectedProductForReward.id) {
+      errBox.textContent = 'يرجى اختيار المنتج من البحث أولاً';
+      errBox.classList.remove('hidden');
+      return;
+    }
+
+    const pointsCost = parseInt(document.getElementById('modalPointsCostInput').value, 10);
+    if (!pointsCost || pointsCost <= 0) {
+      errBox.textContent = 'يرجى كتابة عدد النقاط المطلوبة للاستبدال (رقم صحيح أكبر من صفر)';
+      errBox.classList.remove('hidden');
+      return;
+    }
+
+    const btn = document.getElementById('saveRewardBtn');
+    btn.disabled = true;
+    btn.textContent = 'جارٍ الحفظ...';
+
+    try {
+      const res = await fetch('<%= base %>/api/loyalty-rewards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product_id: selectedProductForReward.id,
+          points_cost: pointsCost
+        })
+      }).then(r => r.json());
+
+      btn.disabled = false;
+      btn.textContent = 'حفظ ونشر الهدية في المتجر فوراً 🚀';
+
+      if (res.ok) {
+        closeAddRewardModal();
+        loadRewards();
+      } else {
+        errBox.textContent = res.error || 'فشل حفظ الهدية';
+        errBox.classList.remove('hidden');
+      }
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'حفظ ونشر الهدية في المتجر فوراً 🚀';
+      errBox.textContent = 'تعذر الاتصال بالسيرفر';
+      errBox.classList.remove('hidden');
+    }
+  }
+
+  async function editRewardPoints(id, currentCost, encName) {
+    const name = decodeURIComponent(encName);
+    const newCostStr = prompt(`تعديل عدد النقاط المطلوبة لـ "${name}":`, currentCost);
+    if (newCostStr === null) return;
+    const newCost = parseInt(newCostStr, 10);
+    if (!newCost || newCost <= 0) {
+      alert('عدد النقاط غير صحيح');
+      return;
+    }
+
+    const reward = allRewards.find(r => r.id === id);
+    if (!reward) return;
+
+    try {
+      const res = await fetch('<%= base %>/api/loyalty-rewards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product_id: reward.product_id,
+          points_cost: newCost
+        })
+      }).then(r => r.json());
+
+      if (res.ok) {
+        loadRewards();
+      } else {
+        alert(res.error || 'فشل تعديل النقاط');
+      }
+    } catch (_) {
+      alert('تعذر الاتصال بالسيرفر');
+    }
+  }
+
+  async function deleteReward(id, encName) {
+    const name = decodeURIComponent(encName);
+    if (!confirm(`هل أنت متأكد من رغبتك في إزالة "${name}" من كتالوج الهدايا؟`)) return;
+
+    try {
+      const res = await fetch(`<%= base %>/api/loyalty-rewards/${id}`, { method: 'DELETE' }).then(r => r.json());
+      if (res.ok) {
+        loadRewards();
+      } else {
+        alert(res.error || 'فشل الحذف');
+      }
+    } catch (_) {
+      alert('تعذر الاتصال بالسيرفر');
+    }
+  }
+
+  // Load on page ready
+  document.addEventListener('DOMContentLoaded', loadRewards);
+</script>
+
+<%- include('partials/footer') %>

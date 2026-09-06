@@ -250,6 +250,14 @@ const PG_SCHEMA_SQL = `
     reason TEXT DEFAULT '',
     date TIMESTAMPTZ DEFAULT NOW()
   );
+  CREATE TABLE IF NOT EXISTS loyalty_rewards (
+    id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    points_cost INTEGER NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT uq_product_reward UNIQUE (product_id)
+  );
   CREATE TABLE IF NOT EXISTS warehouse_items (
     id SERIAL PRIMARY KEY,
     product_id INTEGER,

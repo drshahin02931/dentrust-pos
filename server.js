@@ -115,6 +115,7 @@ const OPEN_API = [
   '/api/customer/change-password',
   '/api/customer/update-profile',
   '/api/customer/redeem',
+  '/api/loyalty-rewards',
   '/api/promo/validate',
   '/api/website-registrations/count',
 ];
@@ -1645,6 +1646,21 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
         console.error('[Error updating POS loyalty points]:', ptsErr.message);
       }
     }
+
+    // Deduct redeemed loyalty points if cashier redeemed gifts on this sale
+    const redeemedPts = parseInt(d.redeemed_points || 0, 10);
+    if (customerId && redeemedPts > 0) {
+      try {
+        await client.query('UPDATE customers SET points_balance = GREATEST(0, COALESCE(points_balance, 0) - $1) WHERE id=$2', [redeemedPts, customerId]);
+        await client.query(
+          `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+           VALUES ($1, $2, $3, 'redeem_gift', $4, $5, $6)`,
+          [customerId, '', customerNameFree || '', `استبدال هدية بالفاتورة #${saleId} بخصم ${redeemedPts} نقطة`, '', req.session?.username || 'الكاشير']
+        ).catch(() => {});
+      } catch (rErr) {
+        console.error('[Error deducting redeemed points]:', rErr.message);
+      }
+    }
     await client.query('COMMIT');
 
     let lowStock = [];
@@ -2459,6 +2475,61 @@ app.post([`${BASE}/api/customer/redeem`, '/api/customer/redeem'], async (req, re
   }
 });
 
+// ── Loyalty Rewards API Endpoints (إدارة كتالوج هدايا النقاط) ───────────────
+app.get([`${BASE}/api/loyalty-rewards`, '/api/loyalty-rewards'], async (req, res) => {
+  try {
+    const { rows } = await posDb.query(`
+      SELECT lr.id, lr.product_id, lr.points_cost, lr.active, lr.created_at,
+             p.product_name, p.sale_price, p.purchase_price, p.quantity, p.category, p.barcode,
+             COALESCE(p.image_url, '') as image_url,
+             COALESCE(p.description, '') as description
+      FROM loyalty_rewards lr
+      JOIN products p ON lr.product_id = p.id
+      WHERE lr.active = true
+      ORDER BY lr.points_cost ASC, lr.id ASC
+    `);
+    res.json({ ok: true, rewards: rows });
+  } catch (err) {
+    console.error('[GET /api/loyalty-rewards Error]:', err);
+    res.status(500).json({ error: 'خطأ داخلي في جلب الهدايا' });
+  }
+});
+
+app.post([`${BASE}/api/loyalty-rewards`, '/api/loyalty-rewards'], async (req, res) => {
+  const { product_id, points_cost } = req.body;
+  const pid = parseInt(product_id, 10);
+  const cost = parseInt(points_cost, 10);
+  if (!pid || isNaN(pid)) return res.status(400).json({ error: 'يرجى اختيار المنتج المراد إضافته كهدية' });
+  if (!cost || cost <= 0) return res.status(400).json({ error: 'يرجى تحديد عدد النقاط المطلوبة للاستبدال' });
+
+  try {
+    const { rows: [prod] } = await posDb.query('SELECT id, product_name FROM products WHERE id=$1', [pid]);
+    if (!prod) return res.status(404).json({ error: 'المنتج غير موجود في المخزن' });
+
+    const { rows: [reward] } = await posDb.query(`
+      INSERT INTO loyalty_rewards (product_id, points_cost, active)
+      VALUES ($1, $2, true)
+      ON CONFLICT (product_id) DO UPDATE SET points_cost=$2, active=true
+      RETURNING *
+    `, [pid, cost]);
+
+    res.json({ ok: true, reward, message: `تم إضافة "${prod.product_name}" كهدية بـ ${cost} نقطة بنجاح` });
+  } catch (err) {
+    console.error('[POST /api/loyalty-rewards Error]:', err);
+    res.status(500).json({ error: 'خطأ داخلي في حفظ الهدية' });
+  }
+});
+
+app.delete([`${BASE}/api/loyalty-rewards/:id`, '/api/loyalty-rewards/:id'], async (req, res) => {
+  const rid = parseInt(req.params.id, 10);
+  try {
+    await posDb.query('DELETE FROM loyalty_rewards WHERE id=$1', [rid]);
+    res.json({ ok: true, message: 'تم إزالة الهدية بنجاح' });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في حذف الهدية' });
+  }
+});
+
 // ── Customer Profile & Invoices Link Endpoint ──────────────────────────────
 app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/customer/orders`, '/api/customer/orders'], async (req, res) => {
   const identifier = (req.query.identifier || req.query.phone || req.query.customer_code || req.query.code || '').trim();
@@ -2625,6 +2696,10 @@ app.get([`${BASE}/api/customer-audit-logs`, '/api/customer-audit-logs'], async (
 app.get([`${BASE}/customer-audit-logs`, '/customer-audit-logs'], (req, res) => {
   if (!hasPerm(req, 'customers')) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'customer_audit_logs');
+});
+
+app.get([`${BASE}/rewards`, '/rewards'], (req, res) => {
+  return renderPage(req, res, 'rewards');
 });
 
 app.get([`${BASE}/api/website-registrations`, '/api/website-registrations'], async (req, res) => {
