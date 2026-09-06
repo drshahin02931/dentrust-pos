@@ -1624,6 +1624,26 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
       const creditPortion = parseFloat(d.payment_split.credit || 0);
       if (creditPortion > 0) await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [creditPortion, customerId]);
     }
+
+    // 💎 Loyalty Points: awarded ONLY on cash, instapay, and card (credit/debt gets 0 points)
+    if (customerId && method !== 'credit') {
+      try {
+        const { rows: [custRow] } = await client.query('SELECT is_vip FROM customers WHERE id=$1', [customerId]);
+        const isVip = !!custRow?.is_vip;
+        const multiplier = isVip ? 5 : 1; // VIP gets 5 points per 100 EGP, regular gets 1 point
+        let paidCashAmount = total;
+        if (method === 'split' && d.payment_split) {
+          const creditPortion = parseFloat(d.payment_split.credit || 0);
+          paidCashAmount = Math.max(0, total - creditPortion);
+        }
+        const earnedPoints = Math.floor(paidCashAmount / 100) * multiplier;
+        if (earnedPoints > 0) {
+          await client.query('UPDATE customers SET points_balance = COALESCE(points_balance, 0) + $1 WHERE id=$2', [earnedPoints, customerId]);
+        }
+      } catch (ptsErr) {
+        console.error('[Error updating POS loyalty points]:', ptsErr.message);
+      }
+    }
     await client.query('COMMIT');
 
     let lowStock = [];
@@ -2138,7 +2158,7 @@ app.post(`${BASE}/api/customer/register`, async (req, res) => {
 
     const { rows: [ins] } = await posDb.query(
       `INSERT INTO customers (name, phone, password_hash, extra_phones, addresses, source, points_balance, is_verified, barcode, customer_code)
-       VALUES ($1, $2, $3, $4, $5, 'website', 0, false, $6, $6)
+       VALUES ($1, $2, $3, $4, $5, 'website', 50, false, $6, $6)
        RETURNING id`,
       [name.trim(), cleanPhone, passHash, extraStr, JSON.stringify(initialAddresses), barcode]
     );
@@ -2147,14 +2167,14 @@ app.post(`${BASE}/api/customer/register`, async (req, res) => {
 
     await posDb.query(
       `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
-       VALUES ($1, $2, $3, 'registration', 'تسجيل حساب جديد من المتجر الإلكتروني', $4, 'الموقع')`,
+       VALUES ($1, $2, $3, 'registration', 'تسجيل حساب جديد من المتجر الإلكتروني + 50 نقطة ترحيبية هدية', $4, 'الموقع')`,
       [ins.id, customerCode, name.trim(), cleanPhone + (extraStr ? `, ${extraStr}` : '')]
     ).catch(() => {});
 
     await posDb.query(
       `INSERT INTO website_order_alerts
          (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id, total_amount, items_count, items_summary, seen)
-       VALUES ($1, $2, $3, $4, 'new_customer', 0, 0, 'تسجيل طبيب جديد من الموقع', false)`,
+       VALUES ($1, $2, $3, $4, 'new_customer', 0, 0, 'تسجيل طبيب جديد من الموقع (+50 نقطة ترحيبية)', false)`,
       [name.trim(), cleanPhone, city || '', address || '']
     ).catch(() => {});
 
@@ -2167,7 +2187,7 @@ app.post(`${BASE}/api/customer/register`, async (req, res) => {
         phone: cleanPhone,
         extra_phones: extraStr,
         addresses: initialAddresses,
-        points_balance: 0,
+        points_balance: 50,
         total_debt: 0
       }
     });
@@ -4105,7 +4125,7 @@ async function upsertCustomerInPOS(data) {
     return existing.id;
   }
   const { rows: [ins] } = await posDb.query(
-    'INSERT INTO customers (name, phone, city, region, street, building_number, landmark, address, dentrust_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
+    'INSERT INTO customers (name, phone, city, region, street, building_number, landmark, address, dentrust_id, points_balance) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, 50) RETURNING id',
     [name, cleanPhone, city || '', region || '', street || '', building || '', landmark || '', fullAddr, dentrust_id]
   );
   // 🔔 Alert POS staff: new customer registered from website
@@ -4814,6 +4834,22 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     }
     // Sync actual current POS stock to website (NOT delta — website already deducted its own stock)
     if (deductedProdIds.length > 0) syncProductsNow(deductedProdIds.map(d => d.pid)).catch(() => {});
+
+    // 💎 Loyalty Points for Online Orders (all website orders are cash/COD)
+    if (customerId) {
+      try {
+        const { rows: [cRow] } = await posDb.query('SELECT is_vip FROM customers WHERE id=$1', [customerId]);
+        const isVip = !!cRow?.is_vip;
+        const multiplier = isVip ? 5 : 1;
+        const onlineEarnedPoints = Math.floor(total / 100) * multiplier;
+        if (onlineEarnedPoints > 0) {
+          await posDb.query('UPDATE customers SET points_balance = COALESCE(points_balance, 0) + $1 WHERE id=$2', [onlineEarnedPoints, customerId]);
+        }
+      } catch (ptsErr) {
+        console.error('[Error updating online points]:', ptsErr.message);
+      }
+    }
+
     // Flask: online orders do NOT increment customer debt on order-placed;
     // debt tracking is handled separately via confirm-online-order / credit payments.
     res.json({ ok: true, sale_id: saleId, deducted, customer_id: customerId });

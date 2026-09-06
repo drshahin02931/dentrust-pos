@@ -663,7 +663,10 @@ function populateCustomerSelect(list) {
     opt.value = c.id;
     const debt = parseFloat(c.total_debt || 0);
     const debtLabel = debt > 0 ? ` (عليه: ${debt.toLocaleString('ar-EG', {minimumFractionDigits:2})} ج)` : ' (مسدد)';
-    opt.textContent = `${c.name}${debtLabel}`;
+    const vipTag = c.is_vip ? ' 👑 VIP' : '';
+    const pts = parseInt(c.points_balance || 0, 10);
+    const ptsTag = pts > 0 ? ` [💎 ${pts} نقطة]` : '';
+    opt.textContent = `${c.name}${vipTag}${ptsTag}${debtLabel}`;
     sel.appendChild(opt);
   });
   if (currentVal) sel.value = currentVal;
@@ -714,7 +717,9 @@ function onCustomerSelectChange() {
   }
 
   const code = cust.customer_code || cust.barcode || String(100000 + cust.id);
-  codeBadge.textContent = code;
+  const vipTag = cust.is_vip ? ' 👑 VIP' : '';
+  const pts = parseInt(cust.points_balance || 0, 10);
+  codeBadge.textContent = `${code}${vipTag} | 💎 ${pts} نقطة`;
   codeBadge.classList.remove("hidden");
 
   let addresses = [];
