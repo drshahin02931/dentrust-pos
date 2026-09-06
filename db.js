@@ -252,7 +252,7 @@ const PG_SCHEMA_SQL = `
   );
   CREATE TABLE IF NOT EXISTS loyalty_rewards (
     id SERIAL PRIMARY KEY,
-    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    product_id INTEGER NOT NULL,
     points_cost INTEGER NOT NULL,
     active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -675,7 +675,11 @@ async function initDb() {
     // 2. Create POS-specific tables (products is a VIEW — not created here)
     const stmts = PG_SCHEMA_SQL.split(';').map(s => s.trim()).filter(Boolean);
     for (const stmt of stmts) {
-      await client.query(stmt);
+      try {
+        await client.query(stmt);
+      } catch (stmtErr) {
+        console.warn('[initDb] Statement warning:', stmtErr.message);
+      }
     }
 
     // 3. Seed default settings
