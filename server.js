@@ -2610,7 +2610,7 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
             OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($2, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
           ))
           OR ($3 != '' AND woa.customer_phone = $3)
-       ORDER BY (CASE WHEN (s.payment_method IN ('credit','split') AND s.credit_paid IS NOT TRUE) THEN 0 ELSE 1 END) ASC, s.id DESC
+       ORDER BY s.date DESC, s.id DESC
        LIMIT 100`,
       [customer.id, (customer.name || '').trim(), (customer.phone || '').trim()]
     );
@@ -2642,19 +2642,47 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
       posDb.query('UPDATE sales SET customer_id=$1 WHERE id=ANY($2::int[])', [customer.id, unlinkedIds]).catch(() => {});
     }
 
-    const formattedOrders = sales.map(s => {
-      const totalAmt = parseFloat(s.total_amount || 0);
-      const isCredit = (s.payment_method === 'credit') || (s.payment_method === 'split');
+    // Intelligent Reverse-Debt Distribution (من الأحدث إلى الأقدم) — مطابقة تامة مع شاشة الكاشير
+    let remainingDebtToCover = Math.max(0, parseFloat(customer.total_debt || 0));
+
+    for (const s of sales) {
       let origDebt = 0;
       if (s.payment_method === 'split') {
         try { origDebt = parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
       } else if (s.payment_method === 'credit') {
         origDebt = Math.max(0, parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0));
       }
-      const paidAmt = parseFloat(s.paid_amount || 0);
-      const isPaid = !isCredit || (s.credit_paid === true || s.credit_paid === 1);
-      const remainingDebt = isPaid ? 0 : Math.max(0, origDebt - paidAmt);
-      const isPartial = !isPaid && paidAmt > 0;
+      s._origDebt = origDebt;
+    }
+
+    for (const s of sales) {
+      const isCreditType = (s.payment_method === 'credit' || s.payment_method === 'split');
+      if (!isCreditType || s._origDebt <= 0) {
+        s._computedRemainingDebt = 0;
+        s._computedPaidAmount = parseFloat(s.total_amount || 0);
+        s._computedIsPaid = true;
+        continue;
+      }
+
+      if (remainingDebtToCover > 0) {
+        const debtOnThis = Math.min(s._origDebt, remainingDebtToCover);
+        const paidOnThis = Math.max(0, s._origDebt - debtOnThis);
+        s._computedRemainingDebt = debtOnThis;
+        s._computedPaidAmount = paidOnThis;
+        s._computedIsPaid = (debtOnThis <= 0.001);
+        remainingDebtToCover -= debtOnThis;
+      } else {
+        s._computedRemainingDebt = 0;
+        s._computedPaidAmount = s._origDebt;
+        s._computedIsPaid = true;
+      }
+    }
+
+    const formattedOrders = sales.map(s => {
+      const totalAmt = parseFloat(s.total_amount || 0);
+      const isCredit = (s.payment_method === 'credit') || (s.payment_method === 'split');
+      const isPaid = s._computedIsPaid;
+      const isPartial = !isPaid && (s._computedPaidAmount > 0);
 
       return {
         id: s.id,
@@ -2662,9 +2690,9 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
         total_amount: totalAmt,
         total_price: totalAmt,
         totalPrice: totalAmt,
-        orig_debt: origDebt,
-        paid_amount: paidAmt,
-        remaining_debt: remainingDebt,
+        orig_debt: s._origDebt,
+        paid_amount: s._computedPaidAmount,
+        remaining_debt: s._computedRemainingDebt,
         is_partial: isPartial,
         payment_method: s.payment_method || 'cash',
         payment_label: s.payment_method === 'credit' ? 'آجل' : (s.payment_method === 'split' ? 'دفع مقسم' : 'نقدي (كاش)'),
@@ -2675,6 +2703,7 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
         clinic_address: s.clinic_address || '',
         is_credit: isCredit,
         is_paid: isPaid,
+        credit_paid: isPaid,
         status: isPaid ? 'completed' : (isPartial ? 'partial_credit' : 'credit_unpaid'),
         items: (s.items || []).map(it => ({
           product_name: it.product_name,
@@ -2684,6 +2713,13 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
           selected_option: it.selected_option
         }))
       };
+    });
+
+    formattedOrders.sort((a, b) => {
+      const aPaid = (a.is_paid || a.credit_paid) ? 1 : 0;
+      const bPaid = (b.is_paid || b.credit_paid) ? 1 : 0;
+      if (aPaid !== bPaid) return aPaid - bPaid;
+      return new Date(b.date || 0) - new Date(a.date || 0);
     });
 
     const trueCustomerDebt = parseFloat(customer.total_debt || 0);
@@ -2963,7 +2999,7 @@ app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
       const { rows: openSales } = await posDb.query(
         `SELECT id, total_amount, amount_received, payment_method, payment_split, paid_amount
          FROM sales 
-         WHERE customer_id=$1 AND payment_method IN ('credit','split') AND credit_paid IS NOT TRUE
+         WHERE customer_id=$1 AND payment_method IN ('credit','split') AND (credit_paid::text NOT IN ('true', '1') OR credit_paid IS NULL)
          ORDER BY date ASC, id ASC`,
         [cid]
       );
