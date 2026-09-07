@@ -230,25 +230,43 @@
         </div>
       </div>
 
-      <!-- Variants & Boxes Breakdown (Matching Inventory System) -->
-      <div id="awVariantsBoxesSection" class="border border-blue-100 rounded-2xl p-3.5 space-y-3 bg-blue-50/40">
-        <div class="flex items-center justify-between">
-          <label class="text-xs font-bold text-blue-900 flex items-center gap-1.5">
-            <span>📦</span> تفاصيل التعبئة والعلب (Variants & Boxes)
-          </label>
-          <span class="text-xs text-gray-600">الإجمالي: <strong id="awTotalQtyPreview" class="font-bold text-blue-700">0</strong> قطعة</span>
+      <!-- Custom Options & Variants Builder (مثل الدرجات A1, A2, A3 والمقاسات) -->
+      <div class="border-2 border-blue-200/80 rounded-2xl p-4 space-y-3 bg-gradient-to-br from-blue-50/50 to-indigo-50/30">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <label class="text-xs font-black text-blue-900 flex items-center gap-1.5">
+              <span>🎨</span> خيارات وتفاصيل الصنف (Variants مثل: A1, A2, A3 / المقاسات / الألوان):
+            </label>
+            <p class="text-[11px] text-gray-500">أضف درجات أو مقاسات الصنف مع تحديد كمية وسعر كل خيار (مثل المخزون تماماً)</p>
+          </div>
+          <span class="text-xs text-blue-950 font-bold bg-white px-2.5 py-1 rounded-xl border border-blue-200 shadow-2xs">
+            إجمالي كميات الـ Variants: <strong id="whCbTotalQty" class="font-black text-blue-700">0</strong> قطعة
+          </span>
         </div>
-        <div id="awItemsTable" class="space-y-2"></div>
-        <div id="awNoItemsMsg" class="text-xs text-gray-400 text-center py-2">لا توجد بوكسات بعد — أضف أدناه</div>
-        <div class="flex gap-2 flex-wrap">
-          <input type="text" id="aw-item-label" placeholder="الاسم (مثال: علبة كبيرة)"
-            class="flex-1 min-w-[130px] border rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"/>
-          <input type="number" id="aw-item-boxes" placeholder="عدد" min="1"
-            class="w-20 border rounded-xl px-2.5 py-1.5 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"/>
-          <input type="number" id="aw-item-qpb" placeholder="كمية/علبة" min="1"
-            class="w-24 border rounded-xl px-2.5 py-1.5 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"/>
-          <button type="button" onclick="awAddItem()"
-            class="bg-blue-700 hover:bg-blue-800 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm">+ إضافة بوكس</button>
+
+        <!-- Quick Shade Presets for Dental Products -->
+        <div class="flex items-center gap-1.5 flex-wrap pt-1">
+          <span class="text-[11px] font-bold text-gray-600">⚡ إضافة سريعة:</span>
+          <button type="button" onclick="whCbAddPreset('composite')"
+            class="text-[11px] bg-white hover:bg-blue-100 text-blue-700 border border-blue-300 font-bold px-2.5 py-1 rounded-lg transition-all shadow-2xs cursor-pointer">
+            + درجات الكمبوزيت (A1, A2, A3, A3.5, B1, B2)
+          </button>
+          <button type="button" onclick="whCbAddPreset('sizes')"
+            class="text-[11px] bg-white hover:bg-blue-100 text-blue-700 border border-blue-300 font-bold px-2.5 py-1 rounded-lg transition-all shadow-2xs cursor-pointer">
+            + مقاسات (S, M, L, XL)
+          </button>
+        </div>
+
+        <div id="whCbCategoriesContainer" class="space-y-2.5"></div>
+
+        <div id="whCbAddCatRow" class="flex gap-2 pt-1">
+          <input type="text" id="whCbNewCatInput" placeholder="اسم المجموعة (مثال: الدرجة / Shade، المقاس، اللون...)"
+            class="flex-1 border-2 border-blue-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-blue-500 bg-white"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();whCbAddCategory();}"/>
+          <button type="button" onclick="whCbAddCategory()"
+            class="bg-blue-700 hover:bg-blue-800 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-sm transition-all whitespace-nowrap cursor-pointer">
+            + مجموعة خيارات
+          </button>
         </div>
       </div>
 
@@ -914,88 +932,246 @@ async function loadWarehouseCategories() {
   } catch(_) {}
 }
 
-function awAddItem() {
-  const labelEl = document.getElementById('aw-item-label');
-  const boxesEl = document.getElementById('aw-item-boxes');
-  const qpbEl   = document.getElementById('aw-item-qpb');
-  const label = labelEl.value.trim();
-  const boxes = parseInt(boxesEl.value) || 0;
-  const qpb   = parseInt(qpbEl.value)   || 0;
-  if (!label || boxes <= 0 || qpb <= 0) {
-    if (!label) labelEl.focus();
-    else if (boxes <= 0) boxesEl.focus();
-    else qpbEl.focus();
-    return;
+// ── Custom Options & Variants (مثل الدرجات A1, A2, A3 والمقاسات والألوان) ───────
+let whCbData = {};
+
+function whCbReset() {
+  whCbData = {};
+  const container = document.getElementById("whCbCategoriesContainer");
+  if (container) container.innerHTML = "";
+  const totalSpan = document.getElementById("whCbTotalQty");
+  if (totalSpan) totalSpan.textContent = "0";
+  const catInp = document.getElementById("whCbNewCatInput");
+  if (catInp) catInp.value = "";
+}
+
+function whCbAddPreset(type) {
+  const defaultCost = parseFloat(document.getElementById('aw-cost')?.value) || 0;
+  const defaultPrice = parseFloat(document.getElementById('aw-price')?.value) || 0;
+
+  if (type === 'composite') {
+    const group = 'الدرجة / Shade';
+    if (!whCbData[group]) whCbData[group] = {};
+    ['A1', 'A2', 'A3', 'A3.5', 'B1', 'B2'].forEach(shade => {
+      if (!whCbData[group][shade]) {
+        whCbData[group][shade] = {
+          checked: true,
+          disabled: false,
+          stock: 1,
+          cost_price: defaultCost > 0 ? defaultCost : null,
+          sale_price: defaultPrice > 0 ? defaultPrice : null
+        };
+      }
+    });
+  } else if (type === 'sizes') {
+    const group = 'المقاس / Size';
+    if (!whCbData[group]) whCbData[group] = {};
+    ['S', 'M', 'L', 'XL'].forEach(sz => {
+      if (!whCbData[group][sz]) {
+        whCbData[group][sz] = {
+          checked: true,
+          disabled: false,
+          stock: 1,
+          cost_price: defaultCost > 0 ? defaultCost : null,
+          sale_price: defaultPrice > 0 ? defaultPrice : null
+        };
+      }
+    });
   }
-  awVariantItems.push({ label, boxes, qty_per_box: qpb, qty: boxes * qpb });
-  labelEl.value = '';
-  boxesEl.value = '';
-  qpbEl.value   = '';
-  awRenderItems();
-  awUpdateTotalQty();
-  labelEl.focus();
+  whCbRender();
+  whCbUpdateTotalQty();
 }
 
-function awRemoveItem(i) {
-  awVariantItems.splice(i, 1);
-  awRenderItems();
-  awUpdateTotalQty();
+function whCbAddCategory() {
+  const inp = document.getElementById("whCbNewCatInput");
+  const cat = inp.value.trim();
+  if (!cat) { inp.focus(); return; }
+  if (whCbData[cat]) { inp.focus(); return; }
+  whCbData[cat] = {};
+  inp.value = "";
+  whCbRender();
+  setTimeout(() => {
+    const el = document.getElementById(`wh-cb-opt-inp-${CSS.escape(cat)}`);
+    if (el) el.focus();
+  }, 50);
 }
 
-function awUpdateItemBoxes(i, val) {
-  awVariantItems[i].boxes = parseInt(val) || 0;
-  awVariantItems[i].qty   = awVariantItems[i].boxes * awVariantItems[i].qty_per_box;
-  const el = document.getElementById(`aw-item-total-${i}`);
-  if (el) el.textContent = awVariantItems[i].qty;
-  awUpdateTotalQty();
+function whCbRemoveCategory(cat) {
+  delete whCbData[cat];
+  whCbRender();
+  whCbUpdateTotalQty();
 }
 
-function awUpdateItemQpb(i, val) {
-  awVariantItems[i].qty_per_box = parseInt(val) || 0;
-  awVariantItems[i].qty         = awVariantItems[i].boxes * awVariantItems[i].qty_per_box;
-  const el = document.getElementById(`aw-item-total-${i}`);
-  if (el) el.textContent = awVariantItems[i].qty;
-  awUpdateTotalQty();
+function whCbAddOption(cat) {
+  const inp = document.getElementById(`wh-cb-opt-inp-${CSS.escape(cat)}`);
+  const label = inp.value.trim();
+  if (!label) { inp.focus(); return; }
+  if (!whCbData[cat]) whCbData[cat] = {};
+  if (whCbData[cat][label]) { inp.value = ""; return; }
+
+  const defaultCost = parseFloat(document.getElementById('aw-cost')?.value) || 0;
+  const defaultPrice = parseFloat(document.getElementById('aw-price')?.value) || 0;
+
+  whCbData[cat][label] = {
+    checked: true,
+    disabled: false,
+    stock: 1,
+    cost_price: defaultCost > 0 ? defaultCost : null,
+    sale_price: defaultPrice > 0 ? defaultPrice : null
+  };
+  inp.value = "";
+  whCbRender();
+  whCbUpdateTotalQty();
+  setTimeout(() => {
+    const el = document.getElementById(`wh-cb-opt-inp-${CSS.escape(cat)}`);
+    if (el) el.focus();
+  }, 30);
 }
 
-function awRenderItems() {
-  const container = document.getElementById('awItemsTable');
-  const noMsg     = document.getElementById('awNoItemsMsg');
-  if (!container) return;
-  if (awVariantItems.length === 0) {
-    container.innerHTML = '';
-    noMsg && noMsg.classList.remove('hidden');
-    return;
+function whCbRemoveOption(cat, label) {
+  if (whCbData[cat]) delete whCbData[cat][label];
+  whCbRender();
+  whCbUpdateTotalQty();
+}
+
+function whCbToggleChecked(cat, label) {
+  if (whCbData[cat]?.[label]) {
+    whCbData[cat][label].checked = !whCbData[cat][label].checked;
   }
-  noMsg && noMsg.classList.add('hidden');
-  container.innerHTML = awVariantItems.map((s, i) =>
-    `<div class="flex items-center gap-2 bg-white rounded-xl border px-3 py-2 shadow-sm text-xs">
-      <span class="font-bold text-gray-800 flex-1 min-w-0 truncate bg-blue-50 rounded-lg px-2 py-1 text-center">${s.label}</span>
-      <input type="number" min="1" value="${s.boxes}"
-        oninput="awUpdateItemBoxes(${i}, this.value)"
-        class="w-16 border rounded-lg px-2 py-1 text-center font-bold focus:outline-none focus:ring-2 focus:ring-blue-200"
-        title="عدد البوكسات"/>
-      <span class="text-gray-400 font-bold flex-shrink-0">×</span>
-      <input type="number" min="1" value="${s.qty_per_box}"
-        oninput="awUpdateItemQpb(${i}, this.value)"
-        class="w-16 border rounded-lg px-2 py-1 text-center font-bold focus:outline-none focus:ring-2 focus:ring-blue-200"
-        title="الكمية في كل بوكس"/>
-      <span class="text-gray-400 font-bold flex-shrink-0">=</span>
-      <span id="aw-item-total-${i}" class="w-10 text-center font-black text-blue-700 flex-shrink-0">${s.qty}</span>
-      <button type="button" onclick="awRemoveItem(${i})"
-        class="text-red-400 hover:text-red-600 font-bold px-1.5 py-1 text-xs rounded hover:bg-red-50">✕</button>
-    </div>`
-  ).join('');
+  whCbRender();
 }
 
-function awUpdateTotalQty() {
-  const total = awVariantItems.reduce((acc, s) => acc + s.qty, 0);
-  const preview = document.getElementById('awTotalQtyPreview');
-  if (preview) preview.textContent = total;
-  if (awVariantItems.length > 0) {
-    const qtyInput = document.getElementById('aw-qty');
+function whCbSetStock(cat, label, val) {
+  const o = whCbData[cat]?.[label];
+  if (!o) return;
+  const n = val === "" ? null : Math.max(0, parseInt(val, 10) || 0);
+  o.stock = n;
+  whCbUpdateTotalQty();
+}
+
+function whCbSetCost(cat, label, val) {
+  const o = whCbData[cat]?.[label];
+  if (!o) return;
+  o.cost_price = val === "" ? null : parseFloat(val) || 0;
+}
+
+function whCbSetSalePrice(cat, label, val) {
+  const o = whCbData[cat]?.[label];
+  if (!o) return;
+  o.sale_price = val === "" ? null : parseFloat(val) || 0;
+}
+
+function whCbUpdateTotalQty() {
+  let total = 0;
+  let count = 0;
+  for (const cat of Object.keys(whCbData)) {
+    for (const label of Object.keys(whCbData[cat])) {
+      const s = whCbData[cat][label].stock;
+      if (s !== null && s > 0 && whCbData[cat][label].checked !== false) {
+        total += s;
+        count++;
+      }
+    }
+  }
+  const totalSpan = document.getElementById("whCbTotalQty");
+  if (totalSpan) totalSpan.textContent = total;
+
+  if (count > 0) {
+    const qtyInput = document.getElementById("aw-qty");
     if (qtyInput) qtyInput.value = total;
   }
+}
+
+function whCbGetValues() {
+  if (Object.keys(whCbData).length === 0) return null;
+  return whCbData;
+}
+
+function whCbRender() {
+  const container = document.getElementById("whCbCategoriesContainer");
+  if (!container) return;
+  const cats = Object.keys(whCbData);
+  if (cats.length === 0) {
+    container.innerHTML = "";
+    return;
+  }
+
+  container.innerHTML = cats.map(cat => {
+    const opts = whCbData[cat];
+    const labels = Object.keys(opts);
+
+    const optRows = labels.map(label => {
+      const o = opts[label];
+      const stockVal = o.stock !== null && o.stock !== undefined ? o.stock : "";
+      const costVal = o.cost_price !== null && o.cost_price !== undefined ? o.cost_price : "";
+      const saleVal = o.sale_price !== null && o.sale_price !== undefined ? o.sale_price : "";
+
+      return `
+        <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl border border-blue-100 bg-white shadow-2xs">
+          <div class="flex items-center gap-2 min-w-[120px]">
+            <input type="checkbox" ${o.checked ? 'checked' : ''}
+              onchange="whCbToggleChecked('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}')"
+              class="w-4 h-4 accent-blue-700 flex-shrink-0 cursor-pointer"/>
+            <span class="text-sm font-black text-gray-800 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200/60">${label}</span>
+          </div>
+
+          <div class="flex items-center gap-2 text-xs flex-wrap">
+            <!-- Stock / Quantity -->
+            <div class="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1" title="الكمية الواردة من هذا الـ Variant بالمستودع">
+              <span class="text-[11px] text-gray-600 font-bold">الكمية:</span>
+              <input type="number" min="0" placeholder="0" value="${stockVal}"
+                oninput="whCbSetStock('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}', this.value)"
+                class="w-14 border border-gray-300 rounded px-1.5 py-0.5 text-xs text-center font-black font-mono focus:ring-1 focus:ring-blue-400 bg-white"/>
+            </div>
+
+            <!-- Cost Price -->
+            <div class="flex items-center gap-1 bg-amber-50/80 border border-amber-200 rounded-lg px-2 py-1" title="سعر الشراء / التكلفة لهذا الخيار">
+              <span class="text-[11px] text-amber-800 font-bold">تكلفة:</span>
+              <input type="number" min="0" step="0.01" placeholder="تكلفة" value="${costVal}"
+                onchange="whCbSetCost('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}', this.value)"
+                class="w-16 border border-amber-300 rounded px-1 py-0.5 text-xs text-center font-mono font-bold text-amber-900 bg-white focus:ring-1 focus:ring-amber-400"/>
+              <span class="text-[10px] text-amber-700 font-bold">ج</span>
+            </div>
+
+            <!-- Sale Price (Optional) -->
+            <div class="flex items-center gap-1 bg-blue-50/80 border border-blue-200 rounded-lg px-2 py-1" title="سعر البيع بالمحل لهذا الخيار (اختياري)">
+              <span class="text-[11px] text-blue-800 font-bold">بيع:</span>
+              <input type="number" min="0" step="0.01" placeholder="افتراضي" value="${saleVal}"
+                onchange="whCbSetSalePrice('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}', this.value)"
+                class="w-16 border border-blue-300 rounded px-1 py-0.5 text-xs text-center font-mono font-bold text-blue-900 bg-white focus:ring-1 focus:ring-blue-400"/>
+              <span class="text-[10px] text-blue-700 font-bold">ج</span>
+            </div>
+
+            <button type="button" title="حذف هذا الخيار"
+              onclick="whCbRemoveOption('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}')"
+              class="text-gray-400 hover:text-red-600 text-base leading-none p-1 rounded hover:bg-red-50 cursor-pointer font-bold">✕</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    return `
+      <div class="rounded-2xl border border-blue-200 bg-blue-50/40 overflow-hidden">
+        <div class="flex items-center gap-2 px-3.5 py-2.5 bg-white border-b border-blue-200">
+          <span class="text-xs font-black text-blue-800 flex-1 flex items-center gap-1.5">
+            <span>🏷️</span> ${cat}
+          </span>
+          <button type="button" onclick="whCbRemoveCategory('${cat.replace(/'/g,"\\'")}')"
+            class="text-gray-400 hover:text-red-500 text-lg leading-none font-bold">×</button>
+        </div>
+        <div class="p-2.5 space-y-1.5">
+          ${optRows || '<p class="text-xs text-gray-400 px-1 py-1 italic">لا توجد خيارات في هذه المجموعة — أضف خياراً أدناه</p>'}
+          <div class="flex gap-2 pt-1.5">
+            <input type="text" id="wh-cb-opt-inp-${CSS.escape(cat)}" placeholder="اسم المقاس أو الدرجة (مثال: A2, A3, XL...)"
+              class="flex-1 border rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();whCbAddOption('${cat.replace(/'/g,"\\'")}');}"/>
+            <button type="button" onclick="whCbAddOption('${cat.replace(/'/g,"\\'")}')"
+              class="bg-blue-700 hover:bg-blue-800 text-white px-3.5 py-1.5 rounded-xl text-xs font-bold shadow-sm transition-all">+ إضافة</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 function openAddWarehouseModal() {
@@ -1015,9 +1191,7 @@ function openAddWarehouseModal() {
   document.getElementById('aw-notes').value = '';
   document.getElementById('aw-error').classList.add('hidden');
   
-  awVariantItems = [];
-  awRenderItems();
-  awUpdateTotalQty();
+  whCbReset();
   loadWarehouseCategories();
 }
 
@@ -1356,32 +1530,37 @@ async function submitAddWarehouseItem(e) {
     return;
   }
 
-  // Package variants JSON (supports grouped and flat variants)
+  // Package variants JSON (supports custom shade/size builder whCbData and grouped/flat shop inputs)
   let checkboxValuesJson = null;
-  const varInputs = document.querySelectorAll('.aw-var-qty-input');
-  if (varInputs.length > 0) {
-    let baseCbv = {};
-    if (_selectedShopProd && _selectedShopProd.checkbox_values) {
-      baseCbv = typeof _selectedShopProd.checkbox_values === 'string' ? JSON.parse(_selectedShopProd.checkbox_values) : { ..._selectedShopProd.checkbox_values };
+  const customCbValues = whCbGetValues();
+  if (customCbValues && Object.keys(customCbValues).length > 0) {
+    checkboxValuesJson = JSON.stringify(customCbValues);
+  } else {
+    const varInputs = document.querySelectorAll('.aw-var-qty-input');
+    if (varInputs.length > 0) {
+      let baseCbv = {};
+      if (_selectedShopProd && _selectedShopProd.checkbox_values) {
+        baseCbv = typeof _selectedShopProd.checkbox_values === 'string' ? JSON.parse(_selectedShopProd.checkbox_values) : { ..._selectedShopProd.checkbox_values };
+      }
+      const isGrouped = Array.from(varInputs).some(i => i.dataset.groupName && i.dataset.groupName !== 'عام');
+      
+      if (isGrouped) {
+        varInputs.forEach(inp => {
+          const grp = inp.dataset.groupName || 'عام';
+          const k = inp.dataset.optKey;
+          const q = parseInt(inp.value || 0, 10);
+          if (!baseCbv[grp] || typeof baseCbv[grp] !== 'object') baseCbv[grp] = {};
+          baseCbv[grp][k] = { ...(baseCbv[grp][k] || { checked: true }), stock: q, disabled: false };
+        });
+      } else {
+        varInputs.forEach(inp => {
+          const k = inp.dataset.optKey;
+          const q = parseInt(inp.value || 0, 10);
+          baseCbv[k] = { ...(baseCbv[k] || { checked: true }), stock: q, disabled: false };
+        });
+      }
+      checkboxValuesJson = JSON.stringify(baseCbv);
     }
-    const isGrouped = Array.from(varInputs).some(i => i.dataset.groupName && i.dataset.groupName !== 'عام');
-    
-    if (isGrouped) {
-      varInputs.forEach(inp => {
-        const grp = inp.dataset.groupName || 'عام';
-        const k = inp.dataset.optKey;
-        const q = parseInt(inp.value || 0, 10);
-        if (!baseCbv[grp] || typeof baseCbv[grp] !== 'object') baseCbv[grp] = {};
-        baseCbv[grp][k] = { ...(baseCbv[grp][k] || { checked: true }), stock: q, disabled: false };
-      });
-    } else {
-      varInputs.forEach(inp => {
-        const k = inp.dataset.optKey;
-        const q = parseInt(inp.value || 0, 10);
-        baseCbv[k] = { ...(baseCbv[k] || { checked: true }), stock: q, disabled: false };
-      });
-    }
-    checkboxValuesJson = JSON.stringify(baseCbv);
   }
 
   try {
@@ -1396,7 +1575,7 @@ async function submitAddWarehouseItem(e) {
         cost_price: parseFloat(cost || 0),
         sale_price: parseFloat(price || 0),
         quantity: qty,
-        variants_json: awVariantItems.length > 0 ? JSON.stringify({ items: awVariantItems }) : null,
+        variants_json: null,
         checkbox_values_json: checkboxValuesJson,
         description: desc,
         expiry_date: expiry || null,
