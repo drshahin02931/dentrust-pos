@@ -5792,8 +5792,8 @@ async function getBotKnowledgeText(messages = []) {
   return { knowledgeText: `${policies}${productsText}`, matching };
 }
 
-// Language restriction — always prepended to every system prompt
-const LANG_INSTRUCTION = 'IMPORTANT: You must respond ONLY in Arabic or English. If the user writes in Arabic, reply in Arabic. If the user writes in English, reply in English. Never use any other language under any circumstances.\n\n';
+// Language instruction — fully flexible multilingual support (Arabic, English, Franco, etc.)
+const LANG_INSTRUCTION = 'IMPORTANT: You are an intelligent medical dental assistant. You must communicate and respond naturally in whatever language or dialect the user speaks to you (Arabic, English, Franco-Arabic, or any other language) without restriction. Match the user\'s language and tone accurately.\n\n';
 
 // Hard safety cap on the combined system prompt sent to Gemini.
 // Gemini 2.0 Flash supports up to 1M tokens context — 20000 chars

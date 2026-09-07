@@ -103,22 +103,102 @@
   (function() {
     const LANG_KEY = 'pos_ui_lang';
     let currentLang = localStorage.getItem(LANG_KEY) || 'ar';
+
+    const POS_DICT = {
+      "نقطة البيع": "Point of Sale",
+      "المخزن والمخزون": "Inventory & Warehouse",
+      "المخزن": "Inventory",
+      "العملاء": "Customers",
+      "سجل الفواتير": "Invoice History",
+      "الفواتير": "Invoices",
+      "المصروفات": "Expenses",
+      "الصلاحيات والتواريخ": "Expiry Dates",
+      "المرتجعات": "Returns",
+      "الإعدادات": "Settings",
+      "المستخدمين": "Users",
+      "تسجيل الخروج": "Log Out",
+      "طلبات الموقع": "Website Orders",
+      "تسجيلات الموقع": "Website Registrations",
+      "نواقص المخزن": "Low Stock",
+      "تغيير كلمة المرور": "Change Password",
+      "حفظ كلمة المرور": "Save Password",
+      "إلغاء": "Cancel",
+      "حفظ": "Save",
+      "تأكيد": "Confirm",
+      "حذف": "Delete",
+      "تعديل": "Edit",
+      "إغلاق": "Close",
+      "طباعة": "Print",
+      "بحث": "Search",
+      "بحث...": "Search...",
+      "بحث بالاسم أو الكود...": "Search by name or code...",
+      "بحث باسم العميل، الهاتف، أو الكود": "Search by customer name, phone, or code",
+      "إضافة عميل": "Add Customer",
+      "إضافة عميل جديد": "Add New Customer",
+      "تسجيل دفعة": "Record Payment",
+      "إضافة سلفة/دين": "Add Debt/Advance",
+      "تسوية الفواتير بالدين الحالي": "Reconcile Invoices with Debt",
+      "الطلبات": "Orders",
+      "العيادات والعناوين": "Clinics & Addresses",
+      "الدفعات": "Payments",
+      "الأقساط": "Installments",
+      "السلف": "Advances/Debts",
+      "طباعة كشف حساب": "Print Statement",
+      "كشف حساب تفصيلي": "Detailed Statement",
+      "إجمالي المشتريات": "Total Invoiced",
+      "إجمالي المسدد": "Total Paid",
+      "الرصيد المتبقي": "Remaining Balance",
+      "لا توجد طلبات": "No orders found",
+      "لا توجد دفعات مسجّلة": "No payments recorded",
+      "لا توجد سلف مسجّلة": "No advances recorded",
+      "مسددة بالكامل": "Fully Paid",
+      "مسددة جزئياً": "Partially Paid",
+      "غير مسددة": "Unpaid",
+      "طباعة الفاتورة": "Print Invoice",
+      "سداد / دفعة": "Pay / Installment"
+    };
+
     function applyLang(lang) {
       currentLang = lang;
       localStorage.setItem(LANG_KEY, lang);
       const isRtl = lang === 'ar';
       const html = document.getElementById('htmlRoot');
-      html.setAttribute('lang', lang);
-      html.setAttribute('dir', isRtl ? 'rtl' : 'ltr');
+      if (html) {
+        html.setAttribute('lang', lang);
+        html.setAttribute('dir', isRtl ? 'rtl' : 'ltr');
+      }
+
       document.querySelectorAll('[data-ar][data-en]').forEach(el => {
         el.textContent = lang === 'ar' ? el.getAttribute('data-ar') : el.getAttribute('data-en');
       });
       document.querySelectorAll('[data-ar-placeholder][data-en-placeholder]').forEach(el => {
         el.placeholder = lang === 'ar' ? el.getAttribute('data-ar-placeholder') : el.getAttribute('data-en-placeholder');
       });
+
+      if (lang === 'en') {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+        while ((node = walker.nextNode())) {
+          const txt = node.nodeValue.trim();
+          if (POS_DICT[txt]) {
+            if (!node._origText) node._origText = node.nodeValue;
+            node.nodeValue = node.nodeValue.replace(txt, POS_DICT[txt]);
+          }
+        }
+      } else {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+        while ((node = walker.nextNode())) {
+          if (node._origText) {
+            node.nodeValue = node._origText;
+          }
+        }
+      }
+
       const btn = document.getElementById('langBtnText');
       if (btn) btn.textContent = lang === 'ar' ? 'EN' : 'عر';
     }
+
     window.toggleLang = function() { applyLang(currentLang === 'ar' ? 'en' : 'ar'); };
     window.getCurrentLang = function() { return currentLang; };
     document.addEventListener('DOMContentLoaded', () => applyLang(currentLang));
