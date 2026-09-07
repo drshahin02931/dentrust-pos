@@ -4323,29 +4323,45 @@ async function syncUpdateProductToDentrust(pid, d) {
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
-    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS orig_section TEXT').catch(() => {});
+    let catId = null;
+    if (d.category && d.category.trim()) {
+      const catName = d.category.trim();
+      let { rows: [catRow] } = await client.query("SELECT id FROM categories WHERE LOWER(TRIM(name))=LOWER($1) LIMIT 1", [catName.toLowerCase()]).catch(() => ({ rows: [] }));
+      if (!catRow) {
+        try {
+          const { rows: [newCat] } = await client.query("INSERT INTO categories (name, section) VALUES ($1, $2) RETURNING id", [catName, d.section || 'dental']);
+          catRow = newCat;
+        } catch (_dupErr) {
+          const { rows: [existing] } = await client.query("SELECT id FROM categories WHERE LOWER(TRIM(name))=LOWER($1) LIMIT 1", [catName.toLowerCase()]).catch(() => ({ rows: [] }));
+          catRow = existing;
+        }
+      }
+      if (catRow) catId = catRow.id;
+    }
 
     if (isHidden) {
       await client.query(
         `UPDATE products SET 
           name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, 
           variants=$6, checkbox_values=$7, is_hidden=true, hidden=true, is_hidden_from_website=true, 
-          is_active=false, orig_section=COALESCE(NULLIF(section, 'hidden'), orig_section, $8), section='hidden' 
+          is_active=false, orig_section=COALESCE(NULLIF(section, 'hidden'), orig_section, $8), section='hidden',
+          category_id=COALESCE($11, category_id)
          WHERE id=$9 OR id=$10 OR LOWER(TRIM(name))=LOWER(TRIM($1))`,
         [d.product_name, sPrice, qty, d.expiry_date || null,
          pPrice, variantsJson,
-         cbJson, d.section || 'dental', targetWebId, pid]);
+         cbJson, d.section || 'dental', targetWebId, pid, catId]);
     } else {
       const genderVal = d.gender || (d.section === 'medical' ? 'unisex' : null);
       await client.query(
         `UPDATE products SET 
           name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, 
           variants=$6, section=$7, checkbox_values=$8, is_hidden=false, hidden=false, 
-          is_hidden_from_website=false, is_active=true, gender=COALESCE($11, gender, 'unisex')
+          is_hidden_from_website=false, is_active=true, gender=COALESCE($11, gender, 'unisex'),
+          category_id=COALESCE($12, category_id)
          WHERE id=$9 OR id=$10 OR LOWER(TRIM(name))=LOWER(TRIM($1))`,
         [d.product_name, sPrice, qty, d.expiry_date || null,
          pPrice, variantsJson,
-         d.section || 'dental', cbJson, targetWebId, pid, genderVal]);
+         d.section || 'dental', cbJson, targetWebId, pid, genderVal, catId]);
     }
     cacheDel('site_products');
   } finally { client.release(); }
@@ -8230,12 +8246,13 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       await client.query('UPDATE warehouse_items SET quantity = $1 WHERE id = $2', [newTotalWhQty, whItem.id]);
     }
 
-    // 2. Add to Shop Products (and sync description & category)
+    // 2. Add to Shop Products (and sync description, category, barcode, variants)
     let shopProdId = whItem.product_id;
     let beforeShopQty = 0;
+    let isBrandNewShopProd = false;
 
     if (shopProdId) {
-      const { rows: [sp] } = await client.query('SELECT id, quantity, variants, checkbox_values, purchase_price, expiry_date, description, category FROM products WHERE id=$1', [shopProdId]);
+      const { rows: [sp] } = await client.query('SELECT id, quantity, variants, checkbox_values, purchase_price, expiry_date, description, category, barcode, dentrust_id FROM products WHERE id=$1', [shopProdId]);
       if (sp) {
         beforeShopQty = parseInt(sp.quantity || 0);
 
@@ -8252,12 +8269,18 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
           await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [transferQty, shopProdId]);
         }
 
-        // Sync description & category if shop product was missing them
+        // Sync description & category if shop product was missing them or warehouse has specific category
         if (whItem.description && (!sp.description || sp.description.trim() === '')) {
           await client.query('UPDATE products SET description = $1 WHERE id=$2', [whItem.description, shopProdId]);
         }
-        if (whItem.category && (!sp.category || sp.category === 'عام')) {
-          await client.query('UPDATE products SET category = $1 WHERE id=$2', [whItem.category, shopProdId]);
+        if (whItem.category && whItem.category.trim() && whItem.category !== 'عام' && (!sp.category || sp.category === 'عام' || sp.category.trim() === '')) {
+          await client.query('UPDATE products SET category = $1 WHERE id=$2', [whItem.category.trim(), shopProdId]);
+        }
+        if (whItem.barcode && (!sp.barcode || sp.barcode.trim() === '')) {
+          await client.query('UPDATE products SET barcode = $1 WHERE id=$2', [whItem.barcode, shopProdId]);
+        }
+        if (whItem.variants && !sp.variants) {
+          await client.query('UPDATE products SET variants = $1 WHERE id=$2', [typeof whItem.variants === 'string' ? whItem.variants : JSON.stringify(whItem.variants), shopProdId]);
         }
 
         // Update purchase price and expiry if shop didn't have one or if previous stock was 0
@@ -8272,21 +8295,46 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       }
     }
 
-    // If no linked shop product, create one with description and category
+    // If no linked shop product, create or link by name with all metadata (category, barcode, variants, etc.)
     if (!shopProdId) {
-      const { rows: [existingByName] } = await client.query('SELECT id, quantity FROM products WHERE LOWER(product_name)=LOWER($1) LIMIT 1', [whItem.product_name]);
+      const { rows: [existingByName] } = await client.query('SELECT id, quantity, category, description, variants, checkbox_values, barcode, dentrust_id FROM products WHERE LOWER(product_name)=LOWER($1) LIMIT 1', [whItem.product_name]);
       if (existingByName) {
         shopProdId = existingByName.id;
         beforeShopQty = parseInt(existingByName.quantity || 0);
         await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [transferQty, shopProdId]);
+        if (whItem.category && whItem.category.trim() && whItem.category !== 'عام' && (!existingByName.category || existingByName.category === 'عام')) {
+          await client.query('UPDATE products SET category = $1 WHERE id=$2', [whItem.category.trim(), shopProdId]);
+        }
+        if (whItem.description && (!existingByName.description || existingByName.description.trim() === '')) {
+          await client.query('UPDATE products SET description = $1 WHERE id=$2', [whItem.description, shopProdId]);
+        }
+        if (whItem.barcode && (!existingByName.barcode || existingByName.barcode.trim() === '')) {
+          await client.query('UPDATE products SET barcode = $1 WHERE id=$2', [whItem.barcode, shopProdId]);
+        }
+        if (whItem.variants && !existingByName.variants) {
+          await client.query('UPDATE products SET variants = $1 WHERE id=$2', [typeof whItem.variants === 'string' ? whItem.variants : JSON.stringify(whItem.variants), shopProdId]);
+        }
       } else {
         const { rows: [newProd] } = await client.query(
-          `INSERT INTO products (product_name, sale_price, purchase_price, quantity, barcode, category, description, expiry_date)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-          [whItem.product_name, whItem.sale_price, transferCost, transferQty, whItem.barcode || '', whItem.category || 'عام', whItem.description || '', transferExpiry || null]
+          `INSERT INTO products (product_name, sale_price, purchase_price, quantity, barcode, category, description, expiry_date, variants, checkbox_values, section)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+          [
+            whItem.product_name,
+            whItem.sale_price,
+            transferCost,
+            transferQty,
+            whItem.barcode || '',
+            (whItem.category || '').trim() || 'عام',
+            whItem.description || '',
+            transferExpiry || null,
+            whItem.variants ? (typeof whItem.variants === 'string' ? whItem.variants : JSON.stringify(whItem.variants)) : null,
+            whItem.checkbox_values ? (typeof whItem.checkbox_values === 'string' ? whItem.checkbox_values : JSON.stringify(whItem.checkbox_values)) : null,
+            'dental'
+          ]
         );
         shopProdId = newProd.id;
         beforeShopQty = 0;
+        isBrandNewShopProd = true;
       }
       await client.query('UPDATE warehouse_items SET product_id=$1 WHERE id=$2', [shopProdId, whItem.id]);
     }
@@ -8360,9 +8408,21 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
 
     await client.query('COMMIT');
 
-    // 6. Sync shop product with website immediately
+    // 6. Sync shop product with website immediately (including category, barcode, variants)
     if (shopProdId) {
-      syncProductsNow([shopProdId]).catch(() => {});
+      try {
+        const { rows: [freshSp] } = await posDb.query('SELECT * FROM products WHERE id=$1', [shopProdId]);
+        if (freshSp) {
+          if (isBrandNewShopProd || !freshSp.dentrust_id) {
+            await syncNewProductToDentrust(freshSp.id, freshSp);
+          } else {
+            await syncUpdateProductToDentrust(freshSp.id, freshSp);
+            syncProductsNow([shopProdId]).catch(() => {});
+          }
+        }
+      } catch (syncErr) {
+        console.error('[Warehouse Transfer Sync Error]', syncErr.message);
+      }
     }
 
     res.json({ ok: true, transferred_qty: transferQty, product_id: shopProdId, cost_price: transferCost, expiry_date: transferExpiry });
