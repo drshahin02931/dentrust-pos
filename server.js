@@ -2616,12 +2616,13 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
        FROM sales s
        LEFT JOIN sale_items si ON si.sale_id = s.id
        WHERE s.customer_id = $1
+          OR (s.customer_phone IS NOT NULL AND s.customer_phone != '' AND s.customer_phone = $3)
           OR LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($2))
           OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($2, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
        GROUP BY s.id
        ORDER BY (CASE WHEN (s.payment_method IN ('credit','split') AND s.credit_paid IS NOT TRUE) THEN 0 ELSE 1 END) ASC, s.id DESC
        LIMIT 100`,
-      [customer.id, customer.name]
+      [customer.id, customer.name, customer.phone || '']
     );
 
     // Auto-link any matching unlinked sales to this customer permanently in DB
@@ -2792,40 +2793,106 @@ app.get([`${BASE}/website-registrations`, '/website-registrations'], (req, res) 
 app.get(`${BASE}/api/customers/:cid/orders`, async (req, res) => {
   const cid = parseInt(req.params.cid, 10);
   try {
+    const { rows: [customer] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [cid]);
+    if (!customer) return res.status(404).json({ error: 'العميل غير موجود' });
+
+    // 1. Fetch all sales by customer_id, customer_phone, or normalized customer name
     const { rows: sales } = await posDb.query(
-      `SELECT s.*, 
-        CASE 
-          WHEN s.payment_method IN ('credit','split') AND s.credit_paid IS NOT TRUE THEN 0 
-          ELSE 1 
-        END as sort_key
-       FROM sales s WHERE s.customer_id=$1 ORDER BY sort_key ASC, s.date DESC`, [cid]
+      `SELECT s.*,
+              COALESCE(
+                json_agg(
+                  json_build_object(
+                    'id', si.id,
+                    'product_name', si.product_name,
+                    'quantity', si.quantity,
+                    'unit_price', si.unit_price,
+                    'selected_option', si.selected_option
+                  )
+                ) FILTER (WHERE si.id IS NOT NULL), '[]'
+              ) as items
+       FROM sales s
+       LEFT JOIN sale_items si ON si.sale_id = s.id
+       WHERE s.customer_id = $1
+          OR (s.customer_phone IS NOT NULL AND s.customer_phone != '' AND s.customer_phone = $2)
+          OR LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($3))
+          OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($3, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
+       GROUP BY s.id
+       ORDER BY s.date DESC, s.id DESC`,
+      [customer.id, customer.phone || '', customer.name || '']
     );
-    const result = [];
+
+    // Auto-link any matching unlinked sales to this customer permanently
+    const unlinkedIds = sales.filter(s => !s.customer_id).map(s => s.id);
+    if (unlinkedIds.length > 0) {
+      posDb.query('UPDATE sales SET customer_id=$1 WHERE id=ANY($2::int[])', [customer.id, unlinkedIds]).catch(() => {});
+    }
+
+    // 2. Intelligent Reverse-Debt Distribution (من الأحدث إلى الأقدم)
+    // The current customer.total_debt represents the outstanding balance on the most recent invoices.
+    let remainingDebtToCover = Math.max(0, parseFloat(customer.total_debt || 0));
+
+    // Calculate orig_debt for every invoice first
     for (const s of sales) {
-      const { rows: saleItems } = await posDb.query('SELECT * FROM sale_items WHERE sale_id=$1', [s.id]);
       let origDebt = 0;
       if (s.payment_method === 'split') {
         try { origDebt = parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
       } else if (s.payment_method === 'credit') {
         origDebt = Math.max(0, parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0));
       }
-      const paidAmt = parseFloat(s.paid_amount || 0);
-      const isPaid = (s.credit_paid === true || s.credit_paid === 1) || (!['credit', 'split'].includes(s.payment_method));
-      const remainingDebt = isPaid ? 0 : Math.max(0, origDebt - paidAmt);
-      const isPartial = !isPaid && paidAmt > 0;
+      s._origDebt = origDebt;
+    }
 
-      result.push({
+    // Sales are sorted NEWEST first (s.date DESC, s.id DESC).
+    // Allocate remaining customer debt to credit invoices starting from newest to oldest.
+    for (const s of sales) {
+      const isCreditType = (s.payment_method === 'credit' || s.payment_method === 'split');
+      if (!isCreditType || s._origDebt <= 0) {
+        s._computedRemainingDebt = 0;
+        s._computedPaidAmount = parseFloat(s.total_amount || 0);
+        s._computedIsPaid = true;
+        continue;
+      }
+
+      if (remainingDebtToCover > 0) {
+        const debtOnThis = Math.min(s._origDebt, remainingDebtToCover);
+        const paidOnThis = Math.max(0, s._origDebt - debtOnThis);
+        s._computedRemainingDebt = debtOnThis;
+        s._computedPaidAmount = paidOnThis;
+        s._computedIsPaid = (debtOnThis <= 0.001);
+        remainingDebtToCover -= debtOnThis;
+      } else {
+        // All active debt is covered by newer invoices -> this older invoice is fully paid!
+        s._computedRemainingDebt = 0;
+        s._computedPaidAmount = s._origDebt;
+        s._computedIsPaid = true;
+      }
+    }
+
+    // 3. Format final result with unpaid/partial invoices first, then paid ones
+    const result = sales.map(s => {
+      const isPaid = s._computedIsPaid;
+      const isPartial = !isPaid && (s._computedPaidAmount > 0);
+      return {
         ...s,
-        orig_debt: origDebt,
-        paid_amount: paidAmt,
-        remaining_debt: remainingDebt,
+        orig_debt: s._origDebt,
+        paid_amount: s._computedPaidAmount,
+        remaining_debt: s._computedRemainingDebt,
         is_partial: isPartial,
         credit_paid: isPaid,
-        items: saleItems
-      });
-    }
+        sort_key: isPaid ? 1 : 0
+      };
+    });
+
+    result.sort((a, b) => {
+      if (a.sort_key !== b.sort_key) return a.sort_key - b.sort_key;
+      return new Date(b.date || 0) - new Date(a.date || 0);
+    });
+
     res.json(result);
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) {
+    console.error('[GET /api/customers/:cid/orders Error]:', err);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
 });
 
 app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
@@ -2905,6 +2972,66 @@ app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
   }
 });
 
+// POST /api/customers/:cid/reconcile-debt — تثبيت وتوزيع الدين الحالي تنازلياً من أحدث فاتورة لأقدم فاتورة في قاعدة البيانات
+app.post([`${BASE}/api/customers/:cid/reconcile-debt`, '/api/customers/:cid/reconcile-debt'], async (req, res) => {
+  const cid = parseInt(req.params.cid, 10);
+  try {
+    const { rows: [customer] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [cid]);
+    if (!customer) return res.status(404).json({ error: 'العميل غير موجود' });
+
+    // Fetch all sales matching customer by ID, phone, or name
+    const { rows: sales } = await posDb.query(
+      `SELECT s.id, s.total_amount, s.amount_received, s.payment_method, s.payment_split, s.paid_amount, s.credit_paid, s.date
+       FROM sales s
+       WHERE s.customer_id = $1
+          OR (s.customer_phone IS NOT NULL AND s.customer_phone != '' AND s.customer_phone = $2)
+          OR LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($3))
+          OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($3, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
+       ORDER BY s.date DESC, s.id DESC`,
+      [customer.id, customer.phone || '', customer.name || '']
+    );
+
+    // Ensure all these sales are linked to customer
+    const unlinked = sales.map(s => s.id);
+    if (unlinked.length > 0) {
+      await posDb.query('UPDATE sales SET customer_id=$1 WHERE id=ANY($2::int[])', [customer.id, unlinked]).catch(() => {});
+    }
+
+    let remainingDebtToCover = Math.max(0, parseFloat(customer.total_debt || 0));
+
+    for (const s of sales) {
+      let origDebt = 0;
+      if (s.payment_method === 'split') {
+        try { origDebt = parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
+      } else if (s.payment_method === 'credit') {
+        origDebt = Math.max(0, parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0));
+      }
+
+      const isCreditType = (s.payment_method === 'credit' || s.payment_method === 'split');
+      if (!isCreditType || origDebt <= 0) {
+        await posDb.query('UPDATE sales SET credit_paid=true WHERE id=$1', [s.id]);
+        continue;
+      }
+
+      if (remainingDebtToCover > 0) {
+        const debtOnThis = Math.min(origDebt, remainingDebtToCover);
+        const paidOnThis = Math.max(0, origDebt - debtOnThis);
+        const isFullyPaid = (debtOnThis <= 0.001);
+        await posDb.query('UPDATE sales SET paid_amount=$1, credit_paid=$2 WHERE id=$3', [paidOnThis, isFullyPaid, s.id]);
+        remainingDebtToCover -= debtOnThis;
+      } else {
+        // Debt covered by newer invoices -> mark older invoice fully paid
+        await posDb.query('UPDATE sales SET paid_amount=$1, credit_paid=true WHERE id=$2', [origDebt, s.id]);
+      }
+    }
+
+    res.json({ ok: true, message: 'تمت تسوية وتوزيع الدين بنجاح على الفواتير' });
+  } catch (err) {
+    console.error('[POST /api/customers/:cid/reconcile-debt Error]:', err);
+    res.status(500).json({ error: 'خطأ أثناء تسوية وتوزيع الدين' });
+  }
+});
+
 app.get(`${BASE}/api/customers/:cid/payments`, async (req, res) => {
   const cid = parseInt(req.params.cid, 10);
   try {
@@ -2919,7 +3046,14 @@ app.get(`${BASE}/api/customers/:cid/statement`, async (req, res) => {
     const { rows: [c] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [cid]);
     if (!c) return res.status(404).json({ error: 'العميل غير موجود' });
     const { rows: creditSales } = await posDb.query(
-      "SELECT total_amount, amount_received, payment_method, payment_split FROM sales WHERE customer_id=$1 AND payment_method IN ('credit','split')", [cid]
+      `SELECT total_amount, amount_received, payment_method, payment_split 
+       FROM sales 
+       WHERE (customer_id=$1 
+          OR (customer_phone IS NOT NULL AND customer_phone != '' AND customer_phone = $2)
+          OR LOWER(TRIM(COALESCE(customer_name, ''))) = LOWER(TRIM($3))
+          OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($3, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))))
+         AND payment_method IN ('credit','split')`,
+      [cid, c.phone || '', c.name || '']
     );
     let totalInvoiced = 0;
     for (const s of creditSales) {

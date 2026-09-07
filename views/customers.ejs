@@ -186,6 +186,9 @@
       <button onclick="openPayModal()" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-sm">
         💸 تسجيل دفعة
       </button>
+      <button onclick="triggerReconcileCustomerDebt()" class="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-sm font-semibold px-3.5 py-2 rounded-xl shadow-xs transition-all" title="توزيع وإعادة ضبط رصيد الدين تلقائياً من أحدث الفواتير لأقدمها">
+        🔄 تسوية الفواتير بالدين الحالي
+      </button>
       <button onclick="openManualDebtModal()" class="flex items-center gap-2 bg-orange-50 hover:bg-orange-100 text-orange-700 text-sm font-semibold px-4 py-2 rounded-xl">
         💰 إضافة سلفة/دين
       </button>
@@ -1497,6 +1500,28 @@ async function submitPayment() {
     alert("✅ " + (data.message || "تم تسجيل الدفعة وتسوية الفواتير بنجاح!"));
   } catch (err) {
     alert("❌ " + err.message);
+  }
+}
+
+async function triggerReconcileCustomerDebt() {
+  if (!currentCustomer) return;
+  const debt = parseFloat(currentCustomer.total_debt || 0);
+  const confirmMsg = `هل تريد بالتأكيد تسوية وتوزيع رصيد الدين الحالي (${debt.toLocaleString('ar-EG', {minimumFractionDigits:2})} ج) على فواتير الطبيب ${currentCustomer.name}؟\n\nسيتم تغطية الدين من أحدث الفواتير إلى الأقدم، وتأكيد سداد الفواتير الأقدم بالكامل.`;
+  if (!confirm(confirmMsg)) return;
+
+  try {
+    const res = await fetch(`${BASE}/api/customers/${currentCustomer.id}/reconcile-debt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || "فشل إجراء التسوية");
+
+    await switchTab('orders');
+    await loadCustomers();
+    alert("✅ تم إعادة ضبط وتوزيع الفواتير بدقة مطابقة للدين الحالي!");
+  } catch (err) {
+    alert("❌ خطأ: " + err.message);
   }
 }
 
