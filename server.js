@@ -2601,29 +2601,40 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
 
     // Query all sales matching customer ID, exact customer name, or normalized doctor name
     const { rows: sales } = await posDb.query(
-      `SELECT s.*,
-              COALESCE(
-                json_agg(
-                  json_build_object(
-                    'id', si.id,
-                    'product_name', si.product_name,
-                    'quantity', si.quantity,
-                    'unit_price', si.unit_price,
-                    'selected_option', si.selected_option
-                  )
-                ) FILTER (WHERE si.id IS NOT NULL), '[]'
-              ) as items
+      `SELECT s.*
        FROM sales s
-       LEFT JOIN sale_items si ON si.sale_id = s.id
+       LEFT JOIN website_order_alerts woa ON s.dentrust_order_id::text = woa.dentrust_order_id::text
        WHERE s.customer_id = $1
-          OR (s.customer_phone IS NOT NULL AND s.customer_phone != '' AND s.customer_phone = $3)
-          OR LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($2))
-          OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($2, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
-       GROUP BY s.id
+          OR ($2 != '' AND (
+               LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($2))
+            OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($2, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
+          ))
+          OR ($3 != '' AND woa.customer_phone = $3)
        ORDER BY (CASE WHEN (s.payment_method IN ('credit','split') AND s.credit_paid IS NOT TRUE) THEN 0 ELSE 1 END) ASC, s.id DESC
        LIMIT 100`,
-      [customer.id, customer.name, customer.phone || '']
+      [customer.id, (customer.name || '').trim(), (customer.phone || '').trim()]
     );
+
+    // Fetch sale items safely
+    const lookupSaleIds = sales.map(s => s.id);
+    const lookupItemsMap = {};
+    if (lookupSaleIds.length > 0) {
+      try {
+        const { rows: items } = await posDb.query(
+          'SELECT id, sale_id, product_name, quantity, unit_price, selected_option FROM sale_items WHERE sale_id = ANY($1::int[])',
+          [lookupSaleIds]
+        );
+        for (const it of items) {
+          if (!lookupItemsMap[it.sale_id]) lookupItemsMap[it.sale_id] = [];
+          lookupItemsMap[it.sale_id].push(it);
+        }
+      } catch (err) {
+        console.warn('[Lookup sale items warning]:', err);
+      }
+    }
+    for (const s of sales) {
+      s.items = lookupItemsMap[s.id] || [];
+    }
 
     // Auto-link any matching unlinked sales to this customer permanently in DB
     const unlinkedIds = sales.filter(s => !s.customer_id).map(s => s.id);
@@ -2796,30 +2807,41 @@ app.get(`${BASE}/api/customers/:cid/orders`, async (req, res) => {
     const { rows: [customer] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [cid]);
     if (!customer) return res.status(404).json({ error: 'العميل غير موجود' });
 
-    // 1. Fetch all sales by customer_id, customer_phone, or normalized customer name
+    // 1. Fetch all sales by customer_id, customer_name, or website alert phone
     const { rows: sales } = await posDb.query(
-      `SELECT s.*,
-              COALESCE(
-                json_agg(
-                  json_build_object(
-                    'id', si.id,
-                    'product_name', si.product_name,
-                    'quantity', si.quantity,
-                    'unit_price', si.unit_price,
-                    'selected_option', si.selected_option
-                  )
-                ) FILTER (WHERE si.id IS NOT NULL), '[]'
-              ) as items
+      `SELECT s.*
        FROM sales s
-       LEFT JOIN sale_items si ON si.sale_id = s.id
+       LEFT JOIN website_order_alerts woa ON s.dentrust_order_id::text = woa.dentrust_order_id::text
        WHERE s.customer_id = $1
-          OR (s.customer_phone IS NOT NULL AND s.customer_phone != '' AND s.customer_phone = $2)
-          OR LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($3))
-          OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($3, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
-       GROUP BY s.id
+          OR ($2 != '' AND (
+               LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($2))
+            OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($2, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
+          ))
+          OR ($3 != '' AND woa.customer_phone = $3)
        ORDER BY s.date DESC, s.id DESC`,
-      [customer.id, customer.phone || '', customer.name || '']
+      [customer.id, (customer.name || '').trim(), (customer.phone || '').trim()]
     );
+
+    // Fetch sale items safely in one query
+    const orderSaleIds = sales.map(s => s.id);
+    const orderItemsMap = {};
+    if (orderSaleIds.length > 0) {
+      try {
+        const { rows: items } = await posDb.query(
+          'SELECT id, sale_id, product_name, quantity, unit_price, selected_option FROM sale_items WHERE sale_id = ANY($1::int[])',
+          [orderSaleIds]
+        );
+        for (const it of items) {
+          if (!orderItemsMap[it.sale_id]) orderItemsMap[it.sale_id] = [];
+          orderItemsMap[it.sale_id].push(it);
+        }
+      } catch (itemErr) {
+        console.warn('[Fetch order items warning]:', itemErr);
+      }
+    }
+    for (const s of sales) {
+      s.items = orderItemsMap[s.id] || [];
+    }
 
     // Auto-link any matching unlinked sales to this customer permanently
     const unlinkedIds = sales.filter(s => !s.customer_id).map(s => s.id);
@@ -2979,16 +3001,19 @@ app.post([`${BASE}/api/customers/:cid/reconcile-debt`, '/api/customers/:cid/reco
     const { rows: [customer] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [cid]);
     if (!customer) return res.status(404).json({ error: 'العميل غير موجود' });
 
-    // Fetch all sales matching customer by ID, phone, or name
+    // Fetch all sales matching customer by ID, name, or website alert phone
     const { rows: sales } = await posDb.query(
       `SELECT s.id, s.total_amount, s.amount_received, s.payment_method, s.payment_split, s.paid_amount, s.credit_paid, s.date
        FROM sales s
+       LEFT JOIN website_order_alerts woa ON s.dentrust_order_id::text = woa.dentrust_order_id::text
        WHERE s.customer_id = $1
-          OR (s.customer_phone IS NOT NULL AND s.customer_phone != '' AND s.customer_phone = $2)
-          OR LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($3))
-          OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($3, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
+          OR ($2 != '' AND (
+               LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($2))
+            OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($2, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
+          ))
+          OR ($3 != '' AND woa.customer_phone = $3)
        ORDER BY s.date DESC, s.id DESC`,
-      [customer.id, customer.phone || '', customer.name || '']
+      [customer.id, (customer.name || '').trim(), (customer.phone || '').trim()]
     );
 
     // Ensure all these sales are linked to customer
@@ -3046,14 +3071,17 @@ app.get(`${BASE}/api/customers/:cid/statement`, async (req, res) => {
     const { rows: [c] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [cid]);
     if (!c) return res.status(404).json({ error: 'العميل غير موجود' });
     const { rows: creditSales } = await posDb.query(
-      `SELECT total_amount, amount_received, payment_method, payment_split 
-       FROM sales 
-       WHERE (customer_id=$1 
-          OR (customer_phone IS NOT NULL AND customer_phone != '' AND customer_phone = $2)
-          OR LOWER(TRIM(COALESCE(customer_name, ''))) = LOWER(TRIM($3))
-          OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($3, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))))
-         AND payment_method IN ('credit','split')`,
-      [cid, c.phone || '', c.name || '']
+      `SELECT s.total_amount, s.amount_received, s.payment_method, s.payment_split 
+       FROM sales s
+       LEFT JOIN website_order_alerts woa ON s.dentrust_order_id::text = woa.dentrust_order_id::text
+       WHERE (s.customer_id = $1 
+          OR ($2 != '' AND (
+               LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($2))
+            OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($2, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
+          ))
+          OR ($3 != '' AND woa.customer_phone = $3))
+         AND s.payment_method IN ('credit','split')`,
+      [cid, (c.name || '').trim(), (c.phone || '').trim()]
     );
     let totalInvoiced = 0;
     for (const s of creditSales) {

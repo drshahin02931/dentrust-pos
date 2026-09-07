@@ -1141,9 +1141,14 @@ async function switchTab(tab) {
   }
 
   if (tab === 'orders') {
-    const res = await fetch(`${BASE}/api/customers/${currentCustomer.id}/orders`);
-    const orders = await res.json();
-    if (!orders.length) { content.innerHTML = `<div class="text-center text-gray-400 py-8">لا توجد طلبات</div>`; return; }
+    try {
+      const res = await fetch(`${BASE}/api/customers/${currentCustomer.id}/orders`);
+      const orders = await res.json();
+      if (!res.ok || !Array.isArray(orders)) {
+        content.innerHTML = `<div class="text-center text-red-500 py-8">⚠️ حدث خطأ أثناء تحميل الفواتير (${orders?.error || res.statusText || 'خطأ'})<br><button onclick="switchTab('orders')" class="mt-2 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg">إعادة المحاولة 🔄</button></div>`;
+        return;
+      }
+      if (!orders.length) { content.innerHTML = `<div class="text-center text-gray-400 py-8">لا توجد طلبات</div>`; return; }
 
     content.innerHTML = orders.map(o => {
       const isCredit = o.payment_method === 'credit';
@@ -1204,7 +1209,9 @@ async function switchTab(tab) {
         </div>
       </div>`;
     }).join("");
-
+    } catch (err) {
+      content.innerHTML = `<div class="text-center text-red-500 py-8">⚠️ تعذر تحميل الفواتير: ${err.message || 'خطأ في الاتصال'}<br><button onclick="switchTab('orders')" class="mt-2 text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg">إعادة المحاولة 🔄</button></div>`;
+    }
   } else {
     const res = await fetch(`${BASE}/api/customers/${currentCustomer.id}/payments`);
     const payments = await res.json();
