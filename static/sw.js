@@ -5,7 +5,7 @@
    • Push notifications
 ═══════════════════════════════════════════════ */
 
-const CACHE = 'dentrust-pos-v9';
+const CACHE = 'dentrust-pos-v10';
 const STATIC_ASSETS = [
   '/',
   '/static/manifest.json',
@@ -93,10 +93,11 @@ self.addEventListener('push', e => {
       body:    data.body,
       icon:    data.icon    || '/static/icon-192.png',
       badge:   data.badge   || '/static/icon-192.png',
-      tag:     data.tag     || 'dentrust-notif',
+      tag:     (data.tag || 'dentrust-notif') + '-' + Date.now(),
       data:    data.url ? { url: data.url } : {},
-      vibrate: [200, 100, 200],
-      requireInteraction: !!data.requireInteraction,
+      vibrate: [300, 100, 300, 100, 300],
+      renotify: true,
+      requireInteraction: true,
     })
   );
 });

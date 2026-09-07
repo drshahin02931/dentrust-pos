@@ -1661,6 +1661,7 @@ function setPaymentType(type) {
   } else {
     firstOpt.textContent = "-- اختر عميل (اختياري) --";
   }
+  updateExpectedPointsInPos();
 }
 
 function setPaymentSub(sub) {
@@ -1700,6 +1701,7 @@ function updateSplitRemaining() {
     el.textContent = `زيادة ${Math.abs(diff).toFixed(2)} ج`;
     el.className = "text-xs text-center font-semibold text-red-500";
   }
+  updateExpectedPointsInPos();
 }
 
 // Final method: cash+naqdi→'cash', cash+instapay→'instapay', split→'split', credit→'credit'
@@ -2120,7 +2122,8 @@ function updateExpectedPointsInPos() {
   const finalTotalEl = document.getElementById("finalTotal");
   const total = parseFloat(finalTotalEl ? finalTotalEl.textContent : 0) || 0;
   const method = paymentType || "naqdi";
-  if (method === "credit") {
+  const splitCredit = method === "split" ? (parseFloat(document.getElementById("split-credit")?.value) || 0) : 0;
+  if (method === "credit" || splitCredit > 0) {
     el.textContent = "الآجل لا يحسب نقاطاً (0 نقطة)";
     el.className = "text-gray-400 font-medium text-[11px]";
     return;

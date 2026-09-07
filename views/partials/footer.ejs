@@ -285,7 +285,11 @@
 
     window.refreshAlerts = checkAlerts;
     document.addEventListener('DOMContentLoaded', checkAlerts);
-    setInterval(checkAlerts, 12000); // Poll every 12 seconds
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') checkAlerts();
+    });
+    window.addEventListener('focus', checkAlerts);
+    setInterval(checkAlerts, 8000); // Poll every 8 seconds
   })();
   </script>
 
@@ -329,7 +333,8 @@
           });
         }
 
-        const subJson = sub.toJSON();
+        // Always update subscription on server to ensure device is linked to current user
+        const subJson = sub ? sub.toJSON() : null;
         if (subJson && subJson.keys) {
           await fetch('<%= base %>/api/push/subscribe', {
             method: 'POST',
@@ -339,7 +344,7 @@
               endpoint: sub.endpoint,
               keys: subJson.keys
             })
-          });
+          }).catch(() => {});
         }
       } catch (err) {
         console.warn('[DenTrust Push]', err);

@@ -724,7 +724,12 @@ app.get(`${BASE}/api/products/generate-barcode`, async (req, res) => {
     const { randomInt } = require('crypto');
     for (let i = 0; i < 50; i++) {
       const code = String(randomInt(10000, 99999));
-      const { rows } = await posDb.query('SELECT id FROM products WHERE barcode=$1', [code]);
+      const { rows } = await posDb.query(
+        'SELECT barcode FROM products WHERE barcode=$1 UNION SELECT barcode FROM warehouse_items WHERE barcode=$1',
+        [code]
+      ).catch(async () => {
+        return posDb.query('SELECT barcode FROM products WHERE barcode=$1', [code]);
+      });
       if (!rows.length) return res.json({ barcode: code });
     }
     res.json({ barcode: String(randomInt(100000, 999999)) });
@@ -734,9 +739,14 @@ app.get(`${BASE}/api/products/generate-barcode`, async (req, res) => {
 app.get(`${BASE}/api/products/categories`, async (req, res) => {
   try {
     const { rows } = await posDb.query(
-      "SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category != '' ORDER BY category"
-    );
-    res.json(rows.map(r => r.category));
+      `SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND TRIM(category) != ''
+       UNION
+       SELECT DISTINCT category FROM warehouse_items WHERE category IS NOT NULL AND TRIM(category) != ''
+       ORDER BY category`
+    ).catch(async () => {
+      return posDb.query("SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category != '' ORDER BY category");
+    });
+    res.json(rows.map(r => r.category).filter(Boolean));
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
@@ -921,15 +931,19 @@ app.post(`${BASE}/api/products`, async (req, res) => {
     const qty = !isNaN(parseInt(d.quantity, 10)) ? parseInt(d.quantity, 10) : 0;
     const minStock = !isNaN(parseInt(d.min_stock, 10)) ? parseInt(d.min_stock, 10) : 0;
     const genderVal = d.gender || (d.section === 'medical' ? 'unisex' : null);
+    const isHidden = d.is_hidden_from_website === true || d.is_hidden_from_website === 'true' || d.is_hidden_from_website === 1;
+    const effectiveSec = isHidden ? 'hidden' : (d.section || 'dental');
+    const origSec = d.section || 'dental';
 
     const { rows: [ins] } = await posDb.query(
-      `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values, gender)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+      `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values, gender, is_hidden_from_website, is_hidden, hidden, orig_section)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
       [d.barcode || null, d.product_name, qty,
        pPrice, sPrice,
        d.expiry_date || null, mainPhoto,
        d.category || null, minStock,
-       d.description || null, variantsJson, d.section || 'dental', cbJson, genderVal]
+       d.description || null, variantsJson, effectiveSec, cbJson, genderVal,
+       isHidden, isHidden, isHidden, origSec]
     );
     // حفظ كل الصور (حتى 5) مباشرة في public.products.photos
     if (d.photos && d.photos.length > 0) {
@@ -938,7 +952,7 @@ app.post(`${BASE}/api/products`, async (req, res) => {
     }
     // بيرفع صورة المنتج الجديد (لو موجودة) وبينشئه على الموقع تلقائيًا
     if (HAS_WEBSITE_DB) {
-      syncNewProductToDentrust(ins.id, { ...d, image_url: mainPhoto, purchase_price: pPrice, sale_price: sPrice })
+      syncNewProductToDentrust(ins.id, { ...d, image_url: mainPhoto, purchase_price: pPrice, sale_price: sPrice, is_hidden_from_website: isHidden, section: effectiveSec, orig_section: origSec })
         .catch(err => console.error('[sync new product]', err.message));
     }
     res.status(201).json({ ok: true, id: ins.id });
@@ -1026,6 +1040,8 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
     const minStock = !isNaN(parseInt(d.min_stock, 10)) ? parseInt(d.min_stock, 10) : 0;
 
     const genderVal = d.gender || (d.section === 'medical' ? 'unisex' : null);
+    const effectiveSec = isHidden ? 'hidden' : (d.section || 'dental');
+    const origSec = d.section || 'dental';
 
     const params = [
       d.barcode || null,
@@ -1038,11 +1054,12 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
       minStock,
       d.description || null,
       variantsJson,
-      d.section || 'dental',
+      effectiveSec,
       cbJson,
       isHidden,
       genderVal,
       pid,
+      origSec
     ];
 
     const updateQuery = `UPDATE products SET barcode=$1, product_name=$2, quantity=$3,
@@ -1051,14 +1068,25 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
       section=$11, checkbox_values=$12, is_hidden_from_website=$13, gender=$14 WHERE id=$15`;
 
     try {
-      await posDb.query(updateQuery, params);
+      await posDb.query(updateQuery, params.slice(0, 15));
+      await posDb.query(
+        `UPDATE public.products SET 
+          is_hidden=$1, hidden=$1, is_hidden_from_website=$1, is_active=NOT $1,
+          section=$2,
+          orig_section=CASE WHEN $1 THEN COALESCE(NULLIF(orig_section, 'hidden'), NULLIF(section, 'hidden'), $3) ELSE COALESCE(orig_section, $3) END
+         WHERE id=$4`,
+        [isHidden, effectiveSec, origSec, pid]
+      ).catch(() => {});
     } catch (viewErr) {
       // Fallback: update on public.products directly if view trigger has issue
       await posDb.query(
         `UPDATE public.products SET barcode=$1, product_name=$2, quantity=$3,
          purchase_price=$4, sale_price=$5,
          expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
-         section=$11, checkbox_values=$12, is_hidden_from_website=$13, gender=$14 WHERE id=$15`,
+         section=$11, checkbox_values=$12, is_hidden_from_website=$13, gender=$14,
+         is_hidden=$13, hidden=$13, is_active=NOT $13,
+         orig_section=CASE WHEN $13 THEN COALESCE(NULLIF(orig_section, 'hidden'), NULLIF(section, 'hidden'), $16) ELSE COALESCE(orig_section, $16) END
+         WHERE id=$15`,
         params
       ).catch(async () => {
         await posDb.query(
@@ -1627,18 +1655,14 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
       if (creditPortion > 0) await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [creditPortion, customerId]);
     }
 
-    // 💎 Loyalty Points: awarded ONLY on cash, instapay, and card (credit/debt gets 0 points)
-    if (customerId && method !== 'credit') {
+    // 💎 Loyalty Points: awarded ONLY on 100% cash, instapay, and card (credit or split with debt gets 0 points)
+    const isCreditSale = method === 'credit' || (method === 'split' && parseFloat(d.payment_split?.credit || 0) > 0);
+    if (customerId && !isCreditSale) {
       try {
         const { rows: [custRow] } = await client.query('SELECT is_vip FROM customers WHERE id=$1', [customerId]);
         const isVip = !!custRow?.is_vip;
         const multiplier = isVip ? 5 : 1; // VIP gets 5 points per 100 EGP, regular gets 1 point
-        let paidCashAmount = total;
-        if (method === 'split' && d.payment_split) {
-          const creditPortion = parseFloat(d.payment_split.credit || 0);
-          paidCashAmount = Math.max(0, total - creditPortion);
-        }
-        const earnedPoints = Math.floor(paidCashAmount / 100) * multiplier;
+        const earnedPoints = Math.floor(total / 100) * multiplier;
         if (earnedPoints > 0) {
           await client.query('UPDATE customers SET points_balance = COALESCE(points_balance, 0) + $1 WHERE id=$2', [earnedPoints, customerId]);
         }
@@ -1704,32 +1728,57 @@ app.get(`${BASE}/api/sales`, async (req, res) => {
 app.post(`${BASE}/api/sales/:sid/mark-credit-paid`, async (req, res) => {
   const sid = parseInt(req.params.sid, 10);
   const d = req.body;
-  const cashAmount = parseFloat(d.cash_amount || 0);
-  const instapayAmount = parseFloat(d.instapay_amount || 0);
+  let cashAmount = parseFloat(d.cash_amount || 0);
+  let instapayAmount = parseFloat(d.instapay_amount || 0);
+  let payAmount = parseFloat(d.amount || (cashAmount + instapayAmount) || 0);
   try {
     const { rows: [sale] } = await posDb.query('SELECT * FROM sales WHERE id=$1', [sid]);
     if (!sale) return res.status(404).json({ error: 'الفاتورة غير موجودة' });
-    if (sale.credit_paid) return res.json({ ok: true, already_paid: true });
     if (!['credit', 'split'].includes(sale.payment_method)) return res.status(400).json({ error: 'الفاتورة ليست آجل' });
-    let debtAmount;
+
+    let origDebt = 0;
     if (sale.payment_method === 'split') {
       const splitData = JSON.parse(sale.payment_split || '{}');
-      debtAmount = parseFloat(splitData.credit || 0);
+      origDebt = parseFloat(splitData.credit || 0);
     } else {
-      // آجل كامل: الدين = إجمالي الفاتورة ناقص ما دُفع وقت الشراء
-      debtAmount = parseFloat(sale.total_amount || 0) - parseFloat(sale.amount_received || 0);
+      origDebt = Math.max(0, parseFloat(sale.total_amount || 0) - parseFloat(sale.amount_received || 0));
     }
-    await posDb.query('UPDATE sales SET credit_paid=true WHERE id=$1', [sid]);
-    if (debtAmount > 0 && sale.customer_id) {
-      await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [debtAmount, sale.customer_id]);
+
+    const currentPaid = parseFloat(sale.paid_amount || 0);
+    const remDebt = Math.max(0, origDebt - currentPaid);
+
+    if (remDebt <= 0 || sale.credit_paid) {
+      return res.json({ ok: true, already_paid: true, remaining: 0 });
     }
-    if ((cashAmount + instapayAmount) > 0 && sale.customer_id) {
+
+    // Default to the full remaining debt on this invoice if not specified
+    if (payAmount <= 0) {
+      payAmount = remDebt;
+    }
+    const actualPay = Math.min(payAmount, remDebt);
+    const newPaid = currentPaid + actualPay;
+    const isFullyPaid = (newPaid >= origDebt - 0.001);
+
+    if (cashAmount + instapayAmount === 0) {
+      cashAmount = actualPay;
+    }
+
+    await posDb.query('UPDATE sales SET paid_amount=$1, credit_paid=$2 WHERE id=$3', [newPaid, isFullyPaid, sid]);
+    if (actualPay > 0 && sale.customer_id) {
+      await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [actualPay, sale.customer_id]);
       await posDb.query(
         'INSERT INTO customer_payments (customer_id, amount, cash_amount, instapay_amount, note) VALUES ($1,$2,$3,$4,$5)',
-        [sale.customer_id, cashAmount + instapayAmount, cashAmount, instapayAmount, `وارد مديونية — فاتورة #${sid}`]
+        [sale.customer_id, actualPay, cashAmount, instapayAmount, `سداد فاتورة آجل #${sid} ${isFullyPaid ? '(سداد كامل)' : '(سداد جزئي)'}`]
       );
     }
-    res.json({ ok: true, debt_reduced: Math.round(debtAmount * 100) / 100 });
+    res.json({
+      ok: true,
+      debt_reduced: Math.round(actualPay * 100) / 100,
+      is_fully_paid: isFullyPaid,
+      paid_now: actualPay,
+      total_paid: newPaid,
+      remaining: Math.max(0, origDebt - newPaid)
+    });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
@@ -2570,7 +2619,7 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
           OR LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($2))
           OR LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.customer_name, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE(COALESCE($2, ''), '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
        GROUP BY s.id
-       ORDER BY s.id DESC
+       ORDER BY (CASE WHEN (s.payment_method IN ('credit','split') AND s.credit_paid IS NOT TRUE) THEN 0 ELSE 1 END) ASC, s.id DESC
        LIMIT 100`,
       [customer.id, customer.name]
     );
@@ -2583,8 +2632,17 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
 
     const formattedOrders = sales.map(s => {
       const totalAmt = parseFloat(s.total_amount || 0);
-      const isCredit = (s.payment_method === 'credit') || (s.payment_method === 'split' && parseFloat(s.change_due || 0) > 0);
-      const isPaid = s.credit_paid === 1 || s.payment_method === 'cash';
+      const isCredit = (s.payment_method === 'credit') || (s.payment_method === 'split');
+      let origDebt = 0;
+      if (s.payment_method === 'split') {
+        try { origDebt = parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
+      } else if (s.payment_method === 'credit') {
+        origDebt = Math.max(0, parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0));
+      }
+      const paidAmt = parseFloat(s.paid_amount || 0);
+      const isPaid = !isCredit || (s.credit_paid === true || s.credit_paid === 1);
+      const remainingDebt = isPaid ? 0 : Math.max(0, origDebt - paidAmt);
+      const isPartial = !isPaid && paidAmt > 0;
 
       return {
         id: s.id,
@@ -2592,6 +2650,10 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
         total_amount: totalAmt,
         total_price: totalAmt,
         totalPrice: totalAmt,
+        orig_debt: origDebt,
+        paid_amount: paidAmt,
+        remaining_debt: remainingDebt,
+        is_partial: isPartial,
         payment_method: s.payment_method || 'cash',
         payment_label: s.payment_method === 'credit' ? 'آجل' : (s.payment_method === 'split' ? 'دفع مقسم' : 'نقدي (كاش)'),
         date: s.date,
@@ -2601,7 +2663,7 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
         clinic_address: s.clinic_address || '',
         is_credit: isCredit,
         is_paid: isPaid,
-        status: isPaid ? 'completed' : (isCredit ? 'credit_unpaid' : 'completed'),
+        status: isPaid ? 'completed' : (isPartial ? 'partial_credit' : 'credit_unpaid'),
         items: (s.items || []).map(it => ({
           product_name: it.product_name,
           quantity: parseInt(it.quantity || 1, 10),
@@ -2731,13 +2793,36 @@ app.get(`${BASE}/api/customers/:cid/orders`, async (req, res) => {
   const cid = parseInt(req.params.cid, 10);
   try {
     const { rows: sales } = await posDb.query(
-      `SELECT s.*, CASE WHEN s.payment_method IN ('credit','split') THEN 0 ELSE 1 END as sort_key
+      `SELECT s.*, 
+        CASE 
+          WHEN s.payment_method IN ('credit','split') AND s.credit_paid IS NOT TRUE THEN 0 
+          ELSE 1 
+        END as sort_key
        FROM sales s WHERE s.customer_id=$1 ORDER BY sort_key ASC, s.date DESC`, [cid]
     );
     const result = [];
     for (const s of sales) {
       const { rows: saleItems } = await posDb.query('SELECT * FROM sale_items WHERE sale_id=$1', [s.id]);
-      result.push({ ...s, items: saleItems });
+      let origDebt = 0;
+      if (s.payment_method === 'split') {
+        try { origDebt = parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
+      } else if (s.payment_method === 'credit') {
+        origDebt = Math.max(0, parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0));
+      }
+      const paidAmt = parseFloat(s.paid_amount || 0);
+      const isPaid = (s.credit_paid === true || s.credit_paid === 1) || (!['credit', 'split'].includes(s.payment_method));
+      const remainingDebt = isPaid ? 0 : Math.max(0, origDebt - paidAmt);
+      const isPartial = !isPaid && paidAmt > 0;
+
+      result.push({
+        ...s,
+        orig_debt: origDebt,
+        paid_amount: paidAmt,
+        remaining_debt: remainingDebt,
+        is_partial: isPartial,
+        credit_paid: isPaid,
+        items: saleItems
+      });
     }
     res.json(result);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
@@ -2750,14 +2835,74 @@ app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
   let cashAmt = parseFloat(d.cash_amount || 0);
   let instaAmt = parseFloat(d.instapay_amount || 0);
   if (cashAmt + instaAmt === 0 && amount > 0) cashAmt = amount;
+  const allocations = Array.isArray(d.allocations) ? d.allocations : null;
+
   try {
+    // 1. Update customer total debt
     await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [amount, cid]);
+
+    // 2. Insert payment record
     await posDb.query(
       'INSERT INTO customer_payments (customer_id, amount, cash_amount, instapay_amount, note) VALUES ($1,$2,$3,$4,$5)',
       [cid, amount, cashAmt, instaAmt, d.note || '']
     );
+
+    // 3. Allocate to open invoices
+    if (allocations && allocations.length > 0) {
+      // Manual Allocation specified by cashier
+      for (const alloc of allocations) {
+        const saleId = parseInt(alloc.sale_id, 10);
+        const allocAmt = parseFloat(alloc.amount || 0);
+        if (saleId && allocAmt > 0) {
+          const { rows: [sale] } = await posDb.query('SELECT * FROM sales WHERE id=$1 AND customer_id=$2', [saleId, cid]);
+          if (sale) {
+            let origDebt = 0;
+            if (sale.payment_method === 'split') {
+              try { origDebt = parseFloat(JSON.parse(sale.payment_split || '{}').credit || 0); } catch (_) {}
+            } else {
+              origDebt = Math.max(0, parseFloat(sale.total_amount || 0) - parseFloat(sale.amount_received || 0));
+            }
+            const currentPaid = parseFloat(sale.paid_amount || 0);
+            const newPaid = currentPaid + allocAmt;
+            const isFullyPaid = (newPaid >= origDebt - 0.001);
+            await posDb.query('UPDATE sales SET paid_amount=$1, credit_paid=$2 WHERE id=$3', [newPaid, isFullyPaid, saleId]);
+          }
+        }
+      }
+    } else if (amount > 0) {
+      // Automatic FIFO Allocation across open credit invoices (oldest first)
+      const { rows: openSales } = await posDb.query(
+        `SELECT id, total_amount, amount_received, payment_method, payment_split, paid_amount
+         FROM sales 
+         WHERE customer_id=$1 AND payment_method IN ('credit','split') AND credit_paid IS NOT TRUE
+         ORDER BY date ASC, id ASC`,
+        [cid]
+      );
+      let remToAllocate = amount;
+      for (const sale of openSales) {
+        if (remToAllocate <= 0) break;
+        let origDebt = 0;
+        if (sale.payment_method === 'split') {
+          try { origDebt = parseFloat(JSON.parse(sale.payment_split || '{}').credit || 0); } catch (_) {}
+        } else {
+          origDebt = Math.max(0, parseFloat(sale.total_amount || 0) - parseFloat(sale.amount_received || 0));
+        }
+        const currentPaid = parseFloat(sale.paid_amount || 0);
+        const invRem = Math.max(0, origDebt - currentPaid);
+        if (invRem > 0) {
+          const payThis = Math.min(invRem, remToAllocate);
+          const newPaid = currentPaid + payThis;
+          const isFullyPaid = (newPaid >= origDebt - 0.001);
+          await posDb.query('UPDATE sales SET paid_amount=$1, credit_paid=$2 WHERE id=$3', [newPaid, isFullyPaid, sale.id]);
+          remToAllocate -= payThis;
+        }
+      }
+    }
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) {
+    console.error('[POST /api/customers/:cid/pay Error]:', err);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
 });
 
 app.get(`${BASE}/api/customers/:cid/payments`, async (req, res) => {
@@ -2842,10 +2987,62 @@ app.patch([`${BASE}/api/customers/:cid`, '/api/customers/:cid'], async (req, res
       [name.trim(), (phone||'').trim(), (effectiveAddress||'').trim(), (installment_plan||'').trim(), (effectiveCity||'').trim(), (effectiveRegion||'').trim(), normAddrsJson, cid]
     );
     if (!rowCount) return res.status(404).json({ error: 'العميل غير موجود' });
+
+    if (req.body.points_balance !== undefined && !isNaN(parseInt(req.body.points_balance, 10))) {
+      const newPts = parseInt(req.body.points_balance, 10);
+      await posDb.query('UPDATE customers SET points_balance=$1 WHERE id=$2', [newPts, cid]);
+    }
+
     res.json({ ok: true });
   } catch (err) {
     console.error('[PATCH /api/customers/:cid] Error:', err);
     res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+// ── تعديل نقاط ولاء العميل يدوياً للإدارة ─────────────────────────────────────
+app.post([`${BASE}/api/customer/update-points`, '/api/customer/update-points'], async (req, res) => {
+  if (!isMgr(req) && !hasPerm(req, 'customers')) return res.status(403).json({ error: 'غير مصرح' });
+  const { customer_id, points_balance, reason } = req.body;
+  const cid = parseInt(customer_id, 10);
+  const pts = parseInt(points_balance, 10);
+  if (isNaN(cid) || isNaN(pts) || pts < 0) {
+    return res.status(400).json({ error: 'بيانات النقاط غير صحيحة' });
+  }
+  try {
+    const { rows: [cust] } = await posDb.query('SELECT name, points_balance, phone FROM customers WHERE id=$1', [cid]);
+    if (!cust) return res.status(404).json({ error: 'العميل غير موجود' });
+    const oldPts = parseInt(cust.points_balance || 0, 10);
+    await posDb.query('UPDATE customers SET points_balance=$1 WHERE id=$2', [pts, cid]);
+
+    // سجل تدقيق داخلي للإدارة فقط (لا يظهر للعميل على الموقع)
+    await posDb.query(
+      `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+       VALUES ($1, $2, $3, 'manual_points_edit', $4, $5, $6)`,
+      [
+        cid,
+        '',
+        cust.name || '',
+        `تعديل يدوي لرصيد النقاط من ${oldPts} إلى ${pts} نقطة${reason ? ' (السبب: ' + reason + ')' : ''}`,
+        cust.phone || '',
+        req.session?.username || 'الإدارة'
+      ]
+    ).catch(() => {});
+
+    // مزامنة مع موقع دنت روست في حال وجود حساب مربوط
+    if (HAS_WEBSITE_DB && cust.phone) {
+      try {
+        const client = await dentrustDb.connect();
+        try {
+          await client.query('UPDATE customers SET points_balance=$1 WHERE phone=$2', [pts, cust.phone.trim()]);
+        } finally { client.release(); }
+      } catch (_) {}
+    }
+
+    res.json({ ok: true, old_points: oldPts, new_points: pts });
+  } catch (err) {
+    console.error('[POST /api/customer/update-points Error]:', err);
+    res.status(500).json({ error: 'خطأ داخلي' });
   }
 });
 
@@ -4072,14 +4269,25 @@ async function syncNewProductToDentrust(posId, d) {
     const qty = !isNaN(parseInt(d.quantity, 10)) ? parseInt(d.quantity, 10) : 0;
 
     const genderVal = d.gender || (d.section === 'medical' ? 'unisex' : null);
+    const isHidden = d.is_hidden_from_website === true || d.is_hidden_from_website === 'true' || d.is_hidden_from_website === 1;
+    const effectiveSection = isHidden ? 'hidden' : (d.section || 'dental');
+    const origSection = d.orig_section || d.section || 'dental';
+
+    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS orig_section TEXT').catch(() => {});
 
     const { rows: [ins] } = await client.query(
-      'INSERT INTO products (name, price, purchase_price, stock, is_offer, photos, category_id, expiry_date, details, section, variants, checkbox_values, gender) VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id',
+      `INSERT INTO products (name, price, purchase_price, stock, is_offer, photos, category_id, expiry_date, details, section, variants, checkbox_values, gender, is_hidden, hidden, is_hidden_from_website, is_active, orig_section)
+       VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
       [d.product_name, sPrice, pPrice,
        qty, photosArr, catRow.id, d.expiry_date || null, details,
-       d.section || 'dental', variantsJson, cbJson, genderVal]
+       effectiveSection, variantsJson, cbJson, genderVal,
+       isHidden, isHidden, isHidden, !isHidden, origSection]
     );
     await posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2', [ins.id, posId]);
+    cacheDel('site_products');
   } finally { client.release(); }
 }
 
@@ -4964,8 +5172,9 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     // Sync actual current POS stock to website (NOT delta — website already deducted its own stock)
     if (deductedProdIds.length > 0) syncProductsNow(deductedProdIds.map(d => d.pid)).catch(() => {});
 
-    // 💎 Loyalty Points for Online Orders (all website orders are cash/COD)
-    if (customerId) {
+    // 💎 Loyalty Points for Online Orders (0 points if order is credit / installment)
+    const isCreditOrder = payment_method === 'credit' || req.body.payment_method === 'credit';
+    if (customerId && !isCreditOrder) {
       try {
         const { rows: [cRow] } = await posDb.query('SELECT is_vip FROM customers WHERE id=$1', [customerId]);
         const isVip = !!cRow?.is_vip;
@@ -7000,10 +7209,11 @@ async function sendPushToAll(title, body, url = null, tag = 'dentrust-notif') {
   try {
     const { rows: subs } = await posDb.query('SELECT * FROM push_subscriptions');
     const payload = JSON.stringify({ title, body, icon: `${BASE}/static/icon-192.png`, badge: `${BASE}/static/icon-192.png`, tag, url });
+    const pushOptions = { urgency: 'high', TTL: 86400 };
     const results = await Promise.allSettled(
       subs.map(sub => {
         const subscription = { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } };
-        return webpush.sendNotification(subscription, payload).catch(async err => {
+        return webpush.sendNotification(subscription, payload, pushOptions).catch(async err => {
           // Remove expired/invalid subscriptions (410 Gone)
           if (err.statusCode === 410 || err.statusCode === 404) {
             await posDb.query('DELETE FROM push_subscriptions WHERE endpoint=$1', [sub.endpoint]).catch(() => {});
@@ -7019,13 +7229,13 @@ async function sendPushToAll(title, body, url = null, tag = 'dentrust-notif') {
   }
 }
 
-// Helper: send low-stock push notification
+// Helper: send low-stock push notification (to managers only)
 async function sendLowStockPush(lowStockItems) {
   if (!lowStockItems?.length) return;
   const names = lowStockItems.map(i => `${i.name} (${i.qty}/${i.min})`).join('، ');
   const title = `⚠️ مخزون منخفض — ${lowStockItems.length} منتج`;
   const body = names.length > 120 ? names.slice(0, 117) + '...' : names;
-  await sendPushToAll(title, body, `${BASE}/inventory`, 'low-stock');
+  await sendPushToManagers(title, body, `${BASE}/inventory`, 'low-stock');
 }
 
 // Helper: send push only to devices belonging to managers
@@ -7033,16 +7243,17 @@ async function sendPushToManagers(title, body, url = null, tag = 'dentrust-notif
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
   try {
     const { rows: subs } = await posDb.query(
-      `SELECT ps.* FROM push_subscriptions ps
-       JOIN users u ON u.id = ps.user_id
-       WHERE u.role = 'manager'`
+      `SELECT DISTINCT ps.* FROM push_subscriptions ps
+       LEFT JOIN users u ON u.id = ps.user_id
+       WHERE u.role = 'manager' OR ps.user_id IS NULL`
     );
     if (!subs.length) return;
     const payload = JSON.stringify({ title, body, icon: `${BASE}/static/icon-192.png`, badge: `${BASE}/static/icon-192.png`, tag, url });
+    const pushOptions = { urgency: 'high', TTL: 86400 };
     const results = await Promise.allSettled(
       subs.map(sub => {
         const subscription = { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } };
-        return webpush.sendNotification(subscription, payload).catch(async err => {
+        return webpush.sendNotification(subscription, payload, pushOptions).catch(async err => {
           if (err.statusCode === 410 || err.statusCode === 404) {
             await posDb.query('DELETE FROM push_subscriptions WHERE endpoint=$1', [sub.endpoint]).catch(() => {});
           }
@@ -7057,7 +7268,7 @@ async function sendPushToManagers(title, body, url = null, tag = 'dentrust-notif
   }
 }
 
-// Helper: check products nearing expiry (خلال 3 شهور) and push-notify everيone (مثل تنبيه المخزون المنخفض)
+// Helper: check products nearing expiry (خلال 3 شهور) and push-notify managers
 async function checkExpiryAndNotify() {
   try {
     const { rows } = await posDb.query(
@@ -7069,11 +7280,55 @@ async function checkExpiryAndNotify() {
     const names = rows.map(r => `${r.product_name} (${String(r.expiry_date).substring(0, 10)})`).join('، ');
     const title = `⏳ منتجات هتنتهي خلال 3 شهور — ${rows.length} منتج`;
     const body = names.length > 120 ? names.slice(0, 117) + '...' : names;
-    await sendPushToAll(title, body, `${BASE}/expiry`, 'expiry-alert');
+    await sendPushToManagers(title, body, `${BASE}/expiry`, 'expiry-alert');
   } catch (err) {
     console.error('[Expiry Push] error:', err.message);
   }
 }
+
+// Helper: check out-of-stock and low-stock products daily at 12:00 PM and push-notify managers
+async function checkDailyStockAndNotify() {
+  try {
+    const { rows: outOfStock } = await posDb.query(
+      `SELECT product_name FROM products WHERE quantity <= 0 ORDER BY product_name LIMIT 10`
+    );
+    const { rows: lowStock } = await posDb.query(
+      `SELECT product_name, quantity, min_stock FROM products WHERE min_stock > 0 AND quantity > 0 AND quantity <= min_stock ORDER BY quantity ASC LIMIT 10`
+    );
+    const { rows: [totalOut] } = await posDb.query(`SELECT COUNT(*) as c FROM products WHERE quantity <= 0`);
+    const { rows: [totalLow] } = await posDb.query(`SELECT COUNT(*) as c FROM products WHERE min_stock > 0 AND quantity > 0 AND quantity <= min_stock`);
+    
+    const countOut = parseInt(totalOut?.c || 0, 10);
+    const countLow = parseInt(totalLow?.c || 0, 10);
+
+    if (countOut === 0 && countLow === 0) return { countOut, countLow, sent: false };
+
+    let summaryParts = [];
+    if (countOut > 0) {
+      const outNames = outOfStock.map(p => p.product_name).join('، ');
+      summaryParts.push(`🔴 نفد (${countOut}): ${outNames}${countOut > outOfStock.length ? '...' : ''}`);
+    }
+    if (countLow > 0) {
+      const lowNames = lowStock.map(p => `${p.product_name} (${p.quantity}/${p.min_stock})`).join('، ');
+      summaryParts.push(`⚠️ قارب على النفاد (${countLow}): ${lowNames}${countLow > lowStock.length ? '...' : ''}`);
+    }
+
+    const title = `📦 تقرير النواقص اليومي (12:00 ظهراً)`;
+    const body = summaryParts.join(' | ');
+    await sendPushToManagers(title, body, `${BASE}/inventory`, 'daily-stock-report');
+    return { countOut, countLow, sent: true, title, body };
+  } catch (err) {
+    console.error('[Daily Stock Push error]:', err.message);
+    return { error: err.message };
+  }
+}
+
+// Manager test endpoint for 12:00 stock push notification
+app.all([`${BASE}/api/admin/test-daily-stock-push`, '/api/admin/test-daily-stock-push'], async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const result = await checkDailyStockAndNotify();
+  res.json({ ok: true, result });
+});
 
 // GET /api/push/vapid-public-key  — returns public VAPID key to client (open, no auth needed)
 app.get(`${BASE}/api/push/vapid-public-key`, (req, res) => {
@@ -8684,6 +8939,9 @@ async function main() {
 
     // ── تنبيه انتهاء الصلاحية: يشتغل يوميًا الساعة 8 الصبح (توقيت السيرفر) ──
     cron.schedule('0 8 * * *', () => { checkExpiryAndNotify().catch(() => {}); });
+
+    // ── تقرير النواقص اليومي: يشتغل يوميًا الساعة 12:00 ظهرًا بتوقيت القاهرة ──
+    cron.schedule('0 12 * * *', () => { checkDailyStockAndNotify().catch(() => {}); }, { timezone: 'Africa/Cairo' });
 
     app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     app.get('/api/healthz', (req, res) => res.json({ status: 'ok', ts: Date.now() }));

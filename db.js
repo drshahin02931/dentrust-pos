@@ -433,6 +433,8 @@ const PUBLIC_PRODUCTS_MIGRATIONS = [
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS orig_section TEXT",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS gender TEXT DEFAULT 'unisex'",
+  "ALTER TABLE sales ADD COLUMN IF NOT EXISTS paid_amount NUMERIC DEFAULT 0",
+  "ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS paid_amount NUMERIC DEFAULT 0",
   "ALTER TABLE public.products DISABLE ROW LEVEL SECURITY",
 ];
 
@@ -515,7 +517,8 @@ BEGIN
     barcode, name, stock, purchase_price, price,
     expiry_date, photos, category_id, min_stock, supplier_id,
     details, variants, section, checkbox_values, is_offer, is_sold_out,
-    original_price, is_best_seller, gender
+    original_price, is_best_seller, gender,
+    is_hidden_from_website, is_hidden, hidden, orig_section
   ) VALUES (
     NEW.barcode,
     NEW.product_name,
@@ -529,13 +532,17 @@ BEGIN
     NEW.supplier_id,
     NEW.description,
     NEW.variants,
-    COALESCE(NEW.section, 'dental'),
+    CASE WHEN COALESCE(NEW.is_hidden_from_website, false) = true THEN 'hidden' ELSE COALESCE(NEW.section, 'dental') END,
     NEW.checkbox_values,
     COALESCE(NEW.is_offer, false),
     (COALESCE(NEW.quantity, 0) <= 0),
     NEW.original_price,
     COALESCE(NEW.is_best_seller, false),
-    COALESCE(NEW.gender, 'unisex')
+    COALESCE(NEW.gender, 'unisex'),
+    COALESCE(NEW.is_hidden_from_website, false),
+    COALESCE(NEW.is_hidden_from_website, false),
+    COALESCE(NEW.is_hidden_from_website, false),
+    COALESCE(NULLIF(NEW.section, 'hidden'), 'dental')
   ) RETURNING id INTO v_new_id;
 
   NEW.id         := v_new_id;
@@ -609,7 +616,11 @@ BEGIN
     supplier_id    = NEW.supplier_id,
     details        = NEW.description,
     variants       = NEW.variants,
-    section        = COALESCE(NEW.section, 'dental'),
+    section        = CASE 
+                       WHEN COALESCE(NEW.is_hidden_from_website, false) = true THEN 'hidden'
+                       ELSE COALESCE(NULLIF(NEW.section, 'hidden'), orig_section, 'dental')
+                     END,
+    orig_section   = COALESCE(NULLIF(NEW.section, 'hidden'), orig_section, 'dental'),
     checkbox_values= NEW.checkbox_values,
     is_sold_out    = (COALESCE(NEW.quantity, 0) <= 0),
     is_offer       = COALESCE(NEW.is_offer, is_offer),
@@ -617,6 +628,7 @@ BEGIN
     is_best_seller = COALESCE(NEW.is_best_seller, is_best_seller),
     is_hidden_from_website = COALESCE(NEW.is_hidden_from_website, is_hidden_from_website),
     is_hidden      = COALESCE(NEW.is_hidden_from_website, is_hidden),
+    hidden         = COALESCE(NEW.is_hidden_from_website, hidden),
     gender         = COALESCE(NEW.gender, gender, 'unisex')
   WHERE id = NEW.id;
 

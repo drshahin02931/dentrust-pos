@@ -197,17 +197,28 @@
             class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
         </div>
         <div>
-          <label class="text-xs font-bold text-gray-700 block mb-1">الباركود / الكود</label>
-          <input id="aw-barcode" type="text" placeholder="باركود الصنف"
-            class="w-full border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+          <label class="text-xs font-bold text-gray-700 block mb-1">الباركود (5 أرقام)</label>
+          <div class="flex gap-2">
+            <input id="aw-barcode" type="text" placeholder="اختياري أو توليد تلقائي"
+              class="flex-1 border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+            <button type="button" onclick="generateWarehouseBarcode()"
+              class="bg-amber-500 hover:bg-amber-600 text-white px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap flex items-center gap-1 shadow-sm">
+              🎲 توليد
+            </button>
+          </div>
         </div>
       </div>
 
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="text-xs font-bold text-gray-700 block mb-1">التصنيف</label>
-          <input id="aw-category" type="text" placeholder="مستلزمات / حشوات..."
+          <input id="aw-category" type="text" autocomplete="off" placeholder="اكتب تصنيف جديد أو اختر..."
             class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+          <select id="aw-category-select"
+            onchange="if(this.value){document.getElementById('aw-category').value=this.value;this.value='';}"
+            class="w-full border rounded-xl px-2.5 py-1.5 text-xs mt-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white text-gray-600">
+            <option value="">اختر تصنيف موجود...</option>
+          </select>
         </div>
         <div>
           <label class="text-xs font-bold text-gray-700 block mb-1">سعر البيع بالمحل (EGP)</label>
@@ -216,6 +227,28 @@
               class="w-full border rounded-xl px-3 py-2 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-blue-300"/>
             <span id="aw-price-lock" class="hidden absolute left-3 top-2.5 text-xs text-gray-400 font-bold" title="سعر معتمد من المحل">🔒 موحد</span>
           </div>
+        </div>
+      </div>
+
+      <!-- Variants & Boxes Breakdown (Matching Inventory System) -->
+      <div id="awVariantsBoxesSection" class="border border-blue-100 rounded-2xl p-3.5 space-y-3 bg-blue-50/40">
+        <div class="flex items-center justify-between">
+          <label class="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+            <span>📦</span> تفاصيل التعبئة والعلب (Variants & Boxes)
+          </label>
+          <span class="text-xs text-gray-600">الإجمالي: <strong id="awTotalQtyPreview" class="font-bold text-blue-700">0</strong> قطعة</span>
+        </div>
+        <div id="awItemsTable" class="space-y-2"></div>
+        <div id="awNoItemsMsg" class="text-xs text-gray-400 text-center py-2">لا توجد بوكسات بعد — أضف أدناه</div>
+        <div class="flex gap-2 flex-wrap">
+          <input type="text" id="aw-item-label" placeholder="الاسم (مثال: علبة كبيرة)"
+            class="flex-1 min-w-[130px] border rounded-xl px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"/>
+          <input type="number" id="aw-item-boxes" placeholder="عدد" min="1"
+            class="w-20 border rounded-xl px-2.5 py-1.5 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"/>
+          <input type="number" id="aw-item-qpb" placeholder="كمية/علبة" min="1"
+            class="w-24 border rounded-xl px-2.5 py-1.5 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-300 bg-white"/>
+          <button type="button" onclick="awAddItem()"
+            class="bg-blue-700 hover:bg-blue-800 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-sm">+ إضافة بوكس</button>
         </div>
       </div>
 
@@ -856,6 +889,115 @@ function filterWarehouseTable() {
 }
 
 // ── Add Warehouse Item Modal & Live Search ────────────────────────────────────
+let awVariantItems = [];
+
+async function generateWarehouseBarcode() {
+  try {
+    const res = await fetch(`${BASE}/api/products/generate-barcode`);
+    const data = await res.json();
+    if (data.barcode) {
+      document.getElementById('aw-barcode').value = data.barcode;
+    }
+  } catch (err) {
+    alert('تعذر توليد الباركود: ' + err.message);
+  }
+}
+
+async function loadWarehouseCategories() {
+  try {
+    const res = await fetch(`${BASE}/api/products/categories`);
+    const cats = await res.json();
+    const sel = document.getElementById('aw-category-select');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">اختر تصنيف موجود...</option>' + 
+      (cats || []).map(c => `<option value="${c}">${c}</option>`).join('');
+  } catch(_) {}
+}
+
+function awAddItem() {
+  const labelEl = document.getElementById('aw-item-label');
+  const boxesEl = document.getElementById('aw-item-boxes');
+  const qpbEl   = document.getElementById('aw-item-qpb');
+  const label = labelEl.value.trim();
+  const boxes = parseInt(boxesEl.value) || 0;
+  const qpb   = parseInt(qpbEl.value)   || 0;
+  if (!label || boxes <= 0 || qpb <= 0) {
+    if (!label) labelEl.focus();
+    else if (boxes <= 0) boxesEl.focus();
+    else qpbEl.focus();
+    return;
+  }
+  awVariantItems.push({ label, boxes, qty_per_box: qpb, qty: boxes * qpb });
+  labelEl.value = '';
+  boxesEl.value = '';
+  qpbEl.value   = '';
+  awRenderItems();
+  awUpdateTotalQty();
+  labelEl.focus();
+}
+
+function awRemoveItem(i) {
+  awVariantItems.splice(i, 1);
+  awRenderItems();
+  awUpdateTotalQty();
+}
+
+function awUpdateItemBoxes(i, val) {
+  awVariantItems[i].boxes = parseInt(val) || 0;
+  awVariantItems[i].qty   = awVariantItems[i].boxes * awVariantItems[i].qty_per_box;
+  const el = document.getElementById(`aw-item-total-${i}`);
+  if (el) el.textContent = awVariantItems[i].qty;
+  awUpdateTotalQty();
+}
+
+function awUpdateItemQpb(i, val) {
+  awVariantItems[i].qty_per_box = parseInt(val) || 0;
+  awVariantItems[i].qty         = awVariantItems[i].boxes * awVariantItems[i].qty_per_box;
+  const el = document.getElementById(`aw-item-total-${i}`);
+  if (el) el.textContent = awVariantItems[i].qty;
+  awUpdateTotalQty();
+}
+
+function awRenderItems() {
+  const container = document.getElementById('awItemsTable');
+  const noMsg     = document.getElementById('awNoItemsMsg');
+  if (!container) return;
+  if (awVariantItems.length === 0) {
+    container.innerHTML = '';
+    noMsg && noMsg.classList.remove('hidden');
+    return;
+  }
+  noMsg && noMsg.classList.add('hidden');
+  container.innerHTML = awVariantItems.map((s, i) =>
+    `<div class="flex items-center gap-2 bg-white rounded-xl border px-3 py-2 shadow-sm text-xs">
+      <span class="font-bold text-gray-800 flex-1 min-w-0 truncate bg-blue-50 rounded-lg px-2 py-1 text-center">${s.label}</span>
+      <input type="number" min="1" value="${s.boxes}"
+        oninput="awUpdateItemBoxes(${i}, this.value)"
+        class="w-16 border rounded-lg px-2 py-1 text-center font-bold focus:outline-none focus:ring-2 focus:ring-blue-200"
+        title="عدد البوكسات"/>
+      <span class="text-gray-400 font-bold flex-shrink-0">×</span>
+      <input type="number" min="1" value="${s.qty_per_box}"
+        oninput="awUpdateItemQpb(${i}, this.value)"
+        class="w-16 border rounded-lg px-2 py-1 text-center font-bold focus:outline-none focus:ring-2 focus:ring-blue-200"
+        title="الكمية في كل بوكس"/>
+      <span class="text-gray-400 font-bold flex-shrink-0">=</span>
+      <span id="aw-item-total-${i}" class="w-10 text-center font-black text-blue-700 flex-shrink-0">${s.qty}</span>
+      <button type="button" onclick="awRemoveItem(${i})"
+        class="text-red-400 hover:text-red-600 font-bold px-1.5 py-1 text-xs rounded hover:bg-red-50">✕</button>
+    </div>`
+  ).join('');
+}
+
+function awUpdateTotalQty() {
+  const total = awVariantItems.reduce((acc, s) => acc + s.qty, 0);
+  const preview = document.getElementById('awTotalQtyPreview');
+  if (preview) preview.textContent = total;
+  if (awVariantItems.length > 0) {
+    const qtyInput = document.getElementById('aw-qty');
+    if (qtyInput) qtyInput.value = total;
+  }
+}
+
 function openAddWarehouseModal() {
   document.getElementById('addWhModal').classList.remove('hidden');
   switchAddMode('shop');
@@ -863,6 +1005,8 @@ function openAddWarehouseModal() {
   document.getElementById('aw-name').value = '';
   document.getElementById('aw-barcode').value = '';
   document.getElementById('aw-category').value = '';
+  const selCat = document.getElementById('aw-category-select');
+  if (selCat) selCat.value = '';
   document.getElementById('aw-cost').value = '0.00';
   document.getElementById('aw-price').value = '0.00';
   document.getElementById('aw-qty').value = '1';
@@ -870,6 +1014,11 @@ function openAddWarehouseModal() {
   document.getElementById('aw-expiry').value = '';
   document.getElementById('aw-notes').value = '';
   document.getElementById('aw-error').classList.add('hidden');
+  
+  awVariantItems = [];
+  awRenderItems();
+  awUpdateTotalQty();
+  loadWarehouseCategories();
 }
 
 function openAddBatchModal(itemId) {
@@ -1247,6 +1396,7 @@ async function submitAddWarehouseItem(e) {
         cost_price: parseFloat(cost || 0),
         sale_price: parseFloat(price || 0),
         quantity: qty,
+        variants_json: awVariantItems.length > 0 ? JSON.stringify({ items: awVariantItems }) : null,
         checkbox_values_json: checkboxValuesJson,
         description: desc,
         expiry_date: expiry || null,
