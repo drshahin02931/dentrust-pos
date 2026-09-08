@@ -138,12 +138,7 @@
       <div>
         <h2 id="detailName" class="text-xl font-black text-gray-800"></h2>
         <p id="detailPhone" class="text-sm text-gray-500 mt-0.5"></p>
-        <div class="flex items-center gap-2 mt-1.5 flex-wrap">
-          <p id="detailAddress" class="text-xs text-gray-500 font-medium"></p>
-          <button onclick="switchTab('clinics')" class="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-2.5 py-1 rounded-lg border border-blue-200 transition-all flex items-center gap-1 shadow-2xs cursor-pointer" title="عرض وتعديل كافة عيادات وفروع الطبيب">
-            🏥 <span id="detailClinicsHeaderBadge">إدارة العيادات (0)</span> ➕
-          </button>
-        </div>
+        <p id="detailAddress" class="text-xs text-gray-500 font-medium mt-0.5"></p>
         <div class="flex items-center gap-2 mt-2 flex-wrap">
           <span id="detailDebtBadge" class="text-sm font-bold px-3 py-1 rounded-full"></span>
           <span id="detailPointsBadge" class="text-sm font-bold px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300">⭐ 0 نقطة</span>
@@ -195,9 +190,6 @@
       </button>
       <button onclick="openManualDebtModal()" class="flex items-center gap-2 bg-orange-50 hover:bg-orange-100 text-orange-700 text-sm font-semibold px-4 py-2 rounded-xl">
         💰 إضافة سلفة/دين
-      </button>
-      <button onclick="switchTab('clinics')" class="flex items-center gap-1.5 bg-cyan-700 hover:bg-cyan-800 text-white text-sm font-bold px-4 py-2 rounded-xl shadow-sm transition-all cursor-pointer" title="إدارة وإضافة عيادات وفروع الطبيب">
-        🏥 العيادات (<span id="detailClinicsCount">0</span>)
       </button>
       <button onclick="openEditCustomerModal()" class="flex items-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm font-semibold px-4 py-2 rounded-xl">
         ✏️ تعديل البيانات
@@ -882,10 +874,6 @@ async function openDetail(cid) {
 
   let addrs = [];
   try { addrs = typeof c.addresses === 'string' ? JSON.parse(c.addresses) : (c.addresses || []); } catch(_) { addrs = []; }
-  const countEl = document.getElementById("detailClinicsCount");
-  if (countEl) countEl.textContent = addrs.length;
-  const headerBadge = document.getElementById("detailClinicsHeaderBadge");
-  if (headerBadge) headerBadge.textContent = addrs.length > 0 ? `${addrs.length} عيادة مسجلة` : 'إضافة عيادة';
   const tabClinicsBtn = document.getElementById("tabClinics");
   if (tabClinicsBtn) tabClinicsBtn.textContent = `🏥 العيادات والعناوين (${addrs.length})`;
   
