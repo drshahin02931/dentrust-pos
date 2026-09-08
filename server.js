@@ -3535,7 +3535,7 @@ app.get(`${BASE}/api/expenses`, async (req, res) => {
   try {
     const period = req.query.period || 'all';
     const pf = periodFilter(period, 'date');
-    const { rows } = await posDb.query(`SELECT * FROM expenses WHERE ${pf} ORDER BY date DESC`);
+    const { rows } = await posDb.query(`SELECT * FROM expenses WHERE ${pf} AND (title NOT LIKE 'مردود #%' OR title IS NULL) ORDER BY date DESC`);
     res.json(rows);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
@@ -3717,7 +3717,7 @@ app.get(`${BASE}/api/reports/hourly`, async (req, res) => {
 
 app.get(`${BASE}/api/stats`, async (req, res) => {
   try {
-    const [inv, fin, exp] = await Promise.all([
+    const [inv, fin, exp, retData] = await Promise.all([
       posDb.query(`SELECT COUNT(*) as total_products,
                           COALESCE(SUM(CASE WHEN quantity <= min_stock AND min_stock > 0 THEN 1 ELSE 0 END), 0) as low_stock
                    FROM products`),
@@ -3729,22 +3729,45 @@ app.get(`${BASE}/api/stats`, async (req, res) => {
                    FROM sales s
                    LEFT JOIN sale_items si ON si.sale_id = s.id
                    WHERE s.payment_method != 'refund'`),
-      posDb.query(`SELECT COALESCE(SUM(amount),0) as total_expenses FROM expenses`),
+      posDb.query(`SELECT COALESCE(SUM(amount),0) as total_expenses FROM expenses WHERE (title NOT LIKE 'مردود #%' OR title IS NULL)`),
+      posDb.query(`SELECT
+                     COALESCE(SUM(r.total_refund),0) as total_refunds,
+                     COALESCE(SUM(CASE WHEN COALESCE(s.source,'pos')='pos' THEN r.total_refund ELSE 0 END),0) as pos_refunds,
+                     COALESCE(SUM(CASE WHEN s.source='online' THEN r.total_refund ELSE 0 END),0) as online_refunds,
+                     COALESCE((
+                       SELECT SUM(ri.quantity * COALESCE(si2.snapshot_purchase_price,0))
+                       FROM return_items ri
+                       JOIN sale_items si2 ON si2.id = ri.sale_item_id
+                     ),0) as returned_cost
+                   FROM returns r
+                   JOIN sales s ON s.id = r.sale_id`),
     ]);
-    const revenue = parseFloat(fin.rows[0].revenue);
-    const cost    = parseFloat(fin.rows[0].cost);
+    const origRevenue = parseFloat(fin.rows[0].revenue);
+    const origCost    = parseFloat(fin.rows[0].cost);
     const expenses = parseFloat(exp.rows[0].total_expenses);
-    const posRevenue = parseFloat(fin.rows[0].pos_revenue || fin.rows[0].revenue);
-    const onlineRevenue = parseFloat(fin.rows[0].online_revenue || 0);
+    const origPosRevenue = parseFloat(fin.rows[0].pos_revenue || fin.rows[0].revenue);
+    const origOnlineRevenue = parseFloat(fin.rows[0].online_revenue || 0);
+
+    const totalRefunds = parseFloat(retData.rows[0].total_refunds || 0);
+    const posRefunds = parseFloat(retData.rows[0].pos_refunds || 0);
+    const onlineRefunds = parseFloat(retData.rows[0].online_refunds || 0);
+    const returnedCost = parseFloat(retData.rows[0].returned_cost || 0);
+
+    const posRevenue = Math.max(0, origPosRevenue - posRefunds);
+    const onlineRevenue = Math.max(0, origOnlineRevenue - onlineRefunds);
+    const totalRevenue = Math.max(0, origRevenue - totalRefunds);
+    const netCost = Math.max(0, origCost - returnedCost);
+    const netProfit = totalRevenue - netCost - expenses;
+
     res.json({
       total_products: parseInt(inv.rows[0].total_products, 10),
       low_stock:      parseInt(inv.rows[0].low_stock, 10),
       posRevenue,
       onlineRevenue,
-      totalRevenue: posRevenue + onlineRevenue,
-      posCost:     cost,
+      totalRevenue,
+      posCost:     netCost,
       posExpenses: expenses,
-      posNetProfit: revenue - cost - expenses,
+      posNetProfit: netProfit,
     });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
@@ -3761,7 +3784,17 @@ app.get(`${BASE}/api/invoices`, async (req, res) => {
        FROM sales s
        LEFT JOIN customers c ON s.customer_id = c.id
        LEFT JOIN (SELECT sale_id, SUM(total_refund) AS total_refunded, COUNT(*) AS return_count FROM returns GROUP BY sale_id) ret ON ret.sale_id = s.id
-       LEFT JOIN (SELECT sale_id, SUM((unit_price - COALESCE(snapshot_purchase_price,0)) * quantity) AS profit FROM sale_items GROUP BY sale_id) prof ON prof.sale_id = s.id
+       LEFT JOIN (
+         SELECT si.sale_id,
+                SUM((si.unit_price - COALESCE(si.snapshot_purchase_price,0)) * GREATEST(0, si.quantity - COALESCE(ri.ret_qty, 0))) AS profit
+         FROM sale_items si
+         LEFT JOIN (
+           SELECT sale_item_id, SUM(quantity) AS ret_qty
+           FROM return_items
+           GROUP BY sale_item_id
+         ) ri ON ri.sale_item_id = si.id
+         GROUP BY si.sale_id
+       ) prof ON prof.sale_id = s.id
        ORDER BY s.date DESC`
     );
     const result = rows.map(r => {
@@ -3811,7 +3844,7 @@ app.get(`${BASE}/api/invoices/:sid`, async (req, res) => {
     const totalSold = items.reduce((s, i) => s + i.quantity, 0);
     const returnStatus = (totalRemaining === 0 && totalSold > 0) ? 2 : (totalRemaining < totalSold ? 1 : 0);
     inv.return_status = returnStatus;
-    inv.profit = items.reduce((s, i) => s + (parseFloat(i.unit_price||0) - parseFloat(i.snapshot_purchase_price||0)) * parseInt(i.quantity||0, 10), 0);
+    inv.profit = items.reduce((s, i) => s + (parseFloat(i.unit_price||0) - parseFloat(i.snapshot_purchase_price||0)) * parseInt(i.remaining_qty != null ? i.remaining_qty : (i.quantity || 0), 10), 0);
 
     // Auto-detect delivery fee if missing on online orders
     const itemsTotal = items.reduce((s, i) => s + (parseFloat(i.unit_price || 0) * parseInt(i.remaining_qty != null ? i.remaining_qty : (i.quantity || 0))), 0);
@@ -4031,10 +4064,8 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
     if (sale.customer_id && ['credit','split'].includes(sale.payment_method || '')) {
       await client.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [totalRefund, sale.customer_id]);
     }
-    try {
-      await client.query('INSERT INTO expenses (title, amount, date) VALUES ($1,$2,CURRENT_DATE::text)',
-        [`مردود #${returnId} فاتورة #${sid}${reason ? ` (${reason})` : ''}`, totalRefund]);
-    } catch (_) {}
+    // Note: Returns are recorded in returns and return_items and are deducted from revenue / profit formulas.
+    // They are NOT operating expenses and must NOT be added to expenses table.
     await client.query('COMMIT');
     syncProductsNow(validated.filter(v => v.item.product_id).map(v => v.item.product_id)).catch(() => {});
     res.status(201).json({ ok: true, refund_amount: totalRefund });
