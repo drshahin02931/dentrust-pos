@@ -3612,8 +3612,7 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
              FROM return_items ri
              JOIN sale_items si2 ON si2.id = ri.sale_item_id
              JOIN returns r2 ON r2.id = ri.return_id
-             JOIN sales s2 ON s2.id = r2.sale_id
-             WHERE ${df.replace(/s\./g, 's2.')}
+             WHERE ${rf.replace(/r\./g, 'r2.')}
            ), 0) as c
        FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE ${df}`
     );
