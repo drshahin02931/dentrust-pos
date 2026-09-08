@@ -3653,6 +3653,21 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
     for (const row of splitRows) {
       try { const sp = JSON.parse(row.payment_split || '{}'); cashRev += parseFloat(sp.cash || 0); instaRev += parseFloat(sp.instapay || 0); } catch (_) {}
     }
+
+    // Deduct returns from cash & instapay according to original payment method
+    const { rows: returnPayRows } = await posDb.query(
+      `SELECT s.payment_method, SUM(r.total_refund) as total
+       FROM returns r
+       JOIN sales s ON s.id = r.sale_id
+       WHERE ${rf}
+       GROUP BY s.payment_method`
+    );
+    for (const rRow of returnPayRows) {
+      const m = rRow.payment_method || '';
+      const t = parseFloat(rRow.total || 0);
+      if (m === 'cash' || m === 'naqdi') cashRev = Math.max(0, cashRev - t);
+      if (m === 'instapay') instaRev = Math.max(0, instaRev - t);
+    }
     res.json({
       revenue: r2(rev), refunds: r2(refunds), net_revenue: r2(netRev),
       cost: r2(cost), gross_profit: r2(gross), expenses: r2(exp), extra_profit: r2(extraProfit), net_profit: r2(netProfit),
