@@ -268,6 +268,28 @@
             placeholder="وصف المنتج (اختياري)..."></textarea>
         </div>
 
+        <!-- Product Image Upload Card -->
+        <div class="col-span-2 bg-gradient-to-br from-blue-50/50 to-indigo-50/40 border-2 border-dashed border-blue-200 hover:border-blue-400 rounded-2xl p-4 transition-all text-center">
+          <label class="block text-xs font-bold text-gray-700 mb-2">📸 صورة المنتج (معالجة WebP سريعة ورفع سحابي تلقائي للموقع)</label>
+          
+          <div id="imagePreviewContainer" class="hidden mb-3">
+            <div class="relative inline-block">
+              <img id="imagePreview" src="" alt="معاينة الصورة" class="w-32 h-32 object-cover rounded-xl border-2 border-blue-300 shadow-md mx-auto"/>
+              <button type="button" onclick="clearSelectedImage()" class="absolute -top-2 -right-2 bg-red-600 hover:bg-red-700 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-black shadow transition-transform hover:scale-110 cursor-pointer" title="إزالة الصورة">✕</button>
+            </div>
+            <p id="imageStatusText" class="text-[11px] text-emerald-700 font-bold mt-1.5">✓ تم اختيار الصورة — سيتم ضغطها ورفعها تلقائياً عند الحفظ</p>
+          </div>
+
+          <div id="imageUploadDropzone" class="cursor-pointer py-3" onclick="document.getElementById('f-image-file').click()">
+            <div class="text-3xl mb-1">📸</div>
+            <div class="text-xs text-gray-700 font-semibold">اضغط لاختيار صورة للمنتج من جهازك أو اسحبها هنا</div>
+            <div class="text-[10px] text-gray-400 mt-1">تدعم كافة الصيغ (PNG, JPG, WebP) وتتحول WebP خفيفة وفائقة السرعة</div>
+          </div>
+
+          <input type="file" id="f-image-file" accept="image/png,image/jpeg,image/webp,image/jpg" class="hidden" onchange="handleImageFileSelect(this)"/>
+          <input type="hidden" id="f-image-base64" value=""/>
+        </div>
+
         <!-- Section Selector -->
         <div class="col-span-2">
           <label class="text-xs font-medium text-gray-600 block mb-2">القسم على موقع DenTrust</label>
@@ -750,6 +772,39 @@ function setSection(val, gender) {
   if (gRadio) { gRadio.checked = true; onGenderChange(); }
 }
 
+function handleImageFileSelect(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) {
+    alert('حجم الصورة كبير، يرجى اختيار صورة أقل من 8 ميجابايت');
+    input.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const b64 = e.target.result;
+    document.getElementById('f-image-base64').value = b64;
+    document.getElementById('imagePreview').src = b64;
+    document.getElementById('imagePreviewContainer').classList.remove('hidden');
+    document.getElementById('imageUploadDropzone').classList.add('hidden');
+    document.getElementById('imageStatusText').textContent = '✓ صورة جديدة جاهزة للرفع والمعالجة السحابية عند الحفظ';
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearSelectedImage() {
+  const fileInput = document.getElementById('f-image-file');
+  if (fileInput) fileInput.value = '';
+  const b64Input = document.getElementById('f-image-base64');
+  if (b64Input) b64Input.value = '';
+  const prevImg = document.getElementById('imagePreview');
+  if (prevImg) prevImg.src = '';
+  const prevContainer = document.getElementById('imagePreviewContainer');
+  if (prevContainer) prevContainer.classList.add('hidden');
+  const dropzone = document.getElementById('imageUploadDropzone');
+  if (dropzone) dropzone.classList.remove('hidden');
+}
+
 function openModal() {
   document.getElementById("modalTitle").textContent = "إضافة منتج جديد";
   document.getElementById("editId").value = "";
@@ -757,6 +812,7 @@ function openModal() {
   document.getElementById("modalError").classList.add("hidden");
   document.getElementById("whQuickSection").classList.add("hidden");
   document.getElementById("f-is-hidden-website").checked = false;
+  clearSelectedImage();
   resetPhotos();
   resetVariants();
   cbReset();
@@ -788,6 +844,16 @@ function editProduct(id) {
   document.getElementById("f-description").value = p.description || "";
   document.getElementById("f-is-hidden-website").checked = p.is_hidden_from_website === true || p.is_hidden_from_website === 'true' || p.is_hidden_from_website === 1 || p.is_hidden === true || p.hidden === true;
   document.getElementById("modalError").classList.add("hidden");
+
+  // عرض صورة المنتج الحالية إن وجدت
+  clearSelectedImage();
+  const currentImg = p.image_url || (p.has_image ? `${BASE}/api/products/${p.id}/image` : '');
+  if (currentImg) {
+    document.getElementById('imagePreview').src = currentImg;
+    document.getElementById('imagePreviewContainer').classList.remove('hidden');
+    document.getElementById('imageUploadDropzone').classList.add('hidden');
+    document.getElementById('imageStatusText').textContent = 'الصورة الحالية للمنتج على الموقع';
+  }
 
   // Load Warehouse Quick Info & Cost Batches
   const whSec = document.getElementById("whQuickSection");
@@ -1087,6 +1153,10 @@ async function saveProduct(e) {
       checkbox_values: cbGetValues(),
       is_hidden_from_website: document.getElementById("f-is-hidden-website").checked,
     };
+    const imgBase64 = document.getElementById("f-image-base64")?.value;
+    if (imgBase64) {
+      body.image_url = imgBase64;
+    }
     const url = id ? `${BASE}/api/products/${id}` : `${BASE}/api/products`;
     const method = id ? "PUT" : "POST";
     const res = await fetch(url, { method, headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });

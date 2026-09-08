@@ -170,7 +170,11 @@
           <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
           <path d="M12 0C5.373 0 0 5.373 0 12c0 2.126.553 4.122 1.516 5.853L0 24l6.335-1.493C8.053 23.456 9.988 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818c-1.881 0-3.638-.507-5.148-1.389l-.369-.219-3.762.887.945-3.653-.242-.375A9.796 9.796 0 012.182 12C2.182 6.578 6.578 2.182 12 2.182S21.818 6.578 21.818 12 17.422 21.818 12 21.818z"/>
         </svg>
-        واتساب للعميل
+        واتساب الطبيب
+      </button>
+      <button id="detailAdminWaBtn" onclick="shareDetailAdminWhatsApp()"
+        class="flex-1 flex items-center justify-center gap-1.5 bg-blue-700 hover:bg-blue-800 text-white font-bold py-2.5 rounded-xl text-sm shadow-sm">
+        <span>📲</span> إرسال التفاصيل للمخزن
       </button>
     </div>
   </div>
@@ -528,8 +532,29 @@ function openDetailWhatsApp() {
     ? phone.slice(1)
     : (phone.startsWith('0') && phone.length === 11 ? '20' + phone.slice(1) : phone);
   if (_detailWaLink) { window.open(_detailWaLink, '_blank'); return; }
-  if (intl) window.open(`https://wa.me/${intl}`, '_blank');
+  const o = _detailOrder;
+  const name = o.customer_name || 'دكتور';
+  const orderNum = o.dentrust_order_id || o.id || '';
+  const total = parseFloat(o.total_amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 });
+  const text = `أهلاً بك د. ${name} 👋\nتم استلام ومراجعة طلبك رقم (#${orderNum}) من متجر DenTrust بقيمة ${total} ج.م وجارٍ تجهيزه للتوصيل للعيادة 🌸`;
+  if (intl) window.open(`https://api.whatsapp.com/send?phone=${intl}&text=${encodeURIComponent(text)}`, '_blank');
   else alert('لا يوجد رقم هاتف للعميل');
+}
+
+function shareDetailAdminWhatsApp() {
+  if (!_detailOrder) return;
+  const o = _detailOrder;
+  const orderNum = o.dentrust_order_id || o.id || '';
+  const name = o.customer_name || 'دكتور';
+  const phone = o.customer_phone || '—';
+  const addr = [o.customer_city, o.customer_address].filter(Boolean).join(' - ') || '—';
+  const total = parseFloat(o.total_amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 });
+  const itemsStr = o.items_summary || '—';
+  const notesStr = o.notes ? `\n📝 ملاحظات الطبيب: "${o.notes}"` : '';
+
+  const text = `🛒 *تفاصيل طلب DenTrust (#${orderNum})*\n━━━━━━━━━━━━━━━━━━━━\n👨‍⚕️ الطبيب: ${name}\n📞 الهاتف: ${phone}\n🏥 العنوان: ${addr}\n💵 الإجمالي: ${total} ج.م\n━━━━━━━━━━━━━━━━━━━━\n📦 تفاصيل الأصناف:\n${itemsStr}${notesStr}\n\n⏰ يرجى التجهيز والتسليم للمندوب.`;
+
+  window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
 }
 
 function printOrderDetail() {

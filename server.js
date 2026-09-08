@@ -15,6 +15,8 @@ const bwip = require('bwip-js');
 const webpush = require('web-push');
 const { posDb, dentrustDb, sessionDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
 const { EGYPT_GOVERNORATES, normalizeArabicText, parseEgyptianAddress, normalizeEgyptianAddresses } = require('./address-parser');
+const { processAndUploadProductImage } = require('./image-uploader');
+const { notifyNewOrder, formatAdminOrderMessage, formatDoctorConfirmationMessage, sendViaGateway, ADMIN_PHONES } = require('./whatsapp-service');
 
 const BASE = (process.env.BASE_PATH || '').replace(/\/$/, '');
 const PORT = parseInt(process.env.PORT || '5000', 10);
@@ -118,6 +120,7 @@ const OPEN_API = [
   '/api/loyalty-rewards',
   '/api/promo/validate',
   '/api/website-registrations/count',
+  '/api/cart/validate-stock',
 ];
 
 function authGuard(req, res, next) {
@@ -222,6 +225,78 @@ app.get([`${BASE}/invoices`, '/invoices'], (req, res) => {
 app.get(`${BASE}/settings`, (req, res) => {
   if (!isMgr(req)) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'settings');
+});
+app.get([`${BASE}/whatsapp-settings`, `${BASE}/admin/whatsapp-settings`], (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'whatsapp_settings');
+});
+
+// ── WhatsApp Settings Routes ────────────────────────────────────────────────
+app.get(`${BASE}/api/settings/whatsapp-templates`, async (req, res) => {
+  try {
+    const { rows: [r] } = await posDb.query("SELECT value FROM settings WHERE key='whatsapp_templates' LIMIT 1").catch(() => ({ rows: [] }));
+    const templates = r?.value ? (typeof r.value === 'string' ? JSON.parse(r.value) : r.value) : {};
+    res.json(templates);
+  } catch (err) { res.json({}); }
+});
+
+app.post(`${BASE}/api/settings/whatsapp-templates`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    const val = JSON.stringify(req.body);
+    await posDb.query(
+      `INSERT INTO settings (key, value) VALUES ('whatsapp_templates', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [val]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.get(`${BASE}/api/settings/whatsapp-config`, async (req, res) => {
+  try {
+    const { rows: [r] } = await posDb.query("SELECT value FROM settings WHERE key='whatsapp_config' LIMIT 1").catch(() => ({ rows: [] }));
+    const config = r?.value ? (typeof r.value === 'string' ? JSON.parse(r.value) : r.value) : {};
+    res.json({
+      instance_id: config.instance_id || process.env.WHATSAPP_INSTANCE_ID || '',
+      token: config.token ? '••••••••' : (process.env.WHATSAPP_TOKEN ? '••••••••' : ''),
+      admin_phones: ADMIN_PHONES
+    });
+  } catch (err) { res.json({ admin_phones: ADMIN_PHONES }); }
+});
+
+app.post(`${BASE}/api/settings/whatsapp-config`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    const { instance_id, token } = req.body;
+    const { rows: [existing] } = await posDb.query("SELECT value FROM settings WHERE key='whatsapp_config' LIMIT 1").catch(() => ({ rows: [] }));
+    let cur = existing?.value ? (typeof existing.value === 'string' ? JSON.parse(existing.value) : existing.value) : {};
+    if (instance_id) cur.instance_id = instance_id.trim();
+    if (token && !token.includes('••••')) cur.token = token.trim();
+    
+    await posDb.query(
+      `INSERT INTO settings (key, value) VALUES ('whatsapp_config', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [JSON.stringify(cur)]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+app.post(`${BASE}/api/settings/whatsapp-test`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    const testMsg = `🌸 تجربة إرسال ناجحة من سيستم DenTrust!\nرسائل تنبيهات الأوردرات تعمل بكفاءة على الأرقام الـ 5.`;
+    const targetPhone = req.body.phone || ADMIN_PHONES[0];
+    
+    const { rows: [setting] } = await posDb.query("SELECT value FROM settings WHERE key='whatsapp_config' LIMIT 1").catch(() => ({ rows: [] }));
+    const cfg = setting?.value ? (typeof setting.value === 'string' ? JSON.parse(setting.value) : setting.value) : {};
+    
+    const result = await sendViaGateway(targetPhone, testMsg, cfg);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 app.get(`${BASE}/barcodes`, (req, res) => {
   if (!hasPerm(req, 'inventory')) return res.redirect(`${BASE}/`);
@@ -950,6 +1025,11 @@ app.post(`${BASE}/api/products`, async (req, res) => {
       posDb.query('UPDATE public.products SET photos=$1 WHERE id=$2',
         [d.photos.slice(0, 5), ins.id]).catch(() => {});
     }
+    // معالجة وضغط الصورة ورفعها تلقائياً بالـ FTP لـ Hostinger
+    if (mainPhoto) {
+      processAndUploadProductImage(ins.id, mainPhoto, posDb, dentrustDb)
+        .catch(err => console.error('[AutoUpload Product Image error]:', err.message));
+    }
     // بيرفع صورة المنتج الجديد (لو موجودة) وبينشئه على الموقع تلقائيًا
     if (HAS_WEBSITE_DB) {
       syncNewProductToDentrust(ins.id, { ...d, image_url: mainPhoto, purchase_price: pPrice, sale_price: sPrice, is_hidden_from_website: isHidden, section: effectiveSec, orig_section: origSec })
@@ -960,6 +1040,30 @@ app.post(`${BASE}/api/products`, async (req, res) => {
     console.error('[POST /api/products]', err.message, err.stack);
     if (err.code === '23505') return res.status(400).json({ error: 'الباركود مسجل مسبقاً' });
     res.status(500).json({ error: 'خطأ داخلي' });
+  }
+});
+
+// رفع وتحديث صورة صنف ومعالجتها WebP ورفعها لـ Hostinger تلقائياً
+app.post(`${BASE}/api/products/:pid/upload-image`, upload.single('image'), async (req, res) => {
+  const pid = parseInt(req.params.pid, 10);
+  if (isNaN(pid)) return res.status(400).json({ error: 'معرف المنتج غير صحيح' });
+  try {
+    let input = null;
+    if (req.file && req.file.buffer) {
+      input = req.file.buffer;
+    } else if (req.body.image_url) {
+      input = req.body.image_url;
+    } else {
+      return res.status(400).json({ error: 'لم يتم إرسال أي ملف صورة' });
+    }
+
+    const publicUrl = await processAndUploadProductImage(pid, input, posDb, dentrustDb);
+    if (!publicUrl) return res.status(500).json({ error: 'فشل معالجة أو رفع الصورة' });
+
+    res.json({ ok: true, url: publicUrl });
+  } catch (err) {
+    console.error('[POST /api/products/:pid/upload-image error]:', err.message);
+    res.status(500).json({ error: 'خطأ أثناء رفع الصورة: ' + err.message });
   }
 });
 
@@ -1139,6 +1243,11 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
       await syncUpdateProductToDentrust(pid, d);
     } catch (syncErr) {
       console.error('[SYNC ERROR] syncUpdateProductToDentrust failed for pid', pid, ':', syncErr.message);
+    }
+
+    if (d.image_url) {
+      processAndUploadProductImage(pid, d.image_url, posDb, dentrustDb)
+        .catch(err => console.error('[AutoUpload Product Image error]:', err.message));
     }
 
     res.json({ ok: true, is_hidden_from_website: isHidden });
@@ -5266,6 +5375,50 @@ async function ensureOrderItemsSaved(dentrustOrderId, items) {
   }
 }
 
+// ── فحص المخزون اللحظي السريع قبل إتمام الدفع بالموقع ──────────────────────────
+app.post(`${BASE}/api/cart/validate-stock`, async (req, res) => {
+  const items = req.body.items || [];
+  if (!items.length) return res.json({ ok: true, available: true });
+  try {
+    const unavailable = [];
+    for (const item of items) {
+      const pid = item.product_id || item.productId || item.id;
+      let prod = null;
+      if (pid) {
+        const { rows: [p] } = await posDb.query('SELECT id, product_name, quantity, checkbox_values FROM products WHERE id=$1', [pid]);
+        prod = p;
+      } else if (item.product_name || item.name) {
+        const { rows: [p] } = await posDb.query('SELECT id, product_name, quantity, checkbox_values FROM products WHERE LOWER(product_name)=LOWER($1) LIMIT 1', [item.product_name || item.name]);
+        prod = p;
+      }
+      if (!prod) continue;
+      const reqQty = parseInt(item.quantity || 1, 10);
+      const selOpt = item.selected_option || item.selectedOption;
+      if (selOpt && prod.checkbox_values) {
+        try {
+          const cbv = typeof prod.checkbox_values === 'string' ? JSON.parse(prod.checkbox_values) : prod.checkbox_values;
+          let optStock = null;
+          if (cbv[selOpt] && cbv[selOpt].stock != null) optStock = parseInt(cbv[selOpt].stock || 0, 10);
+          if (optStock !== null && optStock < reqQty) {
+            unavailable.push({ id: prod.id, name: `${prod.product_name} (${selOpt})`, requested: reqQty, available: Math.max(0, optStock) });
+            continue;
+          }
+        } catch (_) {}
+      }
+      if (prod.quantity < reqQty) {
+        unavailable.push({ id: prod.id, name: prod.product_name, requested: reqQty, available: Math.max(0, prod.quantity) });
+      }
+    }
+    if (unavailable.length > 0) {
+      return res.json({ ok: false, available: false, unavailable });
+    }
+    res.json({ ok: true, available: true });
+  } catch (err) {
+    console.error('[validate-stock error]:', err.message);
+    res.json({ ok: true, available: true });
+  }
+});
+
 app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
   const d = req.body;
   try {
@@ -5301,6 +5454,9 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
       `${BASE}/website-orders`,
       'web-order'
     ).catch(() => {});
+
+    // 📲 Send detailed WhatsApp alert to all 5 admin numbers + doctor confirmation
+    notifyNewOrder(d, posDb).catch(waErr => console.error('[WhatsApp order notification error]:', waErr.message));
 
     const customerId = await upsertCustomerInPOS({
       name: d.customer_name,

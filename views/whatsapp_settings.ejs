@@ -14,6 +14,59 @@
     <code class="bg-blue-100 px-1 rounded">{reason}</code> سبب الإلغاء (حالة إلغاء فقط)
   </div>
 
+  <!-- Admin Phones & Gateway Configuration Card -->
+  <div class="bg-gradient-to-br from-emerald-50/70 to-teal-50/50 border border-emerald-200 rounded-2xl p-5 shadow-sm space-y-4">
+    <div class="flex items-center justify-between border-b border-emerald-200/70 pb-3">
+      <div class="flex items-center gap-2">
+        <span class="text-2xl">🔔</span>
+        <div>
+          <h2 class="text-base font-bold text-gray-800">أرقام الإدارة الـ 5 المعتمدة للتنبيهات الفورية</h2>
+          <p class="text-xs text-gray-500">تصلها رسالة واتساب تفصيلية فورية لكل طلب جديد يتم على الموقع</p>
+        </div>
+      </div>
+      <span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1 rounded-full border border-emerald-200">5 أرقام مفعلة ✅</span>
+    </div>
+
+    <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 text-center text-xs font-mono font-bold">
+      <div class="bg-white border border-emerald-200 rounded-xl py-2 px-1 text-emerald-900 shadow-sm">01157004081</div>
+      <div class="bg-white border border-emerald-200 rounded-xl py-2 px-1 text-emerald-900 shadow-sm">01123144277</div>
+      <div class="bg-white border border-emerald-200 rounded-xl py-2 px-1 text-emerald-900 shadow-sm">01123144288</div>
+      <div class="bg-white border border-emerald-200 rounded-xl py-2 px-1 text-emerald-900 shadow-sm">01014067776</div>
+      <div class="bg-white border border-emerald-200 rounded-xl py-2 px-1 text-emerald-900 shadow-sm">01011222763</div>
+    </div>
+
+    <!-- Gateway API Configuration -->
+    <div class="border-t border-emerald-200/70 pt-3 space-y-3">
+      <div class="text-xs font-bold text-gray-700 flex items-center justify-between">
+        <span>⚙️ إعدادات بوابة الإرسال التلقائي (UltraMsg / WhatsApp Gateway):</span>
+        <span class="text-[11px] text-gray-400 font-normal">ربط رقم الشركة عبر QR Code</span>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label class="block text-[11px] font-semibold text-gray-600 mb-1">Instance ID</label>
+          <input type="text" id="cfg-instance-id" placeholder="مثال: instance12345"
+            class="w-full border rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-300 bg-white"/>
+        </div>
+        <div>
+          <label class="block text-[11px] font-semibold text-gray-600 mb-1">API Token</label>
+          <input type="password" id="cfg-token" placeholder="رمز الأمان (Token)"
+            class="w-full border rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-300 bg-white"/>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button type="button" onclick="saveGatewayConfig()" id="saveCfgBtn"
+          class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-sm transition-all">
+          💾 حفظ إعدادات البوابة
+        </button>
+        <button type="button" onclick="sendTestWhatsApp()" id="testWaBtn"
+          class="bg-white hover:bg-gray-50 border border-emerald-300 text-emerald-800 font-bold px-4 py-2 rounded-xl text-xs shadow-sm transition-all">
+          🧪 إرسال رسالة تجريبية الآن
+        </button>
+      </div>
+      <div id="cfgFeedback" class="hidden text-xs font-bold rounded-lg px-3 py-2 text-center"></div>
+    </div>
+  </div>
+
   <div id="saveMsg" class="hidden rounded-xl px-4 py-3 text-sm font-semibold text-center"></div>
 
   <form id="templatesForm" class="space-y-5">
@@ -142,7 +195,78 @@ document.getElementById('templatesForm').addEventListener('submit', async e => {
   setTimeout(() => msg.classList.add('hidden'), 4000);
 });
 
+async function loadGatewayConfig() {
+  try {
+    const res = await fetch(`${BASE}/api/settings/whatsapp-config`);
+    const data = await res.json();
+    if (data.instance_id) document.getElementById('cfg-instance-id').value = data.instance_id;
+    if (data.token) document.getElementById('cfg-token').value = data.token;
+  } catch (_) {}
+}
+
+async function saveGatewayConfig() {
+  const instance_id = document.getElementById('cfg-instance-id').value.trim();
+  const token = document.getElementById('cfg-token').value.trim();
+  const btn = document.getElementById('saveCfgBtn');
+  const fb = document.getElementById('cfgFeedback');
+  btn.disabled = true; btn.textContent = '⏳ جاري الحفظ...';
+
+  try {
+    const res = await fetch(`${BASE}/api/settings/whatsapp-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instance_id, token })
+    });
+    const data = await res.json();
+    fb.classList.remove('hidden');
+    if (res.ok && data.ok) {
+      fb.className = 'text-xs font-bold rounded-lg px-3 py-2 text-center bg-emerald-100 text-emerald-800 border border-emerald-300';
+      fb.textContent = '✅ تم حفظ إعدادات بوابة الواتساب بنجاح!';
+    } else {
+      fb.className = 'text-xs font-bold rounded-lg px-3 py-2 text-center bg-red-100 text-red-800 border border-red-300';
+      fb.textContent = '❌ ' + (data.error || 'فشل الحفظ');
+    }
+  } catch (e) {
+    fb.className = 'text-xs font-bold rounded-lg px-3 py-2 text-center bg-red-100 text-red-800 border border-red-300';
+    fb.textContent = '❌ تعذر الاتصال بالسيرفر';
+    fb.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = '💾 حفظ إعدادات البوابة';
+    setTimeout(() => fb.classList.add('hidden'), 4000);
+  }
+}
+
+async function sendTestWhatsApp() {
+  const btn = document.getElementById('testWaBtn');
+  const fb = document.getElementById('cfgFeedback');
+  btn.disabled = true; btn.textContent = '⏳ جارٍ إرسال التجربة...';
+
+  try {
+    const res = await fetch(`${BASE}/api/settings/whatsapp-test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const data = await res.json();
+    fb.classList.remove('hidden');
+    if (data.ok) {
+      fb.className = 'text-xs font-bold rounded-lg px-3 py-2 text-center bg-emerald-100 text-emerald-800 border border-emerald-300';
+      fb.textContent = '✅ تم إرسال الرسالة التجريبية بنجاح! راجع رقم 01157004081 على واتساب';
+    } else {
+      fb.className = 'text-xs font-bold rounded-lg px-3 py-2 text-center bg-amber-100 text-amber-800 border border-amber-300';
+      fb.textContent = '⚠️ لم يتم الإرسال: تأكد من إدخال الـ Instance ID والـ Token الصحيحين للبوابة';
+    }
+  } catch (e) {
+    fb.className = 'text-xs font-bold rounded-lg px-3 py-2 text-center bg-red-100 text-red-800 border border-red-300';
+    fb.textContent = '❌ خطأ: ' + e.message;
+    fb.classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = '🧪 إرسال رسالة تجريبية الآن';
+  }
+}
+
 loadTemplates();
+loadGatewayConfig();
 </script>
 
 </main>
