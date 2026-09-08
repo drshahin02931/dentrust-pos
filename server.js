@@ -3604,24 +3604,34 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
       `SELECT COALESCE(SUM(s.total_amount - COALESCE(s.delivery_amount,0)),0) as r
        FROM sales s WHERE ${df}`
     );
-    const { rows: [sdC] } = await posDb.query(
-      `SELECT
-         COALESCE(SUM(si.quantity * COALESCE(si.snapshot_purchase_price,0)),0)
-         - COALESCE((
-             SELECT SUM(ri.quantity * COALESCE(si2.snapshot_purchase_price,0))
-             FROM return_items ri
-             JOIN sale_items si2 ON si2.id = ri.sale_item_id
-             JOIN returns r2 ON r2.id = ri.return_id
-             WHERE ${rf.replace(/r\./g, 'r2.')}
-           ), 0) as c
-       FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE ${df}`
+    // Sales profit = sum of (unit_price - cost_price) * quantity for sales in this period
+    const { rows: [spR] } = await posDb.query(
+      `SELECT COALESCE(SUM(
+         si.quantity * (si.unit_price - COALESCE(NULLIF(si.snapshot_purchase_price, 0), p.purchase_price, 0))
+       ), 0) as sales_profit
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       LEFT JOIN products p ON p.id = si.product_id
+       WHERE ${df}`
     );
-    const sd = { r: sdR.r, c: sdC.c };
-    const { rows: [et] } = await posDb.query(
-      `SELECT COALESCE(SUM(e.amount),0) as t FROM expenses e WHERE ${ef} AND e.title NOT LIKE 'مردود #%'`
-    );
+    // Return refunds in this period
     const { rows: [rt] } = await posDb.query(
       `SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r WHERE ${rf}`
+    );
+    // Return profit margin in this period = sum of (unit_price - cost_price) * quantity for returns in this period
+    const { rows: [rpR] } = await posDb.query(
+      `SELECT COALESCE(SUM(
+         ri.quantity * (ri.unit_price - COALESCE(NULLIF(si.snapshot_purchase_price, 0), p.purchase_price, 0))
+       ), 0) as return_profit
+       FROM return_items ri
+       JOIN returns r ON r.id = ri.return_id
+       LEFT JOIN sale_items si ON si.id = ri.sale_item_id
+       LEFT JOIN products p ON p.id = COALESCE(ri.product_id, si.product_id)
+       WHERE ${rf}`
+    );
+
+    const { rows: [et] } = await posDb.query(
+      `SELECT COALESCE(SUM(e.amount),0) as t FROM expenses e WHERE ${ef} AND (e.title NOT LIKE 'مردود #%' OR e.title IS NULL)`
     );
     const { rows: [sc] } = await posDb.query(`SELECT COUNT(*) as cnt FROM sales s WHERE ${df}`);
     const pf = period === 'today' ? `WHERE date::date = CURRENT_DATE`
@@ -3631,10 +3641,18 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
     const { rows: [epR] } = await posDb.query(
       `SELECT COALESCE(SUM(amount),0) as t FROM extra_profits ${pf}`
     );
-    const rev = parseFloat(sd.r || 0), cost = parseFloat(sd.c || 0), exp = parseFloat(et.t || 0), refunds = parseFloat(rt.t || 0);
-    const extraProfit = parseFloat(epR.t || 0);
+
+    const rev = parseFloat(sdR.r || 0);
+    const refunds = parseFloat(rt.t || 0);
     const netRev = Math.max(0, rev - refunds);
-    const gross = netRev - cost;
+
+    const salesProfit = parseFloat(spR.sales_profit || 0);
+    const returnProfit = parseFloat(rpR.return_profit || 0);
+    // Gross profit is ONLY reduced by the return's profit margin, NEVER by the full selling price!
+    const gross = Math.max(0, salesProfit - returnProfit);
+    const cost = Math.max(0, netRev - gross);
+    const exp = parseFloat(et.t || 0);
+    const extraProfit = parseFloat(epR.t || 0);
     const netProfit = gross - exp + extraProfit;
     const { rows: payRows } = await posDb.query(
       `SELECT payment_method, COUNT(*) as cnt, SUM(total_amount) as total FROM sales s WHERE ${df} GROUP BY payment_method`
