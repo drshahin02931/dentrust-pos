@@ -3172,6 +3172,15 @@ app.patch([`${BASE}/api/customers/:cid`, '/api/customers/:cid'], async (req, res
       }
     }
 
+    let extraPhonesStr = null;
+    if (req.body.extra_phones !== undefined) {
+      if (Array.isArray(req.body.extra_phones)) {
+        extraPhonesStr = req.body.extra_phones.map(p => String(p).trim()).filter(Boolean).join(',');
+      } else {
+        extraPhonesStr = String(req.body.extra_phones || '').trim();
+      }
+    }
+
     const { rowCount } = await posDb.query(
       `UPDATE customers SET
          name             = $1,
@@ -3180,9 +3189,10 @@ app.patch([`${BASE}/api/customers/:cid`, '/api/customers/:cid'], async (req, res
          installment_plan = COALESCE(NULLIF($4,''), installment_plan),
          city             = COALESCE(NULLIF($5,''), city),
          region           = COALESCE(NULLIF($6,''), region),
-         addresses        = CASE WHEN $7::text IS NOT NULL AND $7::text <> '' THEN $7::jsonb ELSE addresses END
+         addresses        = CASE WHEN $7::text IS NOT NULL AND $7::text <> '' THEN $7::jsonb ELSE addresses END,
+         extra_phones     = CASE WHEN $9::text IS NOT NULL THEN $9 ELSE extra_phones END
        WHERE id = $8`,
-      [name.trim(), (phone||'').trim(), (effectiveAddress||'').trim(), (installment_plan||'').trim(), (effectiveCity||'').trim(), (effectiveRegion||'').trim(), normAddrsJson, cid]
+      [name.trim(), (phone||'').trim(), (effectiveAddress||'').trim(), (installment_plan||'').trim(), (effectiveCity||'').trim(), (effectiveRegion||'').trim(), normAddrsJson, cid, extraPhonesStr]
     );
     if (!rowCount) return res.status(404).json({ error: 'العميل غير موجود' });
 

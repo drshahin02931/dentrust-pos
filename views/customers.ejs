@@ -63,21 +63,16 @@
         <p class="text-[11px] text-gray-400 mt-0.5">باركود رقمي فريد خاص بالطبيب مكون من 6 أرقام يمنع التكرار.</p>
       </div>
 
-      <!-- Primary Phone -->
-      <div>
-        <label class="text-xs font-bold text-gray-700 block mb-1">رقم الهاتف الأساسي</label>
-        <input id="f-phone" type="tel" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="01xxxxxxxxx"/>
-      </div>
-
-      <!-- Extra phones (up to 3) -->
-      <div>
-        <div class="flex items-center justify-between mb-1">
-          <label class="text-xs font-semibold text-gray-600">أرقام هواتف إضافية (العيادة / المساعد)</label>
-          <button type="button" onclick="addExtraPhoneField('extraPhonesContainer')" class="text-xs text-emerald-600 hover:text-emerald-800 font-bold">
-            ＋ إضافة رقم
-          </button>
+      <!-- Phone numbers section -->
+      <div class="bg-gray-50/90 border border-gray-200 rounded-xl p-3 space-y-2.5">
+        <div>
+          <label class="text-xs font-bold text-gray-700 block mb-1">📞 رقم الهاتف الأساسي</label>
+          <input id="f-phone" type="tel" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="01xxxxxxxxx"/>
         </div>
         <div id="extraPhonesContainer" class="space-y-1.5"></div>
+        <button type="button" onclick="addExtraPhoneField('extraPhonesContainer')" class="w-full py-2 px-3 bg-white border border-emerald-300 hover:bg-emerald-50 text-emerald-700 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-2xs cursor-pointer">
+          <span>➕</span> إضافة رقم هاتف إضافي (عيادة / مساعد / واتساب)
+        </button>
       </div>
 
       <!-- Clinic Address -->
@@ -566,18 +561,102 @@ function addExtraPhoneField(containerId, initialVal = "") {
   const container = document.getElementById(containerId);
   if (!container) return;
   const currentCount = container.querySelectorAll("input").length;
-  if (currentCount >= 3) {
-    alert("الحد الأقصى للأرقام الإضافية هو 3 أرقام فقط.");
+  if (currentCount >= 4) {
+    alert("الحد الأقصى للأرقام الإضافية هو 4 أرقام.");
     return;
   }
   const div = document.createElement("div");
-  div.className = "flex items-center gap-2";
+  div.className = "flex items-center gap-2 bg-white p-1.5 border border-gray-200 rounded-xl shadow-2xs";
   div.innerHTML = `
-    <input type="tel" value="${initialVal}" placeholder="رقم إضافي (عيادة / مساعد)"
+    <span class="text-xs font-bold text-gray-500 mr-1 shrink-0">📞 رقم #${currentCount + 2}:</span>
+    <input type="tel" value="${initialVal}" placeholder="01xxxxxxxxx (هاتف إضافي)"
       class="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs font-mono bg-white focus:outline-none focus:ring-1 focus:ring-blue-300"/>
-    <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:text-red-700 text-sm font-black px-1.5 leading-none">✕</button>
+    <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:text-red-700 hover:bg-red-50 text-xs font-bold px-2 py-1 rounded-lg transition-all shrink-0">حذف ✕</button>
   `;
   container.appendChild(div);
+}
+
+let _ecClinicSeq = 0;
+function createEcClinicCardHtml(clinic = {}, idx = 0, isDefault = false) {
+  _ecClinicSeq++;
+  const uid = `ec_cl_${Date.now()}_${_ecClinicSeq}`;
+  const title = clinic.title || (idx === 0 ? 'العيادة الرئيسية' : `عيادة فرع #${idx + 1}`);
+  const city = clinic.city || 'القاهرة';
+  const region = clinic.region || '';
+  const details = clinic.details || clinic.address || '';
+  const phone = clinic.phone || '';
+
+  return {
+    uid,
+    city,
+    region,
+    html: `
+      <div class="ec-clinic-card bg-blue-50/70 border border-blue-200 rounded-xl p-3.5 space-y-2.5 relative shadow-2xs">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-bold text-blue-900 flex items-center gap-1">
+              <span>🏥</span> فرع #${idx + 1}
+            </span>
+            <label class="text-[11px] text-gray-700 flex items-center gap-1.5 cursor-pointer font-bold bg-white px-2 py-0.5 rounded-lg border border-blue-200">
+              <input type="radio" name="ec_default_clinic" value="${uid}" ${isDefault ? 'checked' : ''} class="text-blue-600"/>
+              <span>عنوان افتراضي للشحن ⭐</span>
+            </label>
+          </div>
+          <button type="button" onclick="removeEcClinicCard(this)" class="ec-del-clinic-btn text-red-500 hover:text-red-700 hover:bg-red-50 text-xs font-bold px-2 py-0.5 rounded transition-all">حذف الفرع ✕</button>
+        </div>
+        <input class="ec-card-title w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" value="${title}" placeholder="اسم العيادة (مثال: عيادة المهندسين)"/>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[11px] font-bold text-gray-700 block mb-1">المحافظة</label>
+            <select id="${uid}_city" onchange="onGovChange('${uid}_city','${uid}_region','${uid}_custom_box')" class="ec-card-city w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-300">
+            </select>
+          </div>
+          <div>
+            <label class="text-[11px] font-bold text-gray-700 block mb-1">المنطقة / الحي</label>
+            <select id="${uid}_region" onchange="onDistrictChange('${uid}_region','${uid}_custom_box')" class="ec-card-region w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-300">
+            </select>
+          </div>
+        </div>
+        <div id="${uid}_custom_box" class="hidden">
+          <input class="ec-card-region-custom w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white" placeholder="اكتب اسم الحي / القرية يدوياً..."/>
+        </div>
+        <div>
+          <label class="text-[11px] font-bold text-gray-700 block mb-1">الشارع والعمارة بالتفصيل</label>
+          <input class="ec-card-details w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" value="${details}" placeholder="الشارع ورقم العمارة والدور"/>
+        </div>
+        <div>
+          <label class="text-[11px] font-bold text-gray-700 block mb-1">هاتف العيادة / السكرتير (اختياري)</label>
+          <input type="tel" class="ec-card-phone w-full border border-gray-300 rounded-xl px-3 py-2 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" value="${phone}" placeholder="01xxxxxxxxx"/>
+        </div>
+      </div>
+    `
+  };
+}
+
+function addEcClinicCard(clinic = {}, isDefault = false) {
+  const container = document.getElementById("ecClinicsContainer");
+  if (!container) return;
+  const idx = container.children.length;
+  const cardData = createEcClinicCardHtml(clinic, idx, isDefault);
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = cardData.html;
+  const cardEl = wrapper.firstElementChild;
+  container.appendChild(cardEl);
+  populateGovSelect(`${cardData.uid}_city`, cardData.city);
+  populateDistrictSelect(cardData.city, `${cardData.uid}_region`, `${cardData.uid}_custom_box`, cardData.region);
+}
+
+function removeEcClinicCard(btn) {
+  const container = document.getElementById("ecClinicsContainer");
+  if (!container) return;
+  if (container.querySelectorAll(".ec-clinic-card").length <= 1) {
+    alert("يجب الإبقاء على عيادة واحدة على الأقل للطبيب.");
+    return;
+  }
+  btn.closest(".ec-clinic-card").remove();
+  const radios = container.querySelectorAll('input[name="ec_default_clinic"]');
+  const hasChecked = Array.from(radios).some(r => r.checked);
+  if (!hasChecked && radios.length > 0) radios[0].checked = true;
 }
 
 function addExtraClinicInAddModal() {
@@ -1850,64 +1929,43 @@ loadCustomers();
 
 <!-- ══════════════════════ Edit Customer Modal ══════════════════════ -->
 <div id="editCustomerModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4">
-  <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] flex flex-col">
+  <div class="bg-white rounded-2xl w-full max-w-xl shadow-2xl max-h-[92vh] flex flex-col">
     <div class="p-5 border-b flex items-center justify-between shrink-0">
-      <h3 class="font-bold text-gray-800 text-lg">✏️ تعديل بيانات العميل</h3>
+      <h3 class="font-bold text-gray-800 text-lg flex items-center gap-2"><span>✏️</span> تعديل بيانات وعيادات العميل</h3>
       <button onclick="closeEditCustomerModal()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
     </div>
-    <form onsubmit="saveEditCustomer(event)" class="p-5 space-y-3.5 overflow-y-auto">
+    <form onsubmit="saveEditCustomer(event)" class="p-5 space-y-4 overflow-y-auto">
       <div>
         <label class="text-xs font-bold text-gray-700 block mb-1">اسم الطبيب / العميل *</label>
         <input id="ec-name" required class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"/>
       </div>
-      <div>
-        <label class="text-xs font-bold text-gray-700 block mb-1">رقم الهاتف الأساسي</label>
-        <input id="ec-phone" type="tel" class="w-full border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+
+      <!-- Phones Section in Edit Modal -->
+      <div class="bg-gray-50/90 border border-gray-200 rounded-xl p-3.5 space-y-2.5">
+        <div>
+          <label class="text-xs font-bold text-gray-700 block mb-1">📞 رقم الهاتف الأساسي</label>
+          <input id="ec-phone" type="tel" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="01xxxxxxxxx"/>
+        </div>
+        <div id="ecExtraPhonesContainer" class="space-y-1.5"></div>
+        <button type="button" onclick="addExtraPhoneField('ecExtraPhonesContainer')" class="w-full py-2 px-3 bg-white border border-emerald-300 hover:bg-emerald-50 text-emerald-700 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-2xs cursor-pointer">
+          <span>➕</span> إضافة رقم هاتف إضافي (عيادة / مساعد / واتساب)
+        </button>
       </div>
 
-      <!-- Structured Clinic Address in Edit modal -->
-      <div class="bg-blue-50/50 border border-blue-200 rounded-xl p-3.5 space-y-2.5">
+      <!-- Structured Clinics in Edit Modal -->
+      <div class="space-y-3">
         <div class="flex items-center justify-between">
-          <label class="text-xs font-bold text-gray-800 flex items-center gap-1.5">
-            <span>🏥</span> عنوان العيادة الرئيسية
+          <label class="text-xs font-black text-gray-800 flex items-center gap-1.5">
+            <span>🏥</span> عيادات وفروع الطبيب المسجلة
           </label>
-          <span class="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full border border-blue-200">⭐ عنوان افتراضي</span>
+          <span class="text-[11px] text-gray-500 font-medium">العنوان المختار هو العنوان الافتراضي للشحن ⭐</span>
         </div>
-        <div class="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-xs text-amber-900 flex items-center justify-between gap-2">
-          <div>
-            <strong class="block">🏥 هل لدى الطبيب عيادات أو فروع أخرى؟</strong>
-            <span class="text-[11px] text-amber-700">يمكنك إضافة وإدارة كل فروع وعيادات الطبيب من تبويب العيادات.</span>
-          </div>
-          <button type="button" onclick="closeEditCustomerModal(); switchTab('clinics');" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap shadow-2xs cursor-pointer">
-            🏥 فتح العيادات
-          </button>
-        </div>
-        <input id="ec-clinic-title" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="اسم العيادة (مثال: عيادة المهندسين)"/>
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="text-[11px] font-bold text-gray-700 block mb-1">المحافظة</label>
-            <select id="ec-clinic-city" onchange="onGovChange('ec-clinic-city','ec-clinic-region','ec-clinic-region-custom-box')" class="w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-300">
-              <option value="">اختر المحافظة...</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-[11px] font-bold text-gray-700 block mb-1">المنطقة / الحي</label>
-            <select id="ec-clinic-region" onchange="onDistrictChange('ec-clinic-region','ec-clinic-region-custom-box')" class="w-full border border-gray-300 rounded-xl px-2.5 py-2 text-xs bg-white font-medium focus:outline-none focus:ring-2 focus:ring-blue-300">
-              <option value="">اختر المنطقة...</option>
-            </select>
-          </div>
-        </div>
-        <div id="ec-clinic-region-custom-box" class="hidden">
-          <input id="ec-clinic-region-custom" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white" placeholder="اكتب اسم الحي / القرية يدوياً..."/>
-        </div>
-        <div>
-          <label class="text-[11px] font-bold text-gray-700 block mb-1">الشارع والعمارة بالتفصيل</label>
-          <input id="ec-clinic-details" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="الشارع ورقم العمارة والدور"/>
-        </div>
-        <div>
-          <label class="text-[11px] font-bold text-gray-700 block mb-1">هاتف العيادة (اختياري)</label>
-          <input id="ec-clinic-phone" type="tel" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="01xxxxxxxxx"/>
-        </div>
+
+        <div id="ecClinicsContainer" class="space-y-3"></div>
+
+        <button type="button" onclick="addEcClinicCard()" class="w-full py-2.5 px-4 bg-blue-50 border-2 border-dashed border-blue-300 hover:bg-blue-100/80 text-blue-800 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all shadow-2xs cursor-pointer">
+          <span>➕</span> إضافة عيادة / فرع آخر للطبيب
+        </button>
       </div>
 
       <div>
@@ -1920,8 +1978,8 @@ loadCustomers();
       </div>
       <div id="ecErr" class="hidden bg-red-50 border border-red-300 text-red-700 text-sm rounded-xl px-3 py-2"></div>
       <div class="flex gap-3 pt-1 shrink-0">
-        <button type="submit" id="ecSubmitBtn" class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800 text-sm">حفظ التعديلات</button>
-        <button type="button" onclick="closeEditCustomerModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl text-sm">إلغاء</button>
+        <button type="submit" id="ecSubmitBtn" class="flex-1 bg-blue-700 text-white font-semibold py-2.5 rounded-xl hover:bg-blue-800 text-sm cursor-pointer">حفظ كل التعديلات</button>
+        <button type="button" onclick="closeEditCustomerModal()" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl text-sm cursor-pointer">إلغاء</button>
       </div>
     </form>
   </div>
@@ -2024,26 +2082,49 @@ function openEditCustomerModal() {
   document.getElementById('ec-points').value  = parseInt(currentCustomer.points_balance || 0, 10);
   document.getElementById('ecErr').classList.add('hidden');
 
-  let addrs = [];
-  try {
-    addrs = typeof currentCustomer.addresses === 'string' ? JSON.parse(currentCustomer.addresses) : (currentCustomer.addresses || []);
-  } catch (_) { addrs = []; }
+  // Populate Extra Phones in Edit Modal
+  const phonesContainer = document.getElementById('ecExtraPhonesContainer');
+  if (phonesContainer) {
+    phonesContainer.innerHTML = '';
+    let extraPhones = [];
+    if (typeof currentCustomer.extra_phones === 'string') {
+      extraPhones = currentCustomer.extra_phones.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (Array.isArray(currentCustomer.extra_phones)) {
+      extraPhones = currentCustomer.extra_phones.map(s => String(s).trim()).filter(Boolean);
+    }
+    extraPhones.forEach(p => addExtraPhoneField('ecExtraPhonesContainer', p));
+  }
 
-  const def = addrs.find(a => a.is_default) || addrs[0] || {};
-  const cityVal = def.city || currentCustomer.city || 'القاهرة';
-  const regVal = def.region || currentCustomer.region || '';
-  const titleVal = def.title || (regVal ? `عيادة ${regVal}` : 'العيادة الرئيسية');
-  const detailsVal = def.details || currentCustomer.address || '';
-  const phoneVal = def.phone || '';
+  // Populate Clinics & Addresses in Edit Modal
+  const clinicsContainer = document.getElementById('ecClinicsContainer');
+  if (clinicsContainer) {
+    clinicsContainer.innerHTML = '';
+    let addrs = [];
+    try {
+      addrs = typeof currentCustomer.addresses === 'string' ? JSON.parse(currentCustomer.addresses) : (currentCustomer.addresses || []);
+    } catch (_) { addrs = []; }
 
-  document.getElementById('ec-clinic-title').value = titleVal;
-  populateGovSelect('ec-clinic-city', cityVal);
-  populateDistrictSelect(cityVal, 'ec-clinic-region', 'ec-clinic-region-custom-box', regVal);
-  document.getElementById('ec-clinic-details').value = detailsVal;
-  document.getElementById('ec-clinic-phone').value = phoneVal;
+    if (!Array.isArray(addrs) || addrs.length === 0) {
+      const fallbackObj = {
+        title: 'العيادة الرئيسية',
+        city: currentCustomer.city || 'القاهرة',
+        region: currentCustomer.region || '',
+        details: currentCustomer.address || '',
+        phone: '',
+        is_default: true
+      };
+      addEcClinicCard(fallbackObj, true);
+    } else {
+      const hasDef = addrs.some(a => a.is_default);
+      addrs.forEach((a, idx) => {
+        const isDef = a.is_default || (!hasDef && idx === 0);
+        addEcClinicCard(a, isDef);
+      });
+    }
+  }
 
   const btn = document.getElementById('ecSubmitBtn');
-  btn.disabled = false; btn.textContent = 'حفظ التعديلات';
+  btn.disabled = false; btn.textContent = 'حفظ كل التعديلات';
   document.getElementById('editCustomerModal').classList.remove('hidden');
   setTimeout(() => document.getElementById('ec-name').focus(), 80);
 }
@@ -2065,50 +2146,64 @@ async function saveEditCustomer(e) {
   const pointsVal = parseInt(document.getElementById('ec-points').value, 10);
   const points_balance = isNaN(pointsVal) ? 0 : pointsVal;
 
-  const cTitle = document.getElementById('ec-clinic-title').value.trim();
-  const cCity = document.getElementById('ec-clinic-city').value.trim();
-  const cRegSel = document.getElementById('ec-clinic-region').value.trim();
-  const cRegCustom = document.getElementById('ec-clinic-region-custom')?.value.trim() || '';
-  const cRegion = (cRegSel === '__custom__' ? cRegCustom : cRegSel);
-  const cDetails = document.getElementById('ec-clinic-details').value.trim();
-  const cPhone = document.getElementById('ec-clinic-phone').value.trim();
+  // Gather Extra Phones
+  const extraPhoneInputs = document.querySelectorAll('#ecExtraPhonesContainer input');
+  const extra_phones = Array.from(extraPhoneInputs).map(inp => inp.value.trim()).filter(Boolean);
 
-  let addrs = [];
-  try {
-    addrs = typeof currentCustomer.addresses === 'string' ? JSON.parse(currentCustomer.addresses) : (currentCustomer.addresses || []);
-  } catch (_) { addrs = []; }
+  // Gather Clinics & Addresses
+  const clinicCards = document.querySelectorAll('#ecClinicsContainer .ec-clinic-card');
+  let finalAddresses = [];
+  let defaultCity = '';
+  let defaultRegion = '';
+  let defaultFullAddr = '';
 
-  const fullAddr = [cCity, cRegion, cDetails].filter(Boolean).join(' - ');
-  const defaultObj = {
-    id: (addrs[0] && addrs[0].id) || ('addr_' + Date.now()),
-    title: cTitle || (cRegion ? `عيادة ${cRegion}` : 'العيادة الرئيسية'),
-    city: cCity || 'القاهرة',
-    region: cRegion || '',
-    details: cDetails || '',
-    phone: cPhone || '',
-    address: fullAddr,
-    is_default: true
-  };
+  clinicCards.forEach((card, i) => {
+    const title = card.querySelector('.ec-card-title')?.value.trim() || (i === 0 ? 'العيادة الرئيسية' : `عيادة فرع #${i+1}`);
+    const city = card.querySelector('.ec-card-city')?.value.trim() || 'القاهرة';
+    const regSel = card.querySelector('.ec-card-region')?.value.trim() || '';
+    const regCust = card.querySelector('.ec-card-region-custom')?.value.trim() || '';
+    const region = (regSel === '__custom__' ? regCust : regSel);
+    const details = card.querySelector('.ec-card-details')?.value.trim() || '';
+    const cPhone = card.querySelector('.ec-card-phone')?.value.trim() || '';
+    const isDefault = !!card.querySelector('input[name="ec_default_clinic"]:checked');
+    const full = [city, region, details].filter(Boolean).join(' - ');
 
-  let updatedAddrs = [];
-  const defIdx = addrs.findIndex(a => a.is_default);
-  if (defIdx >= 0) {
-    updatedAddrs = addrs.map((a, i) => i === defIdx ? defaultObj : { ...a, is_default: false });
-  } else if (addrs.length > 0) {
-    updatedAddrs = [defaultObj, ...addrs.slice(1).map(a => ({ ...a, is_default: false }))];
-  } else {
-    updatedAddrs = [defaultObj];
+    const cObj = {
+      id: 'addr_' + (i + 1) + '_' + Date.now(),
+      title,
+      city,
+      region,
+      details,
+      phone: cPhone,
+      address: full,
+      is_default: isDefault
+    };
+    finalAddresses.push(cObj);
+
+    if (isDefault || (i === 0 && !defaultFullAddr)) {
+      defaultCity = city;
+      defaultRegion = region;
+      defaultFullAddr = full;
+    }
+  });
+
+  if (!finalAddresses.some(a => a.is_default) && finalAddresses.length > 0) {
+    finalAddresses[0].is_default = true;
+    defaultCity = finalAddresses[0].city;
+    defaultRegion = finalAddresses[0].region;
+    defaultFullAddr = finalAddresses[0].address;
   }
 
   const body = {
     name,
     phone,
+    extra_phones,
     installment_plan: plan,
     points_balance,
-    city: cCity,
-    region: cRegion,
-    address: fullAddr,
-    addresses: updatedAddrs
+    city: defaultCity,
+    region: defaultRegion,
+    address: defaultFullAddr,
+    addresses: finalAddresses
   };
 
   const res  = await fetch(`${BASE}/api/customers/${currentCustomer.id}`, {
@@ -2119,7 +2214,7 @@ async function saveEditCustomer(e) {
   if (!res.ok) {
     errEl.textContent = data.error || 'حدث خطأ أثناء تعديل بيانات العميل';
     errEl.classList.remove('hidden');
-    btn.disabled = false; btn.textContent = 'حفظ التعديلات';
+    btn.disabled = false; btn.textContent = 'حفظ كل التعديلات';
     return;
   }
 
@@ -2127,7 +2222,7 @@ async function saveEditCustomer(e) {
   await loadCustomers();
   const updated = allCustomers.find(x => x.id === currentCustomer.id);
   if (updated) openDetail(updated.id);
-  alert('✅ تم تحديث بيانات العميل بنجاح');
+  alert('✅ تم حفظ جميع بيانات وعيادات العميل بنجاح');
 }
 </script>
 </main>
