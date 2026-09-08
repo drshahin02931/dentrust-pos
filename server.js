@@ -2431,14 +2431,29 @@ app.post(`${BASE}/api/customer/update-profile`, async (req, res) => {
     }
 
     let updatedAddresses = customer.addresses;
+    let defCity = customer.city || 'القاهرة';
+    let defRegion = customer.region || '';
+    let defAddress = customer.address || '';
+
     if (addresses !== undefined) {
       updatedAddresses = typeof addresses === 'string' ? addresses : JSON.stringify(addresses);
       changes.push('تحديث قائمة عناوين العيادات');
+      try {
+        const addrList = typeof addresses === 'string' ? JSON.parse(addresses) : addresses;
+        if (Array.isArray(addrList) && addrList.length > 0) {
+          const def = addrList.find(a => a.is_default) || addrList[0];
+          if (def) {
+            defCity = def.city || defCity;
+            defRegion = def.region || defRegion;
+            defAddress = def.address || [def.city, def.region, def.details].filter(Boolean).join(' - ') || defAddress;
+          }
+        }
+      } catch (_) {}
     }
 
     await posDb.query(
-      'UPDATE customers SET phone=$1, extra_phones=$2, addresses=$3 WHERE id=$4',
-      [updatedPrimary, updatedExtra, updatedAddresses, customer.id]
+      'UPDATE customers SET phone=$1, extra_phones=$2, addresses=$3, city=$4, region=$5, address=$6 WHERE id=$7',
+      [updatedPrimary, updatedExtra, updatedAddresses, defCity, defRegion, defAddress, customer.id]
     );
 
     const allPhonesStr = [updatedPrimary, updatedExtra].filter(Boolean).join(', ');
