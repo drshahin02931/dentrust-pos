@@ -114,6 +114,10 @@
           <label class="text-[11px] font-bold text-gray-700 block mb-1">هاتف العيادة / السكرتير (اختياري)</label>
           <input id="f-clinic-phone" type="tel" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="01xxxxxxxxx"/>
         </div>
+        <div id="extraAddClinicsContainer" class="space-y-2.5 mt-2"></div>
+        <button type="button" onclick="addExtraClinicInAddModal()" class="text-xs text-blue-700 font-bold flex items-center gap-1.5 bg-white border border-blue-300 hover:bg-blue-50 px-3 py-2 rounded-xl transition-all w-full justify-center shadow-2xs">
+          <span>➕</span> إضافة عيادة / فرع آخر للطبيب
+        </button>
       </div>
 
       <div>
@@ -139,7 +143,12 @@
       <div>
         <h2 id="detailName" class="text-xl font-black text-gray-800"></h2>
         <p id="detailPhone" class="text-sm text-gray-500 mt-0.5"></p>
-        <p id="detailAddress" class="text-xs text-gray-400 mt-0.5"></p>
+        <div class="flex items-center gap-2 mt-1.5 flex-wrap">
+          <p id="detailAddress" class="text-xs text-gray-500 font-medium"></p>
+          <button onclick="switchTab('clinics')" class="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-2.5 py-1 rounded-lg border border-blue-200 transition-all flex items-center gap-1 shadow-2xs cursor-pointer" title="عرض وتعديل كافة عيادات وفروع الطبيب">
+            🏥 <span id="detailClinicsHeaderBadge">إدارة العيادات (0)</span> ➕
+          </button>
+        </div>
         <div class="flex items-center gap-2 mt-2 flex-wrap">
           <span id="detailDebtBadge" class="text-sm font-bold px-3 py-1 rounded-full"></span>
           <span id="detailPointsBadge" class="text-sm font-bold px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300">⭐ 0 نقطة</span>
@@ -191,6 +200,9 @@
       </button>
       <button onclick="openManualDebtModal()" class="flex items-center gap-2 bg-orange-50 hover:bg-orange-100 text-orange-700 text-sm font-semibold px-4 py-2 rounded-xl">
         💰 إضافة سلفة/دين
+      </button>
+      <button onclick="switchTab('clinics')" class="flex items-center gap-1.5 bg-cyan-700 hover:bg-cyan-800 text-white text-sm font-bold px-4 py-2 rounded-xl shadow-sm transition-all cursor-pointer" title="إدارة وإضافة عيادات وفروع الطبيب">
+        🏥 العيادات (<span id="detailClinicsCount">0</span>)
       </button>
       <button onclick="openEditCustomerModal()" class="flex items-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm font-semibold px-4 py-2 rounded-xl">
         ✏️ تعديل البيانات
@@ -568,6 +580,40 @@ function addExtraPhoneField(containerId, initialVal = "") {
   container.appendChild(div);
 }
 
+function addExtraClinicInAddModal() {
+  const container = document.getElementById("extraAddClinicsContainer");
+  if (!container) return;
+  const count = container.children.length + 2;
+  const uid = 'ext_cl_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+  const div = document.createElement("div");
+  div.className = "extra-add-clinic-block bg-white border border-blue-200 rounded-xl p-3 space-y-2 relative shadow-2xs";
+  div.innerHTML = `
+    <div class="flex items-center justify-between">
+      <span class="text-xs font-bold text-blue-900 flex items-center gap-1"><span>🏥</span> عيادة / فرع إضافي #${count}</span>
+      <button type="button" onclick="this.closest('.extra-add-clinic-block').remove()" class="text-red-500 hover:text-red-700 text-xs font-bold px-2 py-0.5 rounded bg-red-50 hover:bg-red-100 transition-all">حذف الفرع ✕</button>
+    </div>
+    <input class="ext-clinic-title w-full border border-gray-300 rounded-xl px-3 py-1.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-blue-300" placeholder="اسم العيادة (مثال: عيادة الشيخ زايد)"/>
+    <div class="grid grid-cols-2 gap-2">
+      <div>
+        <label class="text-[10px] font-bold text-gray-600 block mb-0.5">المحافظة</label>
+        <select id="${uid}_city" onchange="onGovChange('${uid}_city','${uid}_reg','${uid}_custom_box')" class="ext-clinic-city w-full border border-gray-300 rounded-xl px-2 py-1.5 text-xs bg-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-300"></select>
+      </div>
+      <div>
+        <label class="text-[10px] font-bold text-gray-600 block mb-0.5">المنطقة</label>
+        <select id="${uid}_reg" onchange="onDistrictChange('${uid}_reg','${uid}_custom_box')" class="ext-clinic-reg w-full border border-gray-300 rounded-xl px-2 py-1.5 text-xs bg-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-300"></select>
+      </div>
+    </div>
+    <div id="${uid}_custom_box" class="hidden">
+      <input class="ext-clinic-reg-cust w-full border border-gray-300 rounded-xl px-3 py-1.5 text-xs bg-white" placeholder="اكتب اسم الحي / القرية يدوياً..."/>
+    </div>
+    <input class="ext-clinic-details w-full border border-gray-300 rounded-xl px-3 py-1.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-blue-300" placeholder="الشارع والعمارة بالتفصيل"/>
+    <input type="tel" class="ext-clinic-phone w-full border border-gray-300 rounded-xl px-3 py-1.5 text-xs font-mono bg-white focus:outline-none focus:ring-1 focus:ring-blue-300" placeholder="هاتف العيادة (اختياري)"/>
+  `;
+  container.appendChild(div);
+  populateGovSelect(`${uid}_city`, "القاهرة");
+  populateDistrictSelect("القاهرة", `${uid}_reg`, `${uid}_custom_box`, "");
+}
+
 function openAddModal() {
   document.getElementById("addModal").classList.remove("hidden");
   generateNewBarcodeForModal("f-barcode");
@@ -588,6 +634,8 @@ function closeAddModal() {
   document.getElementById("f-clinic-region-custom-box")?.classList.add("hidden");
   const container = document.getElementById("extraPhonesContainer");
   if (container) container.innerHTML = "";
+  const extraClinicsBox = document.getElementById("extraAddClinicsContainer");
+  if (extraClinicsBox) extraClinicsBox.innerHTML = "";
   const errEl = document.getElementById("addModalErr");
   if (errEl) { errEl.classList.add("hidden"); errEl.textContent=""; }
   const btn = document.getElementById("addModalBtn");
@@ -610,7 +658,7 @@ async function addCustomer(e) {
   const extraInps = document.querySelectorAll("#extraPhonesContainer input");
   const extraPhones = Array.from(extraInps).map(inp => inp.value.trim()).filter(Boolean);
 
-  // Clinic address
+  // Clinic address (Primary)
   const cName = document.getElementById("f-clinic-name")?.value.trim() || "";
   const cCity = document.getElementById("f-clinic-city")?.value.trim() || "";
   const cRegSelect = document.getElementById("f-clinic-region")?.value.trim() || "";
@@ -633,6 +681,29 @@ async function addCustomer(e) {
       is_default: true
     });
   }
+
+  // Extra clinics from addModal
+  document.querySelectorAll('.extra-add-clinic-block').forEach((blk, idx) => {
+    const title = blk.querySelector('.ext-clinic-title')?.value.trim() || `عيادة #${idx+2}`;
+    const city = blk.querySelector('.ext-clinic-city')?.value.trim() || 'القاهرة';
+    const regSel = blk.querySelector('.ext-clinic-reg')?.value.trim() || '';
+    const regCust = blk.querySelector('.ext-clinic-reg-cust')?.value.trim() || '';
+    const region = (regSel === '__custom__' ? regCust : regSel);
+    const details = blk.querySelector('.ext-clinic-details')?.value.trim() || '';
+    const phone = blk.querySelector('.ext-clinic-phone')?.value.trim() || '';
+    if (title || details || region) {
+      addresses.push({
+        id: 'addr_' + Date.now() + '_' + (idx+1),
+        title,
+        city,
+        region,
+        details,
+        phone,
+        address: [city, region, details].filter(Boolean).join(' - '),
+        is_default: false
+      });
+    }
+  });
 
   try {
     const res  = await fetch(`${BASE}/api/customers`, {
@@ -728,7 +799,16 @@ async function openDetail(cid) {
 
   document.getElementById("detailName").textContent = c.name;
   document.getElementById("detailPhone").textContent = c.phone ? `📞 ${c.phone}` : "";
-  document.getElementById("detailAddress").textContent = c.address ? `📍 ${c.address}` : "";
+  document.getElementById("detailAddress").textContent = c.address ? `📍 ${c.address}` : "📍 لا يوجد عنوان رئيسي مسجل";
+
+  let addrs = [];
+  try { addrs = typeof c.addresses === 'string' ? JSON.parse(c.addresses) : (c.addresses || []); } catch(_) { addrs = []; }
+  const countEl = document.getElementById("detailClinicsCount");
+  if (countEl) countEl.textContent = addrs.length;
+  const headerBadge = document.getElementById("detailClinicsHeaderBadge");
+  if (headerBadge) headerBadge.textContent = addrs.length > 0 ? `${addrs.length} عيادة مسجلة` : 'إضافة عيادة';
+  const tabClinicsBtn = document.getElementById("tabClinics");
+  if (tabClinicsBtn) tabClinicsBtn.textContent = `🏥 العيادات والعناوين (${addrs.length})`;
   
   const barcode = c.barcode || c.customer_code?.replace(/^vip/i, '') || '';
   document.getElementById("detailBarcodeText").textContent = barcode || '—';
@@ -1792,6 +1872,15 @@ loadCustomers();
             <span>🏥</span> عنوان العيادة الرئيسية
           </label>
           <span class="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full border border-blue-200">⭐ عنوان افتراضي</span>
+        </div>
+        <div class="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-xs text-amber-900 flex items-center justify-between gap-2">
+          <div>
+            <strong class="block">🏥 هل لدى الطبيب عيادات أو فروع أخرى؟</strong>
+            <span class="text-[11px] text-amber-700">يمكنك إضافة وإدارة كل فروع وعيادات الطبيب من تبويب العيادات.</span>
+          </div>
+          <button type="button" onclick="closeEditCustomerModal(); switchTab('clinics');" class="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs whitespace-nowrap shadow-2xs cursor-pointer">
+            🏥 فتح العيادات
+          </button>
         </div>
         <input id="ec-clinic-title" class="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="اسم العيادة (مثال: عيادة المهندسين)"/>
         <div class="grid grid-cols-2 gap-2">
