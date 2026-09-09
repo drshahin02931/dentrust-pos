@@ -79,51 +79,7 @@
 </div>
 
 
-<!-- ── WhatsApp Notification Modal ── -->
-<div id="waModal" class="hidden fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
-    <div class="flex items-center gap-3">
-      <div class="text-4xl">📱</div>
-      <div>
-        <h2 class="font-black text-gray-800 text-lg">إشعار العميل على واتساب</h2>
-        <p class="text-xs text-gray-400 mt-0.5">تم تحديث الحالة بنجاح ✅</p>
-      </div>
-    </div>
 
-    <!-- Auto-sent badge -->
-    <div id="waAutoSent" class="hidden bg-green-50 border border-green-200 rounded-xl p-3 text-center">
-      <span class="text-green-700 font-bold text-sm">✅ تم الإرسال تلقائياً عبر واتساب!</span>
-    </div>
-
-    <!-- Message preview -->
-    <div class="bg-[#e9fbe5] rounded-xl p-4 border border-green-200 space-y-1">
-      <div class="flex items-center justify-between mb-2">
-        <span class="text-xs font-bold text-green-700">رسالة واتساب للعميل:</span>
-        <button onclick="copyWaMsg()" id="copyBtn"
-          class="text-xs bg-white border border-green-300 text-green-700 font-bold px-3 py-1 rounded-lg hover:bg-green-50">
-          📋 نسخ
-        </button>
-      </div>
-      <div id="waMsgPreview" class="text-sm text-gray-700 whitespace-pre-line leading-relaxed font-medium"></div>
-    </div>
-
-    <!-- Action buttons -->
-    <div class="flex gap-2">
-      <a id="waOpenLink" href="#" target="_blank" rel="noopener"
-        class="flex-1 flex items-center justify-center gap-2 bg-[#25d366] hover:bg-[#1ebe5a] text-white font-black py-3 rounded-xl text-sm shadow-sm">
-        <svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5">
-          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
-          <path d="M12 0C5.373 0 0 5.373 0 12c0 2.126.553 4.122 1.516 5.853L0 24l6.335-1.493C8.053 23.456 9.988 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818c-1.881 0-3.638-.507-5.148-1.389l-.369-.219-3.762.887.945-3.653-.242-.375A9.796 9.796 0 012.182 12C2.182 6.578 6.578 2.182 12 2.182S21.818 6.578 21.818 12 17.422 21.818 12 21.818z"/>
-        </svg>
-        فتح واتساب
-      </a>
-      <button onclick="closeWaModal()" class="px-5 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold py-3 rounded-xl text-sm">
-        تخطي
-      </button>
-    </div>
-    <p class="text-center text-xs text-gray-400">الضغط على "فتح واتساب" سيفتح المحادثة مع الرسالة جاهزة للإرسال</p>
-  </div>
-</div>
 
 <!-- ── Order Detail Modal ── -->
 <div id="detailModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeDetail()">
@@ -158,23 +114,11 @@
         🗑 Delete
       </button>
     </div>
-    <!-- Footer row 2: print + whatsapp -->
-    <div class="px-5 pb-4 pt-1 flex gap-2">
+    <!-- Footer row 2: print -->
+    <div class="px-5 pb-4 pt-1">
       <button onclick="printOrderDetail()"
-        class="flex-1 flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 rounded-xl text-sm border border-gray-200">
+        class="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 rounded-xl text-sm border border-gray-200">
         🖨️ طباعة الفاتورة
-      </button>
-      <button id="detailWaBtn" onclick="openDetailWhatsApp()"
-        class="flex-1 flex items-center justify-center gap-2 bg-[#25d366] hover:bg-[#1ebe5a] text-white font-bold py-2.5 rounded-xl text-sm shadow-sm">
-        <svg viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 flex-shrink-0">
-          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
-          <path d="M12 0C5.373 0 0 5.373 0 12c0 2.126.553 4.122 1.516 5.853L0 24l6.335-1.493C8.053 23.456 9.988 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818c-1.881 0-3.638-.507-5.148-1.389l-.369-.219-3.762.887.945-3.653-.242-.375A9.796 9.796 0 012.182 12C2.182 6.578 6.578 2.182 12 2.182S21.818 6.578 21.818 12 17.422 21.818 12 21.818z"/>
-        </svg>
-        واتساب الطبيب
-      </button>
-      <button id="detailAdminWaBtn" onclick="shareDetailAdminWhatsApp()"
-        class="flex-1 flex items-center justify-center gap-1.5 bg-blue-700 hover:bg-blue-800 text-white font-bold py-2.5 rounded-xl text-sm shadow-sm">
-        <span>📲</span> إرسال التفاصيل للمخزن
       </button>
     </div>
   </div>
@@ -525,37 +469,7 @@ async function saveDetailStatus() {
   } catch(_) {}
 }
 
-function openDetailWhatsApp() {
-  if (!_detailOrder) return;
-  const phone = (_detailOrder.customer_phone || '').replace(/[^0-9+]/g,'');
-  const intl  = phone.startsWith('+')
-    ? phone.slice(1)
-    : (phone.startsWith('0') && phone.length === 11 ? '20' + phone.slice(1) : phone);
-  if (_detailWaLink) { window.open(_detailWaLink, '_blank'); return; }
-  const o = _detailOrder;
-  const name = o.customer_name || 'دكتور';
-  const orderNum = o.dentrust_order_id || o.id || '';
-  const total = parseFloat(o.total_amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 });
-  const text = `أهلاً بك د. ${name} 👋\nتم استلام ومراجعة طلبك رقم (#${orderNum}) من متجر DenTrust بقيمة ${total} ج.م وجارٍ تجهيزه للتوصيل للعيادة 🌸`;
-  if (intl) window.open(`https://api.whatsapp.com/send?phone=${intl}&text=${encodeURIComponent(text)}`, '_blank');
-  else alert('لا يوجد رقم هاتف للعميل');
-}
 
-function shareDetailAdminWhatsApp() {
-  if (!_detailOrder) return;
-  const o = _detailOrder;
-  const orderNum = o.dentrust_order_id || o.id || '';
-  const name = o.customer_name || 'دكتور';
-  const phone = o.customer_phone || '—';
-  const addr = [o.customer_city, o.customer_address].filter(Boolean).join(' - ') || '—';
-  const total = parseFloat(o.total_amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 });
-  const itemsStr = o.items_summary || '—';
-  const notesStr = o.notes ? `\n📝 ملاحظات الطبيب: "${o.notes}"` : '';
-
-  const text = `🛒 *تفاصيل طلب DenTrust (#${orderNum})*\n━━━━━━━━━━━━━━━━━━━━\n👨‍⚕️ الطبيب: ${name}\n📞 الهاتف: ${phone}\n🏥 العنوان: ${addr}\n💵 الإجمالي: ${total} ج.م\n━━━━━━━━━━━━━━━━━━━━\n📦 تفاصيل الأصناف:\n${itemsStr}${notesStr}\n\n⏰ يرجى التجهيز والتسليم للمندوب.`;
-
-  window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
-}
 
 function printOrderDetail() {
   if (!_detailOrder) return;
@@ -635,23 +549,6 @@ async function saveStatus() {
     if (data.ok) {
       closeModal();
       loadOrders();
-      // Show WhatsApp notification modal
-      if (data.wa_message) {
-        document.getElementById('waMsgPreview').textContent = data.wa_message;
-        const link = document.getElementById('waOpenLink');
-        if (data.wa_link) {
-          link.href = data.wa_link;
-          link.classList.remove('opacity-40', 'pointer-events-none');
-        } else {
-          link.classList.add('opacity-40', 'pointer-events-none');
-          link.href = '#';
-        }
-        // Show auto-sent badge if Twilio sent it
-        const autoSent = document.getElementById('waAutoSent');
-        if (data.twilio_sent) autoSent.classList.remove('hidden');
-        else autoSent.classList.add('hidden');
-        document.getElementById('waModal').classList.remove('hidden');
-      }
     } else { alert('خطأ في الحفظ'); }
   } catch(e) { alert('خطأ: ' + e.message); }
   finally { btn.disabled = false; btn.textContent = 'حفظ التحديث'; }

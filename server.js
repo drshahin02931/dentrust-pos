@@ -16,7 +16,6 @@ const webpush = require('web-push');
 const { posDb, dentrustDb, sessionDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
 const { EGYPT_GOVERNORATES, normalizeArabicText, parseEgyptianAddress, normalizeEgyptianAddresses } = require('./address-parser');
 const { processAndUploadProductImage } = require('./image-uploader');
-const { notifyNewOrder, formatAdminOrderMessage, formatDoctorConfirmationMessage, sendViaGateway, ADMIN_PHONES } = require('./whatsapp-service');
 
 const BASE = (process.env.BASE_PATH || '').replace(/\/$/, '');
 const PORT = parseInt(process.env.PORT || '5000', 10);
@@ -225,78 +224,6 @@ app.get([`${BASE}/invoices`, '/invoices'], (req, res) => {
 app.get(`${BASE}/settings`, (req, res) => {
   if (!isMgr(req)) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'settings');
-});
-app.get([`${BASE}/whatsapp-settings`, `${BASE}/admin/whatsapp-settings`], (req, res) => {
-  if (!isMgr(req)) return res.redirect(`${BASE}/`);
-  return renderPage(req, res, 'whatsapp_settings');
-});
-
-// ── WhatsApp Settings Routes ────────────────────────────────────────────────
-app.get(`${BASE}/api/settings/whatsapp-templates`, async (req, res) => {
-  try {
-    const { rows: [r] } = await posDb.query("SELECT value FROM settings WHERE key='whatsapp_templates' LIMIT 1").catch(() => ({ rows: [] }));
-    const templates = r?.value ? (typeof r.value === 'string' ? JSON.parse(r.value) : r.value) : {};
-    res.json(templates);
-  } catch (err) { res.json({}); }
-});
-
-app.post(`${BASE}/api/settings/whatsapp-templates`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
-  try {
-    const val = JSON.stringify(req.body);
-    await posDb.query(
-      `INSERT INTO settings (key, value) VALUES ('whatsapp_templates', $1)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-      [val]
-    );
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
-});
-
-app.get(`${BASE}/api/settings/whatsapp-config`, async (req, res) => {
-  try {
-    const { rows: [r] } = await posDb.query("SELECT value FROM settings WHERE key='whatsapp_config' LIMIT 1").catch(() => ({ rows: [] }));
-    const config = r?.value ? (typeof r.value === 'string' ? JSON.parse(r.value) : r.value) : {};
-    res.json({
-      instance_id: config.instance_id || process.env.WHATSAPP_INSTANCE_ID || '',
-      token: config.token ? '••••••••' : (process.env.WHATSAPP_TOKEN ? '••••••••' : ''),
-      admin_phones: ADMIN_PHONES
-    });
-  } catch (err) { res.json({ admin_phones: ADMIN_PHONES }); }
-});
-
-app.post(`${BASE}/api/settings/whatsapp-config`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
-  try {
-    const { instance_id, token } = req.body;
-    const { rows: [existing] } = await posDb.query("SELECT value FROM settings WHERE key='whatsapp_config' LIMIT 1").catch(() => ({ rows: [] }));
-    let cur = existing?.value ? (typeof existing.value === 'string' ? JSON.parse(existing.value) : existing.value) : {};
-    if (instance_id) cur.instance_id = instance_id.trim();
-    if (token && !token.includes('••••')) cur.token = token.trim();
-    
-    await posDb.query(
-      `INSERT INTO settings (key, value) VALUES ('whatsapp_config', $1)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-      [JSON.stringify(cur)]
-    );
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
-});
-
-app.post(`${BASE}/api/settings/whatsapp-test`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
-  try {
-    const testMsg = `🌸 تجربة إرسال ناجحة من سيستم DenTrust!\nرسائل تنبيهات الأوردرات تعمل بكفاءة على الأرقام الـ 5.`;
-    const targetPhone = req.body.phone || ADMIN_PHONES[0];
-    
-    const { rows: [setting] } = await posDb.query("SELECT value FROM settings WHERE key='whatsapp_config' LIMIT 1").catch(() => ({ rows: [] }));
-    const cfg = setting?.value ? (typeof setting.value === 'string' ? JSON.parse(setting.value) : setting.value) : {};
-    
-    const result = await sendViaGateway(targetPhone, testMsg, cfg);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
 });
 app.get(`${BASE}/barcodes`, (req, res) => {
   if (!hasPerm(req, 'inventory')) return res.redirect(`${BASE}/`);
@@ -5542,9 +5469,6 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
       'web-order'
     ).catch(() => {});
 
-    // 📲 Send detailed WhatsApp alert to all 5 admin numbers + doctor confirmation
-    notifyNewOrder(d, posDb).catch(waErr => console.error('[WhatsApp order notification error]:', waErr.message));
-
     const customerId = await upsertCustomerInPOS({
       name: d.customer_name,
       phone: d.customer_phone,
@@ -7458,67 +7382,6 @@ app.post(`${BASE}/api/website-orders/alerts/dismiss`, async (req, res) => {
 });
 
 
-// ─── WhatsApp notification message builder ────────────────────────────────────
-// Templates stored in store_settings key='whatsapp_templates' (editable via /whatsapp-settings)
-// Placeholders: {name} {total} {tracking} {reason}
-const WA_DEFAULTS = {
-  pending:   'مرحباً {name} 👋\nتم استلام طلبك بنجاح وجارٍ مراجعته.\nإجمالي الطلب: {total} ج.م\nسنتواصل معك قريباً.\n\n— دينتراست 🌸',
-  confirmed: 'مرحباً {name} ✅\nتم تأكيد طلبك وجارٍ التجهيز للشحن.\nإجمالي الطلب: {total} ج.م\nشكراً لثقتك فينا!\n\n— دينتراست 🌸',
-  shipped:   'مرحباً {name} 🚚\nطلبك في الطريق إليك الآن!\nإجمالي الطلب: {total} ج.م\n{tracking}نراك قريباً 😊\n\n— دينتراست 🌸',
-  delivered: 'مرحباً {name} 📦\nتم توصيل طلبك بنجاح!\nنتمنى أن تكون سعيداً بمنتجاتك.\nشاركنا رأيك وساعد الآخرين 🌟\n\n— دينتراست 🌸',
-  cancelled: 'مرحباً {name}\nنأسف، تم إلغاء طلبك.\n{reason}للاستفسار تواصل معنا.\n\n— دينتراست 🌸',
-};
-
-async function getWaTemplates() {
-  try {
-    const { rows } = await posDb.query(
-      "SELECT value FROM store_settings WHERE key='whatsapp_templates' LIMIT 1"
-    );
-    if (rows.length && rows[0].value) return { ...WA_DEFAULTS, ...JSON.parse(rows[0].value) };
-  } catch (_) {}
-  return { ...WA_DEFAULTS };
-}
-
-async function buildWhatsAppMsg(status, name, total, notes) {
-  const templates = await getWaTemplates();
-  const tmpl = templates[status] || '';
-  if (!tmpl) return '';
-  const t = parseFloat(total || 0).toLocaleString('ar-EG');
-  const n = name || 'عميل';
-  return tmpl
-    .replace(/{name}/g, n)
-    .replace(/{total}/g, t)
-    .replace(/{tracking}/g, notes ? 'رقم التتبع: ' + notes + '\n' : '')
-    .replace(/{reason}/g, notes ? 'السبب: ' + notes + '\n' : '');
-}
-
-// ── WhatsApp Templates API ────────────────────────────────────────────────────
-app.get(`${BASE}/api/settings/whatsapp-templates`, async (req, res) => {
-  if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
-  try { res.json(await getWaTemplates()); }
-  catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
-});
-
-app.post(`${BASE}/api/settings/whatsapp-templates`, async (req, res) => {
-  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
-  try {
-    const allowed = ['pending','confirmed','shipped','delivered','cancelled'];
-    const toSave  = {};
-    for (const k of allowed) { if (typeof req.body[k] === 'string') toSave[k] = req.body[k]; }
-    await posDb.query(
-      "INSERT INTO store_settings (key,value) VALUES ('whatsapp_templates',$1) ON CONFLICT (key) DO UPDATE SET value=$1",
-      [JSON.stringify(toSave)]
-    );
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
-});
-
-// ── WhatsApp Settings Page ────────────────────────────────────────────────────
-app.get(`${BASE}/whatsapp-settings`, (req, res) => {
-  if (!req.session?.user_id) return res.redirect(`${BASE}/login`);
-  return renderPage(req, res, 'whatsapp_settings');
-});
-
 // ── Bot Knowledge Management Page ────────────────────────────────────────────
 app.get(`${BASE}/bot-knowledge`, (req, res) => {
   if (!req.session?.user_id) return res.redirect(`${BASE}/login`);
@@ -7559,7 +7422,7 @@ app.get(`${BASE}/api/website-orders/all`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
-// PATCH order status — returns WhatsApp message + optional Twilio auto-send
+// PATCH order status
 app.patch(`${BASE}/api/website-orders/:id/status`, async (req, res) => {
   if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
   const { id } = req.params;
@@ -7567,54 +7430,11 @@ app.patch(`${BASE}/api/website-orders/:id/status`, async (req, res) => {
   const allowed = ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'];
   if (!allowed.includes(status)) return res.status(400).json({ error: 'Invalid status' });
   try {
-    const { rows: [order] } = await posDb.query('SELECT * FROM website_order_alerts WHERE id=$1', [id]);
     await posDb.query(
       'UPDATE website_order_alerts SET status=$1, notes=$2, seen=true WHERE id=$3',
       [status, notes || null, id]
     );
-    const waMsg  = await buildWhatsAppMsg(status, order?.customer_name, order?.total_amount, notes);
-    const rawPhone = (order?.customer_phone || '').replace(/[^0-9+]/g, '');
-    const phone = rawPhone.startsWith('+')
-      ? rawPhone.slice(1)
-      : (rawPhone.startsWith('0') && rawPhone.length === 11)
-        ? '20' + rawPhone
-        : rawPhone;
-    const waLink = phone
-      ? `https://wa.me/${phone}?text=${encodeURIComponent(waMsg)}`
-      : null;
-
-    // Optional Twilio auto-send
-    let twilioSent = false;
-    let twilioError = null;
-    const TWILIO_SID  = process.env.TWILIO_ACCOUNT_SID;
-    const TWILIO_AUTH = process.env.TWILIO_AUTH_TOKEN;
-    const TWILIO_FROM = process.env.TWILIO_WHATSAPP_FROM;
-    if (TWILIO_SID && TWILIO_AUTH && TWILIO_FROM && phone && waMsg) {
-      try {
-        const body = new URLSearchParams({
-          From: TWILIO_FROM,
-          To:   `whatsapp:+${phone.replace(/^\+/, '')}`,
-          Body: waMsg,
-        });
-        const twRes = await fetch(
-          `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: 'Basic ' + Buffer.from(`${TWILIO_SID}:${TWILIO_AUTH}`).toString('base64'),
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: body.toString(),
-          }
-        );
-        if (twRes.ok) { twilioSent = true; } else {
-          const eb = await twRes.json().catch(() => ({}));
-          twilioError = `${twRes.status}: ${eb?.message || eb?.code || 'unknown'}`;
-          console.warn('[Twilio]', twilioError);
-        }
-      } catch(e) { twilioError = e.message; }
-    }
-    res.json({ ok: true, wa_message: waMsg, wa_link: waLink, twilio_sent: twilioSent, twilio_error: twilioError||null });
+    res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 

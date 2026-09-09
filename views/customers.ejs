@@ -175,10 +175,6 @@
       <button id="btnToggleVip" onclick="toggleCustomerVip()" class="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold px-4 py-2 rounded-xl shadow-sm">
         👑 تحويل إلى VIP
       </button>
-      <button id="btnWhatsapp" onclick="openWhatsapp()" class="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-sm">
-        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.123 1.532 5.855L.054 23.5l5.819-1.527A11.938 11.938 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.012-1.375l-.36-.213-3.727.977.994-3.63-.235-.374A9.818 9.818 0 1112 21.818z"/></svg>
-        واتساب
-      </button>
       <button onclick="resetCustomerPassword()" class="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-sm font-semibold px-4 py-2 rounded-xl shadow-sm">
         🔑 تصفير كلمة المرور
       </button>
@@ -905,8 +901,7 @@ async function openDetail(cid) {
 
   document.getElementById("detailPlan").textContent = c.installment_plan ? `خطة: ${c.installment_plan}` : "";
 
-  // WhatsApp button visibility
-  document.getElementById("btnWhatsapp").style.display = c.phone ? "flex" : "none";
+
 
   document.getElementById("statementStrip").classList.add("hidden");
   document.getElementById("detailModal").classList.remove("hidden");
@@ -1414,21 +1409,7 @@ async function submitDebtCollection() {
   }
 }
 
-// ── WhatsApp ──────────────────────────────────────────────────────────────────
-function openWhatsapp() {
-  if (!currentCustomer) return;
-  const phone = currentCustomer.phone.replace(/[^0-9]/g, "");
-  const intl = phone.startsWith("0") ? "2" + phone : phone;
-  const debt = currentCustomer.total_debt.toLocaleString('ar-EG', {minimumFractionDigits:2});
-  const msg = encodeURIComponent(
-    `عزيزي الدكتور ${currentCustomer.name} 🌟\n\n` +
-    `نرجو أن تكونوا بتمام الصحة والعافية.\n\n` +
-    `نودّ تذكيركم بلطف بأن لديكم رصيداً مستحقاً بمبلغ *${debt} جنيه* في حسابكم لدينا لم يتم سداده بعد.\n\n` +
-    `يسعدنا تسوية الحساب في أي وقت يناسب حضرتكم.\n\n` +
-    `شاكرين ثقتكم ودوام تعاملكم معنا 🙏`
-  );
-  window.open(`https://wa.me/${intl}?text=${msg}`, '_blank');
-}
+
 
 // ── Pay modal ─────────────────────────────────────────────────────────────────
 let _currentOpenInvoices = [];
