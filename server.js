@@ -3614,20 +3614,24 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
        LEFT JOIN products p ON p.id = si.product_id
        WHERE ${df}`
     );
-    // Return refunds in this period
+    // Return refunds on sales belonging to this period
     const { rows: [rt] } = await posDb.query(
-      `SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r WHERE ${rf}`
+      `SELECT COALESCE(SUM(r.total_refund),0) as t 
+       FROM returns r 
+       JOIN sales s ON s.id = r.sale_id 
+       WHERE ${df}`
     );
-    // Return profit margin in this period = sum of (unit_price - cost_price) * quantity for returns in this period
+    // Return profit margin on sales belonging to this period
     const { rows: [rpR] } = await posDb.query(
       `SELECT COALESCE(SUM(
          ri.quantity * (ri.unit_price - COALESCE(NULLIF(si.snapshot_purchase_price, 0), p.purchase_price, 0))
        ), 0) as return_profit
        FROM return_items ri
        JOIN returns r ON r.id = ri.return_id
+       JOIN sales s ON s.id = r.sale_id
        LEFT JOIN sale_items si ON si.id = ri.sale_item_id
        LEFT JOIN products p ON p.id = COALESCE(ri.product_id, si.product_id)
-       WHERE ${rf}`
+       WHERE ${df}`
     );
 
     const { rows: [et] } = await posDb.query(
@@ -3713,9 +3717,20 @@ app.get(`${BASE}/api/reports/top-products`, async (req, res) => {
   try {
     const df = periodFilter(period, 's.date');
     const { rows } = await posDb.query(
-      `SELECT si.product_name, SUM(si.quantity) as total_qty, SUM(si.quantity*si.unit_price) as total_revenue
-       FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE ${df}
-       GROUP BY si.product_name ORDER BY total_qty DESC LIMIT 20`
+      `SELECT si.product_name,
+              SUM(GREATEST(0, si.quantity - COALESCE(ri.ret_qty, 0))) as total_qty,
+              SUM(GREATEST(0, si.quantity - COALESCE(ri.ret_qty, 0)) * si.unit_price) as total_revenue
+       FROM sale_items si
+       JOIN sales s ON s.id=si.sale_id
+       LEFT JOIN (
+         SELECT sale_item_id, SUM(quantity) as ret_qty
+         FROM return_items
+         GROUP BY sale_item_id
+       ) ri ON ri.sale_item_id = si.id
+       WHERE ${df}
+       GROUP BY si.product_name
+       HAVING SUM(GREATEST(0, si.quantity - COALESCE(ri.ret_qty, 0))) > 0
+       ORDER BY total_qty DESC LIMIT 20`
     );
     res.json(rows);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
@@ -3727,9 +3742,18 @@ app.get(`${BASE}/api/reports/top-customers`, async (req, res) => {
     const df = periodFilter(period, 's.date');
     const { rows } = await posDb.query(
       `SELECT COALESCE(c.name, s.customer_name, 'عميل نقدي') as customer_name,
-              COUNT(*) as order_count, SUM(s.total_amount) as total_spent
-       FROM sales s LEFT JOIN customers c ON c.id=s.customer_id WHERE ${df}
-       GROUP BY COALESCE(c.name, s.customer_name, 'عميل نقدي') ORDER BY total_spent DESC LIMIT 20`
+              COUNT(DISTINCT s.id) as order_count,
+              SUM(GREATEST(0, s.total_amount - COALESCE(ret.refund_amt, 0))) as total_spent
+       FROM sales s
+       LEFT JOIN customers c ON c.id=s.customer_id
+       LEFT JOIN (
+         SELECT sale_id, SUM(total_refund) as refund_amt
+         FROM returns
+         GROUP BY sale_id
+       ) ret ON ret.sale_id = s.id
+       WHERE ${df}
+       GROUP BY COALESCE(c.name, s.customer_name, 'عميل نقدي')
+       ORDER BY total_spent DESC LIMIT 20`
     );
     res.json(rows);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
