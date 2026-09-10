@@ -815,6 +815,19 @@ async function initDb() {
       console.error('[initDb] Legacy address migration notice:', migErr.message);
     }
 
+    // 🧹 Self-healing: Clean up accidental 'النزهة' assigned to pickup orders or customers without explicit Nozha street
+    try {
+      await client.query(`
+        UPDATE customers
+        SET region = '',
+            address = TRIM(REPLACE(address, 'النزهة', ''))
+        WHERE id IN (71, 74) 
+           OR (region = 'النزهة' AND (address IS NULL OR address = '' OR address = 'النزهة' OR address ILIKE '%استلام%'));
+      `);
+    } catch (cleanErr) {
+      console.error('[initDb] Nozha cleanup notice:', cleanErr.message);
+    }
+
   } finally {
     client.release();
   }

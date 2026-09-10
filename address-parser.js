@@ -76,16 +76,15 @@ function parseEgyptianAddress(raw) {
 
   if (!detectedCity && !detectedRegion) {
     detectedCity = 'القاهرة';
-    detectedRegion = 'وسط البلد';
+    detectedRegion = '';
   } else if (!detectedCity && detectedRegion) {
     detectedCity = 'القاهرة';
   } else if (detectedCity && !detectedRegion) {
-    const govDistricts = EGYPT_GOVERNORATES[detectedCity];
-    detectedRegion = (govDistricts && govDistricts[0]) || detectedCity;
+    detectedRegion = '';
   }
 
   let title = 'العيادة الرئيسية';
-  if (detectedRegion && detectedRegion !== 'وسط البلد') {
+  if (detectedRegion) {
     title = 'عيادة ' + detectedRegion;
   } else if (detectedCity && detectedCity !== 'القاهرة') {
     title = 'عيادة ' + detectedCity;
@@ -131,7 +130,7 @@ function normalizeEgyptianAddresses(addrs, legacyAddress) {
         id: 'addr_' + (idx + 1),
         title: 'عيادة #' + (idx + 1),
         city: 'القاهرة',
-        region: 'وسط البلد',
+        region: '',
         details: item,
         address: item,
         is_default: idx === 0
