@@ -763,7 +763,8 @@ function onCustomerSelectChange() {
     addresses = typeof cust.addresses === 'string' ? JSON.parse(cust.addresses) : (cust.addresses || []);
   } catch (_) { addresses = []; }
 
-  clinicSelect.innerHTML = `<option value="">-- العنوان المسجل: ${cust.address || 'لا يوجد عنوان مسجل'} --</option>`;
+  const cleanCustAddr = (cust.address || '').replace(/استلام من مقر الشركة|الفرع الرئيسي/g, '').trim();
+  clinicSelect.innerHTML = `<option value="${cleanCustAddr}">${cleanCustAddr ? '-- ' + cleanCustAddr + ' --' : '-- لا يوجد عنوان مسجل (اختر عيادة بالأسفل أو أضف عنواناً) --'}</option>`;
   if (addresses.length > 0) {
     document.getElementById("addressesCountBadge").textContent = `${addresses.length} عيادة`;
     addresses.forEach((a, idx) => {

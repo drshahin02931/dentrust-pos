@@ -4886,17 +4886,26 @@ async function upsertCustomerInPOS(data) {
   const { name, phone, city, region, street, building, landmark, address, dentrust_id } = data;
   if (!phone) return null;
   const cleanPhone = phone.trim();
-  const fullAddr = address || [street, building, region].filter(Boolean).join('، ');
+  let cleanStreet = (street || '').trim();
+  if (cleanStreet.includes('استلام من مقر الشركة') || cleanStreet.includes('الفرع الرئيسي')) {
+    cleanStreet = '';
+  }
+  let fullAddr = address || [cleanStreet, building, region].filter(Boolean).join('، ');
+  if (fullAddr.includes('استلام من مقر الشركة') || fullAddr.includes('الفرع الرئيسي')) {
+    fullAddr = '';
+  }
   const { rows: [existing] } = await posDb.query('SELECT id FROM customers WHERE phone=$1', [cleanPhone]);
   if (existing) {
     await posDb.query(
       `UPDATE customers SET
         name = CASE WHEN name IS NULL OR name='' THEN $1 ELSE name END,
         city = COALESCE(NULLIF($2,''), city), region = COALESCE(NULLIF($3,''), region),
-        street = COALESCE(NULLIF($4,''), street), building_number = COALESCE(NULLIF($5,''), building_number),
-        landmark = COALESCE(NULLIF($6,''), landmark), address = COALESCE(NULLIF($7,''), address),
+        street = CASE WHEN $4 != '' THEN $4 ELSE street END,
+        building_number = COALESCE(NULLIF($5,''), building_number),
+        landmark = COALESCE(NULLIF($6,''), landmark),
+        address = CASE WHEN $7 != '' THEN $7 ELSE address END,
         dentrust_id = COALESCE(dentrust_id, $8) WHERE phone=$9`,
-      [name, city || '', region || '', street || '', building || '', landmark || '', fullAddr, dentrust_id, cleanPhone]
+      [name, city || '', region || '', cleanStreet, building || '', landmark || '', fullAddr, dentrust_id, cleanPhone]
     );
     return existing.id;
   }

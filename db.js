@@ -404,6 +404,10 @@ const MIGRATIONS = [
    FROM website_order_alerts woa
    WHERE s.dentrust_order_id::text = woa.dentrust_order_id::text
      AND (woa.customer_address LIKE '%استلام من مقر الشركة%' OR woa.customer_address LIKE '%الفرع الرئيسي%')`,
+  `UPDATE customers
+   SET address = CASE WHEN address LIKE '%استلام من مقر الشركة%' OR address LIKE '%الفرع الرئيسي%' THEN '' ELSE address END,
+       street = CASE WHEN street LIKE '%استلام من مقر الشركة%' OR street LIKE '%الفرع الرئيسي%' THEN '' ELSE street END
+   WHERE address LIKE '%استلام من مقر الشركة%' OR address LIKE '%الفرع الرئيسي%' OR street LIKE '%استلام من مقر الشركة%' OR street LIKE '%الفرع الرئيسي%'`,
 ];
 
 // Migrations that run on the PUBLIC schema (Supabase website DB) — customers table.

@@ -31,25 +31,42 @@ const _hasDiscount = sale.discount_amount && parseFloat(sale.discount_amount) > 
 const _subtotalBeforeDiscount = _itemsSubtotal > 0 ? _itemsSubtotal : Math.max(0, _netTotal + parseFloat(sale.discount_amount || 0) - _effectiveDelivery);
 
 function fmt(n) { return parseFloat(n || 0).toFixed(2); }
-const _isPickupOrder = (sale.delivery_type === 'pickup' || sale.delivery_type === 'store_pickup'
-  || (sale.clinic_address && (sale.clinic_address.includes('استلام من مقر الشركة') || sale.clinic_address.includes('الفرع الرئيسي')))
-  || (customer && customer.address && (customer.address.includes('استلام من مقر الشركة') || customer.address.includes('الفرع الرئيسي')))
-  || (sale.customer_address && (sale.customer_address.includes('استلام من مقر الشركة') || sale.customer_address.includes('الفرع الرئيسي'))));
+
+const _isDeliveryOrder = (sale.delivery_type === 'delivery' || sale.delivery_type === 'shipping' 
+  || (sale.delivery_amount && parseFloat(sale.delivery_amount) > 0)
+  || (sale.clinic_address && !sale.clinic_address.includes('استلام من مقر الشركة') && !sale.clinic_address.includes('الفرع الرئيسي')));
+
+const _isWebsitePickup = !_isDeliveryOrder && (
+  (['online','website'].includes(sale.source) || sale.dentrust_order_id) &&
+  (sale.delivery_type === 'pickup' || sale.delivery_type === 'store_pickup'
+   || (sale.clinic_address && (sale.clinic_address.includes('استلام من مقر الشركة') || sale.clinic_address.includes('الفرع الرئيسي')))
+   || (sale.customer_address && (sale.customer_address.includes('استلام من مقر الشركة') || sale.customer_address.includes('الفرع الرئيسي'))))
+);
+
+const _isPickupOrder = !_isDeliveryOrder && (_isWebsitePickup || sale.delivery_type === 'pickup' || sale.delivery_type === 'store_pickup');
 
 function payMethodAr(m) {
-  if (_isPickupOrder && (!m || m === 'online' || m === 'pickup' || m === 'store_pickup' || m === 'cash')) {
+  if (_isWebsitePickup && (!m || m === 'online' || m === 'pickup' || m === 'store_pickup')) {
     return 'الدفع عند الاستلام بالفرع';
   }
-  const map = { cash:'كاش', naqdi:'كاش', visa:'فيزا', instapay:'InstaPay', split:'مقسّم', credit:'آجل', online:'أونلاين', pickup:'دفع عند الاستلام بالفرع', store_pickup:'دفع عند الاستلام بالفرع' };
+  const map = { cash:'كاش', naqdi:'كاش', visa:'فيزا', instapay:'InstaPay', split:'مقسّم', credit:'آجل', online:'أونلاين', pickup:'استلام من الفرع', store_pickup:'استلام من الفرع' };
   return map[m] || m;
 }
 function payMethodEn(m) {
-  if (_isPickupOrder && (!m || m === 'online' || m === 'pickup' || m === 'store_pickup' || m === 'cash')) {
+  if (_isWebsitePickup && (!m || m === 'online' || m === 'pickup' || m === 'store_pickup')) {
     return 'Pay at Store / Branch';
   }
-  const map = { cash:'Cash', naqdi:'Cash', visa:'Visa', instapay:'InstaPay', split:'Split', credit:'Credit', online:'Online', pickup:'Pay at Store / Branch', store_pickup:'Pay at Store / Branch' };
+  const map = { cash:'Cash', naqdi:'Cash', visa:'Visa', instapay:'InstaPay', split:'Split', credit:'Credit', online:'Online', pickup:'Store Pickup', store_pickup:'Store Pickup' };
   return map[m] || m;
 }
+
+function cleanAddr(addr) {
+  if (!addr) return '';
+  const s = String(addr).trim();
+  if (s.includes('استلام من مقر الشركة') || s.includes('الفرع الرئيسي')) return '';
+  return s;
+}
+const _validAddress = cleanAddr(sale.clinic_address) || cleanAddr(customer && customer.address);
 %>
 <html lang="<%= showAr ? 'ar' : 'en' %>" dir="<%= (showAr && !isBoth) ? 'rtl' : 'ltr' %>">
 <head>
@@ -179,10 +196,15 @@ function payMethodEn(m) {
   <% if (customer) { %>
   <div class="row"><span>العميل</span><span class="bold" style="max-width:55%;text-align:left;"><%- customer.name %> <%= customer.customer_code ? ('[' + customer.customer_code + ']') : '' %></span></div>
   <% if (customer.phone) { %><div class="row"><span>الهاتف</span><span class="bold"><%= customer.phone %></span></div><% } %>
-  <% if (_isPickupOrder) { %>
-  <div class="row"><span>طريقة التسليم</span><span class="bold" style="color:#000;">🏪 استلام من مقر الشركة / الفرع</span></div>
-  <% } else if (sale.clinic_address || customer.address) { %>
-  <div class="row"><span>عنوان التوصيل</span><span style="max-width:60%;text-align:left;word-break:break-word;"><%- sale.clinic_address || customer.address %></span></div>
+  <% if (_isDeliveryOrder) { %>
+  <div class="row"><span>طريقة التسليم</span><span class="bold" style="color:#000;">🛵 توصيل للعيادة</span></div>
+  <% if (_validAddress) { %>
+  <div class="row"><span>عنوان التوصيل</span><span style="max-width:60%;text-align:left;word-break:break-word;"><%- _validAddress %></span></div>
+  <% } %>
+  <% } else if (_isPickupOrder) { %>
+  <div class="row"><span>طريقة التسليم</span><span class="bold" style="color:#000;">🏪 استلام من الفرع / مقر الشركة</span></div>
+  <% } else if (_validAddress) { %>
+  <div class="row"><span>العنوان</span><span style="max-width:60%;text-align:left;word-break:break-word;"><%- _validAddress %></span></div>
   <% } %>
   <% if (sale.promo_code) { %>
   <div class="row"><span>كود الخصم</span><span class="bold">🎟️ <%= sale.promo_code %></span></div>
@@ -198,13 +220,19 @@ function payMethodEn(m) {
     <% } %>
     <div class="row"><span>Date</span><span><%= saleDateStr %></span></div>
     <div class="row"><span>Payment</span><span class="bold"><%= payMethodEn(sale.payment_method) %></span></div>
-    <% if (_isPickupOrder) { %>
-    <div class="row"><span>Delivery</span><span class="bold">🏪 Store Pickup (Branch)</span></div>
+    <% if (_isDeliveryOrder) { %>
+    <div class="row"><span>Delivery</span><span class="bold" style="color:#000;">🛵 Clinic Delivery</span></div>
+    <% if (_validAddress) { %>
+    <div class="row"><span>Delivery Address</span><span style="max-width:60%;word-break:break-word;"><%- _validAddress %></span></div>
+    <% } %>
+    <% } else if (_isPickupOrder) { %>
+    <div class="row"><span>Delivery</span><span class="bold" style="color:#000;">🏪 Store Pickup</span></div>
+    <% } else if (_validAddress) { %>
+    <div class="row"><span>Address</span><span style="max-width:60%;word-break:break-word;"><%- _validAddress %></span></div>
     <% } %>
     <% if (customer) { %>
     <div class="row"><span>Customer</span><span class="bold"><%- customer.name %></span></div>
     <% if (customer.phone) { %><div class="row"><span>Phone</span><span class="bold"><%= customer.phone %></span></div><% } %>
-    <% if (!_isPickupOrder && customer.address) { %><div class="row"><span>Address</span><span style="max-width:60%;word-break:break-word;"><%- customer.address %></span></div><% } %>
     <% } %>
   </div>
   <% } %>
