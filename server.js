@@ -1799,12 +1799,16 @@ app.post(`${BASE}/api/sales/:sid/mark-credit-paid`, async (req, res) => {
       cashAmount = actualPay;
     }
 
-    await posDb.query('UPDATE sales SET paid_amount=$1, credit_paid=$2 WHERE id=$3', [newPaid, isFullyPaid, sid]);
+    await safeUpdateSaleCreditStatus(posDb, sid, newPaid, isFullyPaid);
     if (actualPay > 0 && sale.customer_id) {
-      await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [actualPay, sale.customer_id]);
-      await posDb.query(
-        'INSERT INTO customer_payments (customer_id, amount, cash_amount, instapay_amount, note) VALUES ($1,$2,$3,$4,$5)',
-        [sale.customer_id, actualPay, cashAmount, instapayAmount, `سداد فاتورة آجل #${sid} ${isFullyPaid ? '(سداد كامل)' : '(سداد جزئي)'}`]
+      await posDb.query('UPDATE customers SET total_debt = GREATEST(0, COALESCE(total_debt, 0) - $1) WHERE id=$2', [actualPay, sale.customer_id]);
+      await safeInsertCustomerPayment(
+        posDb,
+        sale.customer_id,
+        actualPay,
+        cashAmount,
+        instapayAmount,
+        `سداد فاتورة آجل #${sid} ${isFullyPaid ? '(سداد كامل)' : '(سداد جزئي)'}`
       );
     }
     res.json({
@@ -3004,6 +3008,61 @@ app.get(`${BASE}/api/customers/:cid/orders`, async (req, res) => {
   }
 });
 
+// ── Safe Helpers for Sales Payment Updates & Customer Payments ──────────────
+async function safeUpdateSaleCreditStatus(db, saleId, paidAmount, isFullyPaid) {
+  const intVal = isFullyPaid ? 1 : 0;
+  const boolVal = Boolean(isFullyPaid);
+  try {
+    await db.query(
+      'UPDATE sales SET paid_amount = $1, credit_paid = $2 WHERE id = $3',
+      [paidAmount, intVal, saleId]
+    );
+  } catch (err) {
+    if (err.message && (err.message.includes('boolean') || err.message.includes('type'))) {
+      await db.query(
+        'UPDATE sales SET paid_amount = $1, credit_paid = $2 WHERE id = $3',
+        [paidAmount, boolVal, saleId]
+      );
+    } else if (err.message && err.message.includes('paid_amount')) {
+      await db.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS paid_amount NUMERIC DEFAULT 0').catch(() => {});
+      try {
+        await db.query('UPDATE sales SET paid_amount = $1, credit_paid = $2 WHERE id = $3', [paidAmount, intVal, saleId]);
+      } catch (_) {
+        await db.query('UPDATE sales SET paid_amount = $1, credit_paid = $2 WHERE id = $3', [paidAmount, boolVal, saleId]);
+      }
+    } else {
+      throw err;
+    }
+  }
+}
+
+async function safeInsertCustomerPayment(db, customerId, amount, cashAmount, instapayAmount, note) {
+  try {
+    await db.query(
+      'INSERT INTO customer_payments (customer_id, amount, cash_amount, instapay_amount, note) VALUES ($1, $2, $3, $4, $5)',
+      [customerId, amount, cashAmount, instapayAmount, note || '']
+    );
+  } catch (err) {
+    if (err.message && (err.message.includes('column') || err.message.includes('cash_amount') || err.message.includes('instapay_amount'))) {
+      await db.query('ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS cash_amount NUMERIC DEFAULT 0').catch(() => {});
+      await db.query('ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS instapay_amount NUMERIC DEFAULT 0').catch(() => {});
+      try {
+        await db.query(
+          'INSERT INTO customer_payments (customer_id, amount, cash_amount, instapay_amount, note) VALUES ($1, $2, $3, $4, $5)',
+          [customerId, amount, cashAmount, instapayAmount, note || '']
+        );
+      } catch (_) {
+        await db.query(
+          'INSERT INTO customer_payments (customer_id, amount, note) VALUES ($1, $2, $3)',
+          [customerId, amount, note || '']
+        );
+      }
+    } else {
+      throw err;
+    }
+  }
+}
+
 app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
   const cid = parseInt(req.params.cid, 10);
   const d = req.body;
@@ -3015,13 +3074,10 @@ app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
 
   try {
     // 1. Update customer total debt
-    await posDb.query('UPDATE customers SET total_debt = GREATEST(0, total_debt - $1) WHERE id=$2', [amount, cid]);
+    await posDb.query('UPDATE customers SET total_debt = GREATEST(0, COALESCE(total_debt, 0) - $1) WHERE id=$2', [amount, cid]);
 
-    // 2. Insert payment record
-    await posDb.query(
-      'INSERT INTO customer_payments (customer_id, amount, cash_amount, instapay_amount, note) VALUES ($1,$2,$3,$4,$5)',
-      [cid, amount, cashAmt, instaAmt, d.note || '']
-    );
+    // 2. Insert payment record safely
+    await safeInsertCustomerPayment(posDb, cid, amount, cashAmt, instaAmt, d.note || '');
 
     // 3. Allocate to open invoices
     if (allocations && allocations.length > 0) {
@@ -3041,19 +3097,38 @@ app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
             const currentPaid = parseFloat(sale.paid_amount || 0);
             const newPaid = currentPaid + allocAmt;
             const isFullyPaid = (newPaid >= origDebt - 0.001);
-            await posDb.query('UPDATE sales SET paid_amount=$1, credit_paid=$2 WHERE id=$3', [newPaid, isFullyPaid, saleId]);
+            await safeUpdateSaleCreditStatus(posDb, saleId, newPaid, isFullyPaid);
           }
         }
       }
     } else if (amount > 0) {
       // Automatic FIFO Allocation across open credit invoices (oldest first)
-      const { rows: openSales } = await posDb.query(
-        `SELECT id, total_amount, amount_received, payment_method, payment_split, paid_amount
-         FROM sales 
-         WHERE customer_id=$1 AND payment_method IN ('credit','split') AND (credit_paid::text NOT IN ('true', '1') OR credit_paid IS NULL)
-         ORDER BY date ASC, id ASC`,
-        [cid]
-      );
+      let openSales = [];
+      try {
+        const { rows } = await posDb.query(
+          `SELECT id, total_amount, amount_received, payment_method, payment_split, COALESCE(paid_amount, 0) as paid_amount
+           FROM sales 
+           WHERE customer_id=$1 AND payment_method IN ('credit','split') AND (credit_paid::text NOT IN ('true', '1') OR credit_paid IS NULL)
+           ORDER BY date ASC, id ASC`,
+          [cid]
+        );
+        openSales = rows;
+      } catch (qErr) {
+        if (qErr.message && qErr.message.includes('paid_amount')) {
+          await posDb.query('ALTER TABLE sales ADD COLUMN IF NOT EXISTS paid_amount NUMERIC DEFAULT 0').catch(() => {});
+          const { rows } = await posDb.query(
+            `SELECT id, total_amount, amount_received, payment_method, payment_split, 0 as paid_amount
+             FROM sales 
+             WHERE customer_id=$1 AND payment_method IN ('credit','split') AND (credit_paid::text NOT IN ('true', '1') OR credit_paid IS NULL)
+             ORDER BY date ASC, id ASC`,
+            [cid]
+          );
+          openSales = rows;
+        } else {
+          throw qErr;
+        }
+      }
+
       let remToAllocate = amount;
       for (const sale of openSales) {
         if (remToAllocate <= 0) break;
@@ -3069,7 +3144,7 @@ app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
           const payThis = Math.min(invRem, remToAllocate);
           const newPaid = currentPaid + payThis;
           const isFullyPaid = (newPaid >= origDebt - 0.001);
-          await posDb.query('UPDATE sales SET paid_amount=$1, credit_paid=$2 WHERE id=$3', [newPaid, isFullyPaid, sale.id]);
+          await safeUpdateSaleCreditStatus(posDb, sale.id, newPaid, isFullyPaid);
           remToAllocate -= payThis;
         }
       }
@@ -3077,7 +3152,7 @@ app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[POST /api/customers/:cid/pay Error]:', err);
-    res.status(500).json({ error: 'خطأ داخلي' });
+    res.status(500).json({ error: err.message || 'خطأ داخلي في تسجيل الدفعة' });
   }
 });
 
@@ -3121,7 +3196,7 @@ app.post([`${BASE}/api/customers/:cid/reconcile-debt`, '/api/customers/:cid/reco
 
       const isCreditType = (s.payment_method === 'credit' || s.payment_method === 'split');
       if (!isCreditType || origDebt <= 0) {
-        await posDb.query('UPDATE sales SET credit_paid=true WHERE id=$1', [s.id]);
+        await safeUpdateSaleCreditStatus(posDb, s.id, parseFloat(s.paid_amount || origDebt), true);
         continue;
       }
 
@@ -3129,18 +3204,18 @@ app.post([`${BASE}/api/customers/:cid/reconcile-debt`, '/api/customers/:cid/reco
         const debtOnThis = Math.min(origDebt, remainingDebtToCover);
         const paidOnThis = Math.max(0, origDebt - debtOnThis);
         const isFullyPaid = (debtOnThis <= 0.001);
-        await posDb.query('UPDATE sales SET paid_amount=$1, credit_paid=$2 WHERE id=$3', [paidOnThis, isFullyPaid, s.id]);
+        await safeUpdateSaleCreditStatus(posDb, s.id, paidOnThis, isFullyPaid);
         remainingDebtToCover -= debtOnThis;
       } else {
         // Debt covered by newer invoices -> mark older invoice fully paid
-        await posDb.query('UPDATE sales SET paid_amount=$1, credit_paid=true WHERE id=$2', [origDebt, s.id]);
+        await safeUpdateSaleCreditStatus(posDb, s.id, origDebt, true);
       }
     }
 
     res.json({ ok: true, message: 'تمت تسوية وتوزيع الدين بنجاح على الفواتير' });
   } catch (err) {
     console.error('[POST /api/customers/:cid/reconcile-debt Error]:', err);
-    res.status(500).json({ error: 'خطأ أثناء تسوية وتوزيع الدين' });
+    res.status(500).json({ error: err.message || 'خطأ أثناء تسوية وتوزيع الدين' });
   }
 });
 
