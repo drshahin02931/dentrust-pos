@@ -2282,12 +2282,8 @@ app.post(`${BASE}/api/customer/register`, async (req, res) => {
       [ins.id, customerCode, name.trim(), cleanPhone + (extraStr ? `, ${extraStr}` : '')]
     ).catch(() => {});
 
-    await posDb.query(
-      `INSERT INTO website_order_alerts
-         (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id, total_amount, items_count, items_summary, seen)
-       VALUES ($1, $2, $3, $4, 'new_customer', 0, 0, 'تسجيل طبيب جديد من الموقع (+50 نقطة ترحيبية)', false)`,
-      [name.trim(), cleanPhone, city || '', address || '']
-    ).catch(() => {});
+    // Registration is recorded in customers & customer_audit_logs; NOT in website_order_alerts (which is strictly for actual store purchases!)
+
 
     res.status(201).json({
       ok: true,
@@ -4915,17 +4911,6 @@ async function upsertCustomerInPOS(data) {
   const { rows: [ins] } = await posDb.query(
     'INSERT INTO customers (name, phone, city, region, street, building_number, landmark, address, dentrust_id, points_balance) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, 50) RETURNING id',
     [name, cleanPhone, city || '', region || '', street || '', building || '', landmark || '', fullAddr, dentrust_id]
-  );
-  // 🔔 Alert POS staff: new customer registered from website
-  try {
-    const addrDisplay = fullAddr || city || region || '';
-    await posDb.query(
-      `INSERT INTO website_order_alerts
-         (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id, total_amount, items_count, items_summary, seen)
-       VALUES ($1,$2,$3,$4,'new_customer',0,0,'تسجيل جديد من الموقع',false)`,
-      [name, cleanPhone, city || '', addrDisplay]
-    );
-  } catch (_) {}
   return ins.id;
 }
 

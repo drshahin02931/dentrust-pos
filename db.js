@@ -828,6 +828,17 @@ async function initDb() {
       console.error('[initDb] Nozha cleanup notice:', cleanErr.message);
     }
 
+    // 🧹 Clean up any dummy registration rows from website_order_alerts (registrations belong in website-registrations, not website-orders!)
+    try {
+      await client.query(`
+        DELETE FROM website_order_alerts
+        WHERE dentrust_order_id = 'new_customer'
+           OR items_summary LIKE '%تسجيل%';
+      `);
+    } catch (cleanOrderErr) {
+      console.error('[initDb] Registration alerts cleanup notice:', cleanOrderErr.message);
+    }
+
   } finally {
     client.release();
   }
