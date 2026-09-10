@@ -435,15 +435,17 @@ app.get(`${BASE}/invoice/order/:order_id`, async (req, res) => {
       });
     }
 
+    const isAlertPickup = alert.customer_address && (alert.customer_address.includes('استلام من مقر الشركة') || alert.customer_address.includes('الفرع الرئيسي'));
     const sale = {
       id: alert.dentrust_order_id || alert.id,
       date: alert.created_at ? new Date(alert.created_at).toISOString() : new Date().toISOString(),
-      payment_method: 'online',
+      payment_method: isAlertPickup ? 'pickup' : (alert.payment_method || 'cash'),
+      delivery_type: isAlertPickup ? 'pickup' : 'delivery',
       source: 'online',
       dentrust_order_id: alert.dentrust_order_id,
       total_amount: parseFloat(alert.total_amount || 0),
       discount_amount: parseFloat(alert.discount_amount || 0),
-      delivery_amount: parseFloat(alert.delivery_amount || 0),
+      delivery_amount: isAlertPickup ? 0 : parseFloat(alert.delivery_amount || 0),
       promo_code: alert.promo_code || null,
       customer_name: alert.customer_name || '',
     };
@@ -5561,11 +5563,17 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     let total = parseFloat(d.total_amount || d.total || 0);
     if (!total && items.length) total = items.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
     const onlineDiscount = d.discount_amount != null && d.discount_amount !== '' ? parseFloat(d.discount_amount) : 0;
-    const onlineDelivery = d.delivery_amount != null && d.delivery_amount !== '' ? parseFloat(d.delivery_amount) : (d.delivery_fee != null && d.delivery_fee !== '' ? parseFloat(d.delivery_fee) : 0);
+    const isPickup = d.delivery_type === 'store_pickup' || d.delivery_type === 'pickup' ||
+      (d.customer_street && (d.customer_street.includes('استلام من مقر الشركة') || d.customer_street.includes('الفرع الرئيسي'))) ||
+      (d.customer_address && (d.customer_address.includes('استلام من مقر الشركة') || d.customer_address.includes('الفرع الرئيسي')));
+    const effectiveDeliveryType = isPickup ? 'pickup' : 'delivery';
+    const effectivePayMethod = isPickup ? 'pickup' : (d.payment_method === 'instapay' ? 'instapay' : (d.payment_method === 'split' ? 'split' : (d.payment_method || 'cash')));
+    const effectiveDelivery = isPickup ? 0 : (d.delivery_amount != null && d.delivery_amount !== '' ? parseFloat(d.delivery_amount) : (d.delivery_fee != null && d.delivery_fee !== '' ? parseFloat(d.delivery_fee) : 0));
+
     const { rows: [sale] } = await posDb.query(
-      `INSERT INTO sales (total_amount, payment_method, customer_id, source, dentrust_order_id, customer_name, discount_amount, delivery_amount)
-       VALUES ($1,'online',$2,'online',$3,$4,$5,$6) RETURNING id`,
-      [total, customerId, d.dentrust_order_id || null, d.customer_name || '', onlineDiscount, onlineDelivery]
+      `INSERT INTO sales (total_amount, payment_method, customer_id, source, dentrust_order_id, customer_name, discount_amount, delivery_amount, delivery_type)
+       VALUES ($1,$2,$3,'online',$4,$5,$6,$7,$8) RETURNING id`,
+      [total, effectivePayMethod, customerId, d.dentrust_order_id || null, d.customer_name || '', onlineDiscount, effectiveDelivery, effectiveDeliveryType]
     );
     const saleId = sale.id;
     let deducted = 0;

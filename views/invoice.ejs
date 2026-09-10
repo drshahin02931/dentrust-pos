@@ -31,12 +31,23 @@ const _hasDiscount = sale.discount_amount && parseFloat(sale.discount_amount) > 
 const _subtotalBeforeDiscount = _itemsSubtotal > 0 ? _itemsSubtotal : Math.max(0, _netTotal + parseFloat(sale.discount_amount || 0) - _effectiveDelivery);
 
 function fmt(n) { return parseFloat(n || 0).toFixed(2); }
+const _isPickupOrder = (sale.delivery_type === 'pickup' || sale.delivery_type === 'store_pickup'
+  || (sale.clinic_address && (sale.clinic_address.includes('استلام من مقر الشركة') || sale.clinic_address.includes('الفرع الرئيسي')))
+  || (customer && customer.address && (customer.address.includes('استلام من مقر الشركة') || customer.address.includes('الفرع الرئيسي')))
+  || (sale.customer_address && (sale.customer_address.includes('استلام من مقر الشركة') || sale.customer_address.includes('الفرع الرئيسي'))));
+
 function payMethodAr(m) {
-  const map = { cash:'كاش', naqdi:'كاش', visa:'فيزا', instapay:'InstaPay', split:'مقسّم', credit:'آجل', online:'أونلاين' };
+  if (_isPickupOrder && (!m || m === 'online' || m === 'pickup' || m === 'store_pickup' || m === 'cash')) {
+    return 'الدفع عند الاستلام بالفرع';
+  }
+  const map = { cash:'كاش', naqdi:'كاش', visa:'فيزا', instapay:'InstaPay', split:'مقسّم', credit:'آجل', online:'أونلاين', pickup:'دفع عند الاستلام بالفرع', store_pickup:'دفع عند الاستلام بالفرع' };
   return map[m] || m;
 }
 function payMethodEn(m) {
-  const map = { cash:'Cash', naqdi:'Cash', visa:'Visa', instapay:'InstaPay', split:'Split', credit:'Credit', online:'Online' };
+  if (_isPickupOrder && (!m || m === 'online' || m === 'pickup' || m === 'store_pickup' || m === 'cash')) {
+    return 'Pay at Store / Branch';
+  }
+  const map = { cash:'Cash', naqdi:'Cash', visa:'Visa', instapay:'InstaPay', split:'Split', credit:'Credit', online:'Online', pickup:'Pay at Store / Branch', store_pickup:'Pay at Store / Branch' };
   return map[m] || m;
 }
 %>
@@ -168,8 +179,8 @@ function payMethodEn(m) {
   <% if (customer) { %>
   <div class="row"><span>العميل</span><span class="bold" style="max-width:55%;text-align:left;"><%- customer.name %> <%= customer.customer_code ? ('[' + customer.customer_code + ']') : '' %></span></div>
   <% if (customer.phone) { %><div class="row"><span>الهاتف</span><span class="bold"><%= customer.phone %></span></div><% } %>
-  <% if (sale.delivery_type === 'pickup') { %>
-  <div class="row"><span>طريقة التسليم</span><span class="bold" style="color:#000;">🏪 استلام من الفرع</span></div>
+  <% if (_isPickupOrder) { %>
+  <div class="row"><span>طريقة التسليم</span><span class="bold" style="color:#000;">🏪 استلام من مقر الشركة / الفرع</span></div>
   <% } else if (sale.clinic_address || customer.address) { %>
   <div class="row"><span>عنوان التوصيل</span><span style="max-width:60%;text-align:left;word-break:break-word;"><%- sale.clinic_address || customer.address %></span></div>
   <% } %>
@@ -187,10 +198,13 @@ function payMethodEn(m) {
     <% } %>
     <div class="row"><span>Date</span><span><%= saleDateStr %></span></div>
     <div class="row"><span>Payment</span><span class="bold"><%= payMethodEn(sale.payment_method) %></span></div>
+    <% if (_isPickupOrder) { %>
+    <div class="row"><span>Delivery</span><span class="bold">🏪 Store Pickup (Branch)</span></div>
+    <% } %>
     <% if (customer) { %>
     <div class="row"><span>Customer</span><span class="bold"><%- customer.name %></span></div>
     <% if (customer.phone) { %><div class="row"><span>Phone</span><span class="bold"><%= customer.phone %></span></div><% } %>
-    <% if (customer.address) { %><div class="row"><span>Address</span><span style="max-width:60%;word-break:break-word;"><%- customer.address %></span></div><% } %>
+    <% if (!_isPickupOrder && customer.address) { %><div class="row"><span>Address</span><span style="max-width:60%;word-break:break-word;"><%- customer.address %></span></div><% } %>
     <% } %>
   </div>
   <% } %>

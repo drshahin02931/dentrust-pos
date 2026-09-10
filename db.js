@@ -398,6 +398,12 @@ const MIGRATIONS = [
     usage_count INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`,
+  `UPDATE sales SET payment_method = 'pickup', delivery_type = 'pickup', delivery_amount = 0
+   WHERE id = 310 OR delivery_type = 'store_pickup'`,
+  `UPDATE sales s SET payment_method = 'pickup', delivery_type = 'pickup', delivery_amount = 0
+   FROM website_order_alerts woa
+   WHERE s.dentrust_order_id::text = woa.dentrust_order_id::text
+     AND (woa.customer_address LIKE '%استلام من مقر الشركة%' OR woa.customer_address LIKE '%الفرع الرئيسي%')`,
 ];
 
 // Migrations that run on the PUBLIC schema (Supabase website DB) — customers table.
