@@ -1945,7 +1945,10 @@ app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
     if (sale.dentrust_order_id) {
       try {
         const dtClient = await dentrustDb.connect();
-        try { await dtClient.query('DELETE FROM orders WHERE id=$1', [sale.dentrust_order_id]); }
+        try {
+          await dtClient.query('DELETE FROM order_items WHERE order_id=$1', [sale.dentrust_order_id]);
+          await dtClient.query('DELETE FROM orders WHERE id=$1', [sale.dentrust_order_id]);
+        }
         finally { dtClient.release(); }
       } catch (_) {}
       try { await posDb.query('DELETE FROM website_order_alerts WHERE dentrust_order_id=$1', [String(sale.dentrust_order_id)]); } catch (_) {}
@@ -7577,16 +7580,21 @@ app.get(`${BASE}/api/website-orders/:id`, async (req, res) => {
 app.delete(`${BASE}/api/website-orders/:id`, async (req, res) => {
   if (!req.session?.user_id) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    const { rows: [order] } = await posDb.query('SELECT dentrust_order_id FROM website_order_alerts WHERE id=$1', [req.params.id]);
-    await posDb.query('DELETE FROM website_order_alerts WHERE id=$1', [req.params.id]);
+    const paramId = String(req.params.id);
+    const { rows: [order] } = await posDb.query('SELECT dentrust_order_id FROM website_order_alerts WHERE id::text=$1 OR dentrust_order_id::text=$1', [paramId]);
+    await posDb.query('DELETE FROM website_order_alerts WHERE id::text=$1 OR dentrust_order_id::text=$1', [paramId]);
     // Also delete from website DB and linked POS sale
-    if (order?.dentrust_order_id) {
+    const targetDtId = order?.dentrust_order_id || (parseInt(paramId, 10) ? paramId : null);
+    if (targetDtId) {
       try {
         const dtClient = await dentrustDb.connect();
-        try { await dtClient.query('DELETE FROM orders WHERE id=$1', [order.dentrust_order_id]); }
+        try {
+          await dtClient.query('DELETE FROM order_items WHERE order_id=$1', [parseInt(targetDtId, 10)]);
+          await dtClient.query('DELETE FROM orders WHERE id=$1', [parseInt(targetDtId, 10)]);
+        }
         finally { dtClient.release(); }
       } catch (_) {}
-      try { await posDb.query('UPDATE sales SET dentrust_order_id=NULL WHERE dentrust_order_id=$1', [String(order.dentrust_order_id)]); } catch (_) {}
+      try { await posDb.query('UPDATE sales SET dentrust_order_id=NULL WHERE dentrust_order_id::text=$1', [String(targetDtId)]); } catch (_) {}
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
