@@ -169,7 +169,7 @@ async function loadStats() {
     try {
       const _p = new URLSearchParams({ limit: '1' });
       if (s !== 'all') _p.set('status', s);
-      const r = await fetch(`${BASE}/api/website-orders/all?${_p}`);
+      const r = await fetch(`${BASE}/api/website-orders/all?${_p}`, { credentials: 'include' });
       const d = await r.json();
       return { s, total: d.total || 0 };
     } catch { return { s, total: 0 }; }
@@ -194,10 +194,14 @@ async function loadOrders() {
     </div>`;
   try {
     const qs = new URLSearchParams({ status, search, page: _currentPage });
-    const res = await fetch(`${BASE}/api/website-orders/all?${qs}`);
+    const res = await fetch(`${BASE}/api/website-orders/all?${qs}`, { credentials: 'include' });
+    if (res.status === 401) {
+      window.location.href = `${BASE}/login`;
+      return;
+    }
     const { orders, total, limit } = await res.json();
-    renderOrders(orders);
-    renderPagination(total, limit);
+    renderOrders(orders || []);
+    renderPagination(total || 0, limit || 20);
     loadStats();
   } catch(e) {
     document.getElementById('ordersContainer').innerHTML =
@@ -347,7 +351,7 @@ async function openDetail(id) {
     `<div class="flex items-center justify-center py-8 text-gray-400">جارٍ التحميل...</div>`;
   document.getElementById('detailModal').classList.remove('hidden');
   try {
-    const res  = await fetch(`${BASE}/api/website-orders/${id}`);
+    const res  = await fetch(`${BASE}/api/website-orders/${id}`, { credentials: 'include' });
     const { order, items } = await res.json();
     _detailOrder = order;
     _detailItems  = items || [];
@@ -448,6 +452,7 @@ async function saveDetailStatus() {
     const res  = await fetch(`${BASE}/api/website-orders/${_detailOrder.id}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ status, notes: '' })
     });
     const data = await res.json();
@@ -501,7 +506,7 @@ async function deleteFromDetail() {
   const btn = document.getElementById('detailDeleteBtn');
   btn.disabled = true; btn.textContent = '⏳';
   try {
-    await fetch(`${BASE}/api/website-orders/${_detailOrder.id}`, { method: 'DELETE' });
+    await fetch(`${BASE}/api/website-orders/${_detailOrder.id}`, { method: 'DELETE', credentials: 'include' });
     closeDetail();
     loadOrders();
   } catch(e) { alert('خطأ: ' + e.message); btn.disabled = false; btn.innerHTML = '🗑 Delete'; }
@@ -548,6 +553,7 @@ async function saveStatus() {
     const res = await fetch(`${BASE}/api/website-orders/${_currentOrderId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ status: _selectedStatus, notes: document.getElementById('modalNotes').value })
     });
     const data = await res.json();
@@ -580,7 +586,7 @@ async function deleteOrder(id, btn) {
     btn.innerHTML = '⏳ جارٍ المسح...';
   }
   try {
-    const res = await fetch(`${BASE}/api/website-orders/${id}`, { method: 'DELETE' });
+    const res = await fetch(`${BASE}/api/website-orders/${id}`, { method: 'DELETE', credentials: 'include' });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       throw new Error(d.error || 'فشل مسح الطلب');
