@@ -5674,7 +5674,7 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     if (deductedProdIds.length > 0) syncProductsNow(deductedProdIds.map(d => d.pid)).catch(() => {});
 
     // 💎 Loyalty Points for Online Orders (0 points if order is credit / installment)
-    const isCreditOrder = payment_method === 'credit' || req.body.payment_method === 'credit';
+    const isCreditOrder = (d.payment_method === 'credit' || req.body?.payment_method === 'credit');
     if (customerId && !isCreditOrder) {
       try {
         const { rows: [cRow] } = await posDb.query('SELECT is_vip FROM customers WHERE id=$1', [customerId]);
