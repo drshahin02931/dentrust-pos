@@ -110,8 +110,8 @@
         </select>
       </div>
       <button id="detailDeleteBtn" onclick="deleteFromDetail()"
-        class="flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-600 font-bold py-2 px-4 rounded-xl text-sm border border-red-200 whitespace-nowrap">
-        🗑 Delete
+        class="flex items-center gap-1.5 bg-red-50 hover:bg-red-600 hover:text-white text-red-600 font-black py-2 px-4 rounded-xl text-sm border border-red-200 hover:border-red-600 transition-all whitespace-nowrap cursor-pointer">
+        🗑️ مسح الطلب
       </button>
     </div>
     <!-- Footer row 2: print -->
@@ -245,7 +245,12 @@ function renderOrders(orders) {
             ${new Date(o.created_at).toLocaleDateString('ar-EG',{day:'numeric',month:'short'})}
             ${new Date(o.created_at).toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'})}
           </div>
-          <span class="text-xs text-blue-400 font-medium">اضغط للتفاصيل ←</span>
+          <span class="text-xs text-blue-500 font-bold hover:underline">اضغط للتفاصيل ←</span>
+          <button onclick="event.stopPropagation(); deleteOrder(${o.id}, this)"
+            class="mt-1 flex items-center gap-1.5 bg-red-50 hover:bg-red-600 text-red-600 hover:text-white border border-red-200 hover:border-red-600 font-black text-xs px-3 py-1.5 rounded-xl transition-all shadow-xs cursor-pointer"
+            title="مسح هذا الطلب نهائياً">
+            🗑️ مسح الطلب
+          </button>
         </div>
       </div>
     </div>`).join('');
@@ -569,12 +574,26 @@ async function copyWaMsg() {
 }
 
 async function deleteOrder(id, btn) {
-  if (!confirm('هتحذف الطلب ده؟')) return;
-  btn.disabled = true;
+  if (!confirm('هل أنت متأكد من مسح هذا الطلب نهائياً من السيستم؟')) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '⏳ جارٍ المسح...';
+  }
   try {
-    await fetch(`${BASE}/api/website-orders/${id}`, { method: 'DELETE' });
+    const res = await fetch(`${BASE}/api/website-orders/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.error || 'فشل مسح الطلب');
+    }
     loadOrders();
-  } catch(e) { alert('خطأ: ' + e.message); btn.disabled = false; }
+    if (typeof loadStats === 'function') loadStats();
+  } catch(e) {
+    alert('خطأ: ' + e.message);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '🗑️ مسح الطلب';
+    }
+  }
 }
 
 function escHtml(s) {
