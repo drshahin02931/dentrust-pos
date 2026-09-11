@@ -6533,7 +6533,8 @@ function buildGeminiPayload(messages = [], systemPrompt = '', maxTokens = 1000) 
     contents,
     generationConfig: {
       temperature: 0.7,
-      maxOutputTokens: Math.min(Number(maxTokens) || 1000, 2048),
+      maxOutputTokens: Math.max(Number(maxTokens) || 2048, 2048),
+      thinkingConfig: { thinkingBudget: 0 }
     }
   };
 
