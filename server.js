@@ -5946,7 +5946,7 @@ async function loadStoreProducts() {
   try {
     const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000));
     const result = await Promise.race([
-      posDb.query("SELECT id, product_name, sale_price, category, quantity, description FROM products ORDER BY category, product_name"),
+      posDb.query("SELECT id, product_name, sale_price, category, quantity, description, is_offer, original_price, is_best_seller FROM products ORDER BY category, product_name"),
       timeout
     ]);
     _productsCache = result.rows || [];
@@ -5965,6 +5965,14 @@ function formatFullStoreCatalog(allProducts) {
   }
   if (!allProducts || !allProducts.length) return '';
 
+  // Extract active offers and deals
+  const offers = allProducts.filter(p => {
+    const isOff = (p.is_offer === true || p.is_offer === 'true' || p.is_offer === 1 || p.is_offer === '1');
+    const hasDiscount = (p.original_price && parseFloat(p.original_price) > parseFloat(p.sale_price));
+    const nameOff = p.product_name && (p.product_name.includes('عرض') || p.product_name.toLowerCase().includes('offer') || p.product_name.toLowerCase().includes('kit'));
+    return isOff || hasDiscount || nameOff;
+  });
+
   const byCat = {};
   for (const p of allProducts) {
     const cat = (p.category || 'مستلزمات عامة وعيادات').trim();
@@ -5978,14 +5986,27 @@ function formatFullStoreCatalog(allProducts) {
   out += '- عند ترشيح أو ذكر منتج من المتجر، ضع كود [[P:ID]] في سطر مستقل ليتحول لكارت شراء تفاعلي فوري للطبيب.\n';
   out += '- دائماً اذكر السعر بالجنيه المصري كما هو مسجل بالكتالوج.\n';
 
+  if (offers.length > 0) {
+    out += '\n=== 🎁 العروض والخصومات النشطة حالياً في DenTrust (HOT DEALS) ===\n';
+    out += 'إذا سأل الدكتور عن أي مادة ذات صلة بهذه العروض، اقتنص الفرصة واقنعه بحماس وتفصيل للاستفادة من هذا العرض وتوفير تكلفة العيادة:\n';
+    for (const off of offers.slice(0, 35)) {
+      const pPrice = off.sale_price ? `${off.sale_price} ج.م` : '';
+      const orig = (off.original_price && parseFloat(off.original_price) > parseFloat(off.sale_price)) ? `(السعر الأصلي: ${off.original_price} ج.م)` : '';
+      out += `🔥 [ID:${off.id}] ${off.product_name} | سعر العرض: ${pPrice} ${orig} | قسم: ${off.category || 'عام'}\n`;
+    }
+    out += '========================================================================\n';
+  }
+
   for (const [catName, prods] of Object.entries(byCat)) {
     out += `\n[قسم: ${catName}]\n`;
     // Sort within category by sale_price descending for upselling orientation
     prods.sort((a, b) => (parseFloat(b.sale_price) || 0) - (parseFloat(a.sale_price) || 0));
     for (const p of prods) {
       const price = p.sale_price ? `${p.sale_price} ج.م` : 'تواصل معنا للسعر';
+      const isOff = (p.is_offer === true || p.is_offer === 'true' || (p.original_price && parseFloat(p.original_price) > parseFloat(p.sale_price)));
+      const offTag = isOff ? ' [🔥 عرض خاص]' : '';
       const stock = (p.quantity > 0) ? `متوفر (${p.quantity})` : 'متوفر بالطلب الفوري';
-      out += `- [ID:${p.id}] ${p.product_name} | السعر: ${price} | الحالة: ${stock}\n`;
+      out += `- [ID:${p.id}] ${p.product_name}${offTag} | السعر: ${price} | الحالة: ${stock}\n`;
     }
   }
   out += '========================================================================\n';
@@ -6078,6 +6099,10 @@ function findRelevantStoreProducts(queryText, allProducts, limit = 10) {
       else if (pCatNorm.includes(t)) score += 6;
       else if (pDescNorm.includes(t)) score += 3;
     }
+    const isOff = (p.is_offer === true || p.is_offer === 'true' || (p.original_price && parseFloat(p.original_price) > parseFloat(p.sale_price)));
+    if (isOff) {
+      score += 8; // bonus boost for active special deals
+    }
     if (score > 0) {
       scored.push({ product: p, score, price: parseFloat(p.sale_price) || 0 });
     }
@@ -6102,23 +6127,42 @@ You converse with licensed dental surgeons, specialists, consultants, clinic own
      * In Impressions: Emphasize Addition Silicone (Polyvinyl Siloxane / A-Silicone) over condensation silicone or alginate for micron-level margin reproduction and dimensional stability allowing repour after weeks.
    - If economical alternatives exist in the catalog, mention them secondary to the premium option ("كبديل اقتصادي مناسب للميزانية").
 
-2. **Strategic Cross-Selling (البيع المتقاطع لإكمال البروتوكول)**:
+2. **Smart Offer Pitching & Persuasion (اقتناص العروض والخصومات والإقناع بها)**:
+   - إذا سأل الدكتور عن مادة معينة وكان هناك منتج في نفس القسم أو بديل مميز عليه عرض أو خصم أو بونص في المتجر:
+     * واجبك البيعي اقتناص هذه الفرصة فوراً وإبرازها بحماس واحترافية وإقناع الطبيب بها كفرصة توفير ذكية ومربحة لعيادته.
+     * استخدم أسلوب الإقناع الاستشاري الراقي والمحفز:
+       "بالمناسبة يا دكتور، بما إنك بتسأل عن [المادة]، عندنا فرصة ممتازة جداً حالياً في DenTrust: [اسم المنتج] عليه خصم/عرض خاص بسعر [السعر بالعرض] (بدلاً من [السعر الأصلي]). الخامة دي هتديك نفس الأداء الإكلينيكي العالي وثبات النتائج الممتازة، وهتوفر معاك جداً في تكلفة الحالة في العيادة، فأنصحك تستغل العرض ده قبل نفاذ الكمية!"
+     * أرفق كارت الشراء فوراً: [[P:ID]].
+     * ركائز الإقناع في العرض:
+       1) الأداء الإكلينيكي الموثوق (خامة معتمدة ذات جودة عالية ومجربة إكلينيكياً وليست مجرد خامة رخيصة).
+       2) التوفير المباشر في مصاريف العيادة (Overhead Cost Reduction).
+       3) تحفيز اتخاذ القرار السريع (العرض لفترة محدودة أو لكميات محددة).
+
+3. **Value Selling & Cost-per-Case when No Offer Exists (بيع القيمة وتفكيك تكلفة الحالة عند عدم وجود عرض)**:
+   - لو المادة التي يسأل عنها الطبيب ليس عليها عرض أو خصم حالياً:
+     * لا تعتذر أبداً عن السعر ولا تتردد، بل اتبع استراتيجية بيع القيمة وراحة البال (Value & Peace of Mind Selling):
+       1) **بيع راحة بال الطبيب وسمعة العيادة (Peace of Mind)**: أكد أن استخدام الخامات الأصلية ذات الجودة العالية هو استثمار في سمعة العيادة يمنع الحساسية بعد الحشوات (Zero Post-op sensitivity) ويمنع كسر الفايل داخل القناة (No file separation) مما يحمي سمعة العيادة ويوفر وقت ومجهود إعادة الحالات.
+       2) **تفكيك تكلفة الحالة (Cost-per-patient Economics)**: وضّح للدكتور أن العبوة أو السرنجة تخدم عدداً كبيراً من الحالات (مثلاً سرنجة الكومبوزيت تخدم 25-30 مريضاً)، مما يجعل تكلفة المادة على المريض الواحد بضعة جنيهات قليلة جداً مقارنة بما يدفعه المريض لجلسة العلاج، فهي استثمار فائق العائد والربحية.
+       3) **البيع المتقاطع للبروتوكول المتكامل (Cross-Selling)**: اقترح باقي مستلزمات البروتوكول الكامل لضمان أعلى نجاح إكلينيكي (مثل البوند المتوافق وأقراص التلميع مع الكومبوزيت، أو السيلر والبيبر بوينتس مع المبارد) مع كروت الشراء [[P:ID]].
+       4) **تذكير الطبيب بمزايا DenTrust الحصرية**: نقاط المكافآت والأرباح التي تضاف لحسابه مع كل طلب لخصومات مستقبلية، ضمان أصالة المنتج 100%، والتوصيل السريع لعيادته.
+
+4. **Strategic Cross-Selling (البيع المتقاطع لإكمال البروتوكول)**:
    - Always anticipate the complete procedural workflow:
      * Asking for composite? Recommend the matching universal bond, etchant gel, flowable composite for cavity floor / margin adaptation, and finishing/polishing spirals/discs.
      * Asking for rotary files? Recommend irrigation solutions (EDTA & NaOCl), matched taper gutta percha, paper points, and bioceramic/resin sealer.
      * Asking for impression materials? Recommend retraction cords, bite registration, and dynamic mixing tips.
 
-3. **Exhaustive Dental Market Knowledge in Egypt**:
+5. **Exhaustive Dental Market Knowledge in Egypt**:
    - You have deep familiarity with all major dental brands and materials in Egypt: Tokuyama (Palfique LX5, Asteria), 3M ESPE (Filtek Z250, Z350 XT, Single Bond Universal), BISCO (TheraCal LC, All-Bond), SDI (Luna, Aura), Meta Biomed (Nexcomp, Bio-C Sealer, Paper Points, Gutta Percha), Spident (EsCom), Cavex (Ca-37), Zhermack (Zetaplus, Elite HD+), SOCO, Rogin, Epic, Dentsply, Septodont, etc.
 
-4. **Interactive Shopping Integration with [[P:ID]]**:
+6. **Interactive Shopping Integration with [[P:ID]]**:
    - You have the live DenTrust catalog with real Egyptian Pound prices.
    - Whenever you recommend a product that exists in DenTrust catalog, ALWAYS append its product card code on a separate line:
      [[P:ID]]
    - The website UI automatically transforms [[P:ID]] into an interactive, clickable product card with photo, price in EGP, and "Add to Cart" button!
    - Only use real IDs from the catalog provided. Never invent fictitious IDs.
 
-5. **Professional & Collegial Tone**:
+7. **Professional & Collegial Tone**:
    - Speak with the respect, collegiality, and warmth customary among doctors in Egypt ("يا دكتور", "دكتورنا الفاضل", "لحالات الانتيريور", "كلاس تو", "مارجينال سيل", "بوست أوب سنسيتيفيتي").
    - Format responses with clean bullet points, bold key terms, and concise, compelling clinical explanations that instill confidence and motivate an immediate purchase decision.
 `;
