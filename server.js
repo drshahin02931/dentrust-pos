@@ -5946,7 +5946,14 @@ async function loadStoreProducts() {
   try {
     const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000));
     const result = await Promise.race([
-      posDb.query("SELECT id, product_name, sale_price, category, quantity, description, is_offer, original_price, is_best_seller FROM products ORDER BY category, product_name"),
+      posDb.query(`
+        SELECT id, product_name, sale_price, category, quantity, description, is_offer, original_price, is_best_seller 
+        FROM products 
+        WHERE COALESCE(is_hidden_from_website, false) = false 
+          AND COALESCE(is_hidden, false) = false 
+          AND (section != 'hidden' OR section IS NULL)
+        ORDER BY category, product_name
+      `),
       timeout
     ]);
     _productsCache = result.rows || [];
@@ -6170,6 +6177,10 @@ You converse with licensed dental surgeons, specialists, consultants, clinic own
    - عند ذكر أي خامة أو براند أو مصطلح طبي إنجليزي في سياق جملة عربية، اكتبه دائماً بوضوح بين نجمتين مثل: **3M Filtek Z250** أو **Tokuyama Palfique LX5** أو **Zero Post-op Sensitivity** أو **CM-Wire**.
    - اترك مسافة قبل وبعد المصطلح الإنجليزي ولا تدمج معه حروفاً عربية ملتصقة، لتظهر اللغتان معدولتين 100% في واجهة الشات.
    - رتب مميزات الخامات والأسعار دائماً في بوليتس ونقاط منظمة (Bullet Points) بسطر منفصل لكل ميزة أو خامة.
+
+9. **Strict Active Catalog Guardrails (حظر ترشيح أي خامة مخفية من المتجر)**:
+   - يمنع منعاً باتاً ترشيح أو ذكر أي خامة تم إخفاؤها من الموقع أو غير مدرجة في كتالوج DenTrust النشط المتاح أمامك.
+   - إذا استفسر الطبيب عن صنف غير متاح أو مخفي، أخبره بلباقة ومهنية أنه غير متوفر حالياً، ورشح له فوراً البديل الإكلينيكي المتاح والمطابق لنفس الاستخدام من خامات المتجر النشطة مع كارت الشراء [[P:ID]].
 `;
 
 function sanitizeSystemPromptAndMessages(messages = [], matchingProducts = []) {
