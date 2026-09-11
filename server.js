@@ -5923,6 +5923,8 @@ let _knowledgeCache = null;
 let _knowledgeCacheAt = 0;
 let _productsCache = null;
 let _productsCacheAt = 0;
+let _fullCatalogTextCache = null;
+let _fullCatalogTextCacheAt = 0;
 const KNOWLEDGE_TTL = 180_000; // 3 min cache
 
 async function loadStoreProducts() {
@@ -5931,9 +5933,9 @@ async function loadStoreProducts() {
     return _productsCache;
   }
   try {
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000));
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000));
     const result = await Promise.race([
-      posDb.query("SELECT id, product_name, sale_price, category, quantity, description FROM products WHERE quantity > 0 ORDER BY product_name"),
+      posDb.query("SELECT id, product_name, sale_price, category, quantity, description FROM products ORDER BY category, product_name"),
       timeout
     ]);
     _productsCache = result.rows || [];
@@ -5943,6 +5945,42 @@ async function loadStoreProducts() {
     console.warn('[Store Products Load]', err.message);
     return _productsCache || [];
   }
+}
+
+function formatFullStoreCatalog(allProducts) {
+  const now = Date.now();
+  if (_fullCatalogTextCache && (now - _fullCatalogTextCacheAt < KNOWLEDGE_TTL)) {
+    return _fullCatalogTextCache;
+  }
+  if (!allProducts || !allProducts.length) return '';
+
+  const byCat = {};
+  for (const p of allProducts) {
+    const cat = (p.category || 'مستلزمات عامة وعيادات').trim();
+    if (!byCat[cat]) byCat[cat] = [];
+    byCat[cat].push(p);
+  }
+
+  let out = '\n\n=== كتالوج منتجات متجر DENTRUST الرسمي الكامل (الأسعار الحالية المعتمدة بالجنيه المصري) ===\n';
+  out += 'إرشادات استشارية لمبيعات DenTrust:\n';
+  out += '- أنت تعرف الآن كل منتجات المتجر الـ 339 بدقة.\n';
+  out += '- عند ترشيح أو ذكر منتج من المتجر، ضع كود [[P:ID]] في سطر مستقل ليتحول لكارت شراء تفاعلي فوري للطبيب.\n';
+  out += '- دائماً اذكر السعر بالجنيه المصري كما هو مسجل بالكتالوج.\n';
+
+  for (const [catName, prods] of Object.entries(byCat)) {
+    out += `\n[قسم: ${catName}]\n`;
+    // Sort within category by sale_price descending for upselling orientation
+    prods.sort((a, b) => (parseFloat(b.sale_price) || 0) - (parseFloat(a.sale_price) || 0));
+    for (const p of prods) {
+      const price = p.sale_price ? `${p.sale_price} ج.م` : 'تواصل معنا للسعر';
+      const stock = (p.quantity > 0) ? `متوفر (${p.quantity})` : 'متوفر بالطلب الفوري';
+      out += `- [ID:${p.id}] ${p.product_name} | السعر: ${price} | الحالة: ${stock}\n`;
+    }
+  }
+  out += '========================================================================\n';
+  _fullCatalogTextCache = out;
+  _fullCatalogTextCacheAt = now;
+  return out;
 }
 
 async function loadStorePolicies() {
@@ -5959,7 +5997,7 @@ async function loadStorePolicies() {
     let text = '';
     if (result.rows?.length) {
       const lines = result.rows.map(r => `[${r.category}] ${r.title}: ${r.content}`).join('\n');
-      text = `\n\n=== معلومات المتجر والسياسات الرسمية (DenTrust) ===\n${lines}\n===`;
+      text = `\n\n=== معلومات المتجر وسياسات DenTrust ===\n${lines}\n===`;
     }
     _knowledgeCache = text;
     _knowledgeCacheAt = now;
@@ -5969,7 +6007,7 @@ async function loadStorePolicies() {
   }
 }
 
-function findRelevantStoreProducts(queryText, allProducts, limit = 5) {
+function findRelevantStoreProducts(queryText, allProducts, limit = 10) {
   if (!queryText || typeof queryText !== 'string' || !allProducts || !allProducts.length) return [];
   
   const clean = queryText
@@ -5982,11 +6020,35 @@ function findRelevantStoreProducts(queryText, allProducts, limit = 5) {
 
   const stopWords = new Set([
     'في', 'من', 'على', 'عن', 'هو', 'هي', 'ده', 'دي', 'هل', 'شو', 'مين', 'لو', 'مع', 'انا', 'انت',
-    'the', 'and', 'for', 'with', 'are', 'is', 'was', 'this', 'that', 'what', 'which', 'better', 'than'
+    'the', 'and', 'for', 'with', 'are', 'is', 'was', 'this', 'that', 'what', 'which', 'better', 'than',
+    'عندكم', 'عايز', 'ممكن', 'عاوز', 'لو_سمحت', 'كام', 'سعر', 'اسعار'
   ]);
   const tokens = clean.split(/\s+/).filter(t => t.length >= 2 && !stopWords.has(t));
 
-  if (!tokens.length) return [];
+  const dentalSynonyms = {
+    'كومبوزيت': ['composite', 'حشو', 'فلوبل', 'flow', 'bulk', 'shade', 'etch', 'bond', 'tokuyama', '3m', 'bisco', 'escom', 'nexcomp'],
+    'حشو': ['composite', 'كومبوزيت', 'liner', 'theracal', 'fuji', 'amalgam', 'filling'],
+    'عصب': ['endo', 'روتاري', 'file', 'files', 'gutta', 'paper', 'sealer', 'apex', 'epic', 'protaper'],
+    'مبارد': ['file', 'files', 'rotary', 'epic', 'protaper', 'endo', 'k-file'],
+    'مقاس': ['impression', 'alginate', 'silicone', 'putty', 'light', 'tray', 'zetaplus', 'cavex'],
+    'بوند': ['bond', 'bonding', 'adhesive', 'universal', 'etch', 'primer'],
+    'تلميع': ['polishing', 'disc', 'spiral', 'strip', 'brush', 'bur', 'burs'],
+    'تثبيت': ['cement', 'luting', 'relyx', 'fuji', 'panavia', 'resin'],
+    'مطهر': ['germ', 'disinfect', 'steril', 'micro', 'autoclave'],
+    'جوانتي': ['glove', 'gloves', 'latex', 'nitrile'],
+    'بنج': ['anesthesia', 'articaine', 'mepivacaine', 'needle', 'septodont']
+  };
+
+  const expandedTokens = new Set(tokens);
+  for (const t of tokens) {
+    for (const [k, vList] of Object.entries(dentalSynonyms)) {
+      if (t.includes(k) || k.includes(t)) {
+        vList.forEach(v => expandedTokens.add(v));
+      }
+    }
+  }
+
+  if (!expandedTokens.size) return [];
 
   const scored = [];
   for (const p of allProducts) {
@@ -6000,19 +6062,55 @@ function findRelevantStoreProducts(queryText, allProducts, limit = 5) {
     const pDescNorm = (p.description || '').toLowerCase();
 
     let score = 0;
-    for (const t of tokens) {
-      if (pNameNorm.includes(t)) score += 10;
-      else if (pCatNorm.includes(t)) score += 4;
-      else if (pDescNorm.includes(t)) score += 2;
+    for (const t of expandedTokens) {
+      if (pNameNorm.includes(t)) score += 15;
+      else if (pCatNorm.includes(t)) score += 6;
+      else if (pDescNorm.includes(t)) score += 3;
     }
     if (score > 0) {
-      scored.push({ product: p, score });
+      scored.push({ product: p, score, price: parseFloat(p.sale_price) || 0 });
     }
   }
 
-  scored.sort((a, b) => b.score - a.score);
+  // Sort by score first, then by price descending (upselling top products)
+  scored.sort((a, b) => b.score - a.score || b.price - a.price);
   return scored.slice(0, limit).map(s => s.product);
 }
+
+const CLINICAL_SALES_PERSONA = `You are "DenBot" — an elite Dental Clinical Consultant and Senior Sales Advisor for DenTrust Dental Supplies in Egypt.
+You converse with licensed dental surgeons, specialists, consultants, clinic owners, and dental interns across Egypt.
+
+🏆 CORE SALES & UPSELLING PHILOSOPHY (قواعد البيع والترشيح الاحترافي):
+1. **Always Upsell the Premium / Highest-Priced Option (الترشيح الإكلينيكي للفئة الأعلى سعراً أولاً)**:
+   - When recommending products or comparing options, ALWAYS present and advocate for the highest-tier, premium product in DenTrust's catalog as the #1 clinical choice.
+   - Ground your recommendation in authoritative dental science and clinical superiority:
+     * In Composites: Highlight submicron/nanohybrid filler load (>82% wt), lowest volumetric shrinkage (<1.5%), superior depth of cure, high flexural/compressive strength, exceptional polish retention that won't dull over time, true chameleon effect blending seamlessly without white lines, and absolute ZERO post-operative sensitivity.
+     * In Endo (Root Canal): Highlight CM-Wire / proprietary heat treatment, extreme cyclic fatigue resistance preventing file separation, superior canal centering preserving anatomy, and rapid shaping efficiency.
+     * In Adhesives (Bonding): Highlight 10-MDP monomer technology, high micro-tensile bond strength to both enamel and moist dentin, self-etch or universal versatility, and complete dentinal tubule sealing preventing sensitivity.
+     * In Liners/Bases: Recommend bioactive liners like BISCO TheraCal LC for direct/indirect pulp capping due to significant calcium release, alkaline pH, and secondary dentin bridge stimulation.
+     * In Impressions: Emphasize Addition Silicone (Polyvinyl Siloxane / A-Silicone) over condensation silicone or alginate for micron-level margin reproduction and dimensional stability allowing repour after weeks.
+   - If economical alternatives exist in the catalog, mention them secondary to the premium option ("كبديل اقتصادي مناسب للميزانية").
+
+2. **Strategic Cross-Selling (البيع المتقاطع لإكمال البروتوكول)**:
+   - Always anticipate the complete procedural workflow:
+     * Asking for composite? Recommend the matching universal bond, etchant gel, flowable composite for cavity floor / margin adaptation, and finishing/polishing spirals/discs.
+     * Asking for rotary files? Recommend irrigation solutions (EDTA & NaOCl), matched taper gutta percha, paper points, and bioceramic/resin sealer.
+     * Asking for impression materials? Recommend retraction cords, bite registration, and dynamic mixing tips.
+
+3. **Exhaustive Dental Market Knowledge in Egypt**:
+   - You have deep familiarity with all major dental brands and materials in Egypt: Tokuyama (Palfique LX5, Asteria), 3M ESPE (Filtek Z250, Z350 XT, Single Bond Universal), BISCO (TheraCal LC, All-Bond), SDI (Luna, Aura), Meta Biomed (Nexcomp, Bio-C Sealer, Paper Points, Gutta Percha), Spident (EsCom), Cavex (Ca-37), Zhermack (Zetaplus, Elite HD+), SOCO, Rogin, Epic, Dentsply, Septodont, etc.
+
+4. **Interactive Shopping Integration with [[P:ID]]**:
+   - You have the live DenTrust catalog with real Egyptian Pound prices.
+   - Whenever you recommend a product that exists in DenTrust catalog, ALWAYS append its product card code on a separate line:
+     [[P:ID]]
+   - The website UI automatically transforms [[P:ID]] into an interactive, clickable product card with photo, price in EGP, and "Add to Cart" button!
+   - Only use real IDs from the catalog provided. Never invent fictitious IDs.
+
+5. **Professional & Collegial Tone**:
+   - Speak with the respect, collegiality, and warmth customary among doctors in Egypt ("يا دكتور", "دكتورنا الفاضل", "لحالات الانتيريور", "كلاس تو", "مارجينال سيل", "بوست أوب سنسيتيفيتي").
+   - Format responses with clean bullet points, bold key terms, and concise, compelling clinical explanations that instill confidence and motivate an immediate purchase decision.
+`;
 
 function sanitizeSystemPromptAndMessages(messages = [], matchingProducts = []) {
   if (!Array.isArray(messages)) return [];
@@ -6022,14 +6120,13 @@ function sanitizeSystemPromptAndMessages(messages = [], matchingProducts = []) {
       if (clean.includes('DENTRUST PRODUCT CATALOG (live inventory):')) {
         clean = clean.replace(/DENTRUST PRODUCT CATALOG \(live inventory\):[\s\S]*?(?=RULES:|$)/, () => {
           if (!matchingProducts.length) {
-            return 'DENTRUST PRODUCT CATALOG:\n(No specific products matched. Answer clinical/procedural queries directly as an expert dental consultant with high scientific accuracy. If the doctor asks for a recommendation, recommend suitable materials and check store availability).\n\n';
+            return 'DENTRUST TOP MATCHING PRODUCTS:\n(No specific products directly matched query words, but consult the full DenTrust catalog below for all available materials).\n\n';
           }
-          const lines = matchingProducts.map(p => `- ID:${p.id} | "${p.product_name || p.name}" | Price: ${p.sale_price || p.price} EGP`).join('\n');
-          return `DENTRUST MATCHING PRODUCTS IN STORE (You can mention these exact products with [[P:ID]]):\n${lines}\n\n`;
+          const lines = matchingProducts.map(p => `- [ID:${p.id}] "${p.product_name || p.name}" | Price: ${p.sale_price || p.price} EGP | Category: ${p.category || 'Dental'}`).join('\n');
+          return `DENTRUST TOP MATCHING PRODUCTS (Prioritize these premium options with [[P:ID]]):\n${lines}\n\n`;
         });
       }
-      // Add strong clinical persona and forbid inventing random [[P:X]]
-      clean = 'You are "DenBot" — an elite Dental Clinical Consultant and product advisor for DenTrust Dental Supplies in Egypt. You speak with licensed dentists, specialists, and dental students. Always explain dental procedures, materials, indications, shade selection, layering, and clinical properties (polishability, bond strength, shrinkage) with authoritative scientific depth and professional medical Arabic/English. Never invent fake product IDs (only use [[P:ID]] if the ID is listed above).\n\n' + clean;
+      clean = CLINICAL_SALES_PERSONA + '\n\n' + clean;
       return { ...m, content: clean };
     }
     return m;
@@ -6039,6 +6136,7 @@ function sanitizeSystemPromptAndMessages(messages = [], matchingProducts = []) {
 async function getBotKnowledgeText(messages = []) {
   const policies = await loadStorePolicies();
   const allProducts = await loadStoreProducts();
+  const fullCatalogText = formatFullStoreCatalog(allProducts);
 
   let userQuery = '';
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -6049,37 +6147,34 @@ async function getBotKnowledgeText(messages = []) {
     }
   }
 
-  const matching = findRelevantStoreProducts(userQuery, allProducts, 5);
+  const matching = findRelevantStoreProducts(userQuery, allProducts, 10);
 
-  let productsText = '';
+  let spotlightText = '';
   if (matching.length > 0) {
     const lines = matching.map(r => {
       let line = `- [ID:${r.id}] ${r.product_name}`;
       if (r.category) line += ` (${r.category})`;
-      if (r.sale_price) line += ` — السعر: ${r.sale_price} جنيه`;
+      if (r.sale_price) line += ` — السعر: ${r.sale_price} جنيه مصري`;
       return line;
     }).join('\n');
-    productsText = `\n\n=== منتجات مطابقة متوفرة حالياً في متجر DenTrust (اذكر المناسب منها بالاسم مع إضافة [[P:ID]] في سطر منفصل إذا رشحت المنتج) ===\n${lines}\n===`;
+    spotlightText = `\n\n=== أفضل خيارات DENTRUST المقترحة ذات الصلة بسؤال الطبيب (رشح الفئة الأعلى سعراً وجودة واذكر [[P:ID]] في سطر منفصل) ===\n${lines}\n===`;
   }
 
-  return { knowledgeText: `${policies}${productsText}`, matching };
+  return { knowledgeText: `${policies}${spotlightText}${fullCatalogText}`, matching };
 }
 
 // Language instruction — fully flexible multilingual support (Arabic, English, Franco, etc.)
 const LANG_INSTRUCTION = 'IMPORTANT: You are an intelligent medical dental assistant. You must communicate and respond naturally in whatever language or dialect the user speaks to you (Arabic, English, Franco-Arabic, or any other language) without restriction. Match the user\'s language and tone accurately.\n\n';
 
-// Hard safety cap on the combined system prompt sent to Gemini.
-// Gemini 2.0 Flash supports up to 1M tokens context — 20000 chars
-// gives ample room for full product catalogs, knowledge base entries,
-// and conversation history without hitting any limits.
-const MAX_SYSTEM_CHARS = 20000;
+// Gemini 2.5 Flash has a 1,000,000 token context window.
+// 200,000 chars easily accommodates all 339 products, policies, and clinical knowledge.
+const MAX_SYSTEM_CHARS = 200000;
 function capSystemContent(content) {
   if (!content || content.length <= MAX_SYSTEM_CHARS) return content;
-  return content.slice(0, MAX_SYSTEM_CHARS) + '\n(تم اختصار باقي القائمة لتوفير المساحة)';
+  return content.slice(0, MAX_SYSTEM_CHARS);
 }
 
-// Cap the completion budget. Gemini 2.0 Flash supports generous output —
-// 800 tokens gives detailed, helpful responses without waste.
+// Cap the completion budget.
 const MAX_COMPLETION_TOKENS = 4096;
 function capMaxTokens(requested) {
   const n = Number(requested) || MAX_COMPLETION_TOKENS;
@@ -6380,7 +6475,7 @@ app.get('/api/ai/test', async (req, res) => {
 
 // ── Google Gemini Integration ──────────────────────────────────────────────────
 // Prioritize ultra-fast, stable active models first
-const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-3.7-flash', 'gemini-flash-latest'];
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-flash-latest'];
 const _geminiCooldowns = new Map();
 
 function getActiveGeminiModels() {
@@ -6569,18 +6664,18 @@ app.post('/api/ai/fashion-chat', webCors, async (req, res) => {
     const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledgeText);
     const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...sanitizedMessages] : sanitizedMessages;
 
-    // 1. Try Groq (Ultra-fast ~300ms)
-    if (GROQ_KEY) {
-      const reply = await callGroqGenerate(fullMessages, max_tokens);
+    // 1. Primary: Google Gemini 2.5 Flash (~400ms, 1M token context, full catalog awareness)
+    if (GEMINI_API_KEY) {
+      const geminiBody = buildGeminiPayload(sanitizedMessages, combinedSystem, max_tokens);
+      const reply = await callGeminiGenerate(geminiBody, 25000);
       if (reply) {
         return res.json({ choices: [{ message: { content: reply } }] });
       }
     }
 
-    // 2. Try Gemini 2.5 Flash (~900ms)
-    if (GEMINI_API_KEY) {
-      const geminiBody = buildGeminiPayload(sanitizedMessages, combinedSystem, max_tokens);
-      const reply = await callGeminiGenerate(geminiBody, 25000);
+    // 2. Fallback: Groq Ultra-fast
+    if (GROQ_KEY) {
+      const reply = await callGroqGenerate(fullMessages, max_tokens);
       if (reply) {
         return res.json({ choices: [{ message: { content: reply } }] });
       }
@@ -6637,16 +6732,16 @@ app.post('/api/ai/fashion-chat-stream', webCors, async (req, res) => {
     const combinedSystem = capSystemContent(LANG_INSTRUCTION + system + knowledgeText);
     const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...sanitizedMessages] : sanitizedMessages;
 
-    // 1. Try Groq Ultra-fast SSE stream (~300ms)
-    if (GROQ_KEY) {
-      const ok = await callGroqStream(fullMessages, res, max_tokens);
-      if (ok) return;
-    }
-
-    // 2. Try Gemini 2.5 Flash (~900ms)
+    // 1. Primary: Google Gemini 2.5 Flash SSE Stream
     if (GEMINI_API_KEY) {
       const geminiBody = buildGeminiPayload(sanitizedMessages, combinedSystem, max_tokens);
       const ok = await callGeminiStream(geminiBody, res, 35000);
+      if (ok) return;
+    }
+
+    // 2. Fallback: Groq Ultra-fast SSE stream (~300ms)
+    if (GROQ_KEY) {
+      const ok = await callGroqStream(fullMessages, res, max_tokens);
       if (ok) return;
     }
 
@@ -6682,23 +6777,23 @@ app.post('/api/ai/stylebot', webCors, async (req, res) => {
     const fullMessages = combinedSystem ? [{ role: 'system', content: combinedSystem }, ...sanitizedMessages] : sanitizedMessages;
 
     if (stream) {
-      if (GROQ_KEY) {
-        const ok = await callGroqStream(fullMessages, res, max_tokens);
-        if (ok) return;
-      }
       if (GEMINI_API_KEY) {
         const geminiBody = buildGeminiPayload(sanitizedMessages, combinedSystem, max_tokens);
         const ok = await callGeminiStream(geminiBody, res, 35000);
         if (ok) return;
       }
-    } else {
       if (GROQ_KEY) {
-        const reply = await callGroqGenerate(fullMessages, max_tokens);
-        if (reply) return res.json({ choices: [{ message: { content: reply } }] });
+        const ok = await callGroqStream(fullMessages, res, max_tokens);
+        if (ok) return;
       }
+    } else {
       if (GEMINI_API_KEY) {
         const geminiBody = buildGeminiPayload(sanitizedMessages, combinedSystem, max_tokens);
         const reply = await callGeminiGenerate(geminiBody, 25000);
+        if (reply) return res.json({ choices: [{ message: { content: reply } }] });
+      }
+      if (GROQ_KEY) {
+        const reply = await callGroqGenerate(fullMessages, max_tokens);
         if (reply) return res.json({ choices: [{ message: { content: reply } }] });
       }
     }
