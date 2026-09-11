@@ -4911,6 +4911,7 @@ async function upsertCustomerInPOS(data) {
   const { rows: [ins] } = await posDb.query(
     'INSERT INTO customers (name, phone, city, region, street, building_number, landmark, address, dentrust_id, points_balance) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, 50) RETURNING id',
     [name, cleanPhone, city || '', region || '', street || '', building || '', landmark || '', fullAddr, dentrust_id]
+  );
   return ins.id;
 }
 
