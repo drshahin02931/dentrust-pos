@@ -525,7 +525,12 @@ function renderTable(products) {
     const minStockCell = minStock > 0
       ? `<span class="text-xs font-semibold ${isLow ? 'text-orange-600 bg-orange-100 px-2 py-0.5 rounded-full' : 'text-gray-500'}">${minStock}</span>`
       : `<span class="text-gray-300">—</span>`;
-    const thumbCell = `<div style="width:2.75rem;height:2.75rem;border-radius:0.5rem;" class="bg-gray-100 flex items-center justify-center text-gray-300 text-xs">—</div>`;
+    const imgUrl = p.image_url || (p.has_image ? `${BASE}/api/products/${p.id}/image` : `https://dentrust.site/products_opt/${p.id}.webp`);
+    const thumbCell = `
+      <div style="width:2.75rem;height:2.75rem;border-radius:0.5rem;overflow:hidden;background:#fff;" class="border border-gray-200 flex items-center justify-center flex-shrink-0 shadow-xs">
+        <img src="${imgUrl}" alt="" loading="lazy" class="w-full h-full object-contain p-0.5"
+             onerror="this.onerror=null; this.parentElement.classList.add('bg-gray-50'); this.parentElement.innerHTML='<span class=\\'text-gray-300 text-xs font-mono\\'>—</span>';"/>
+      </div>`;
     
     const isHidden = p.is_hidden_from_website === true || p.is_hidden_from_website === 'true' || p.is_hidden_from_website === 1 || p.is_hidden === true || p.hidden === true || p.section === 'hidden';
     const hideBtn = `
@@ -847,12 +852,19 @@ function editProduct(id) {
 
   // عرض صورة المنتج الحالية إن وجدت
   clearSelectedImage();
-  const currentImg = p.image_url || (p.has_image ? `${BASE}/api/products/${p.id}/image` : '');
+  const currentImg = p.image_url || (p.has_image ? `${BASE}/api/products/${p.id}/image` : `https://dentrust.site/products_opt/${p.id}.webp`);
   if (currentImg) {
-    document.getElementById('imagePreview').src = currentImg;
-    document.getElementById('imagePreviewContainer').classList.remove('hidden');
-    document.getElementById('imageUploadDropzone').classList.add('hidden');
-    document.getElementById('imageStatusText').textContent = 'الصورة الحالية للمنتج على الموقع';
+    const prevImg = document.getElementById('imagePreview');
+    prevImg.onerror = function() {
+      document.getElementById('imagePreviewContainer').classList.add('hidden');
+      document.getElementById('imageUploadDropzone').classList.remove('hidden');
+    };
+    prevImg.onload = function() {
+      document.getElementById('imagePreviewContainer').classList.remove('hidden');
+      document.getElementById('imageUploadDropzone').classList.add('hidden');
+      document.getElementById('imageStatusText').textContent = 'الصورة الحالية للمنتج على الموقع';
+    };
+    prevImg.src = currentImg;
   }
 
   // Load Warehouse Quick Info & Cost Batches

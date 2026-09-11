@@ -1017,15 +1017,20 @@ app.get(`${BASE}/api/products/:pid`, async (req, res, next) => {
 app.get(`${BASE}/api/products/:pid/photos`, async (req, res) => {
   try {
     const { rows: [p] } = await posDb.query(
-      'SELECT photos FROM public.products WHERE id=$1', [req.params.pid]
+      'SELECT photos, image_url FROM public.products WHERE id=$1', [req.params.pid]
     );
-    // Convert relative Supabase storage paths to full public URLs
-    const photos = (p?.photos || []).map(url => {
+    let photos = (p?.photos || []).map(url => {
       if (!url) return url;
       if (url.startsWith('/objects/')) return 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public' + url;
       if (url.startsWith('objects/'))  return 'https://ywfunodybcqakhweuxwn.supabase.co/storage/v1/object/public/' + url;
       return url;
     });
+    if (!photos.length && p?.image_url) {
+      const fallback = p.image_url.startsWith('http') ? p.image_url : `https://dentrust.site/products_opt/${req.params.pid}.webp`;
+      photos = [fallback];
+    } else if (!photos.length) {
+      photos = [`https://dentrust.site/products_opt/${req.params.pid}.webp`];
+    }
     res.json({ photos });
   } catch (err) { res.json({ photos: [] }); }
 });
