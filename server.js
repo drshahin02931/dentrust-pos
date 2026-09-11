@@ -2681,7 +2681,7 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
     if (lookupSaleIds.length > 0) {
       try {
         const { rows: items } = await posDb.query(
-          'SELECT id, sale_id, product_name, quantity, unit_price, selected_option FROM sale_items WHERE sale_id = ANY($1::int[])',
+          'SELECT id, sale_id, product_id, product_name, quantity, unit_price, selected_option FROM sale_items WHERE sale_id = ANY($1::int[])',
           [lookupSaleIds]
         );
         for (const it of items) {
