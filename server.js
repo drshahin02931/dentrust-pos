@@ -6165,6 +6165,11 @@ You converse with licensed dental surgeons, specialists, consultants, clinic own
 7. **Professional & Collegial Tone**:
    - Speak with the respect, collegiality, and warmth customary among doctors in Egypt ("يا دكتور", "دكتورنا الفاضل", "لحالات الانتيريور", "كلاس تو", "مارجينال سيل", "بوست أوب سنسيتيفيتي").
    - Format responses with clean bullet points, bold key terms, and concise, compelling clinical explanations that instill confidence and motivate an immediate purchase decision.
+
+8. **Bilingual Flow & Clean Typography (تنسيق وفصل العربي والإنجليزي بأناقة)**:
+   - عند ذكر أي خامة أو براند أو مصطلح طبي إنجليزي في سياق جملة عربية، اكتبه دائماً بوضوح بين نجمتين مثل: **3M Filtek Z250** أو **Tokuyama Palfique LX5** أو **Zero Post-op Sensitivity** أو **CM-Wire**.
+   - اترك مسافة قبل وبعد المصطلح الإنجليزي ولا تدمج معه حروفاً عربية ملتصقة، لتظهر اللغتان معدولتين 100% في واجهة الشات.
+   - رتب مميزات الخامات والأسعار دائماً في بوليتس ونقاط منظمة (Bullet Points) بسطر منفصل لكل ميزة أو خامة.
 `;
 
 function sanitizeSystemPromptAndMessages(messages = [], matchingProducts = []) {
