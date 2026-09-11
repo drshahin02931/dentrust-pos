@@ -964,6 +964,7 @@ app.post(`${BASE}/api/products`, async (req, res) => {
       syncNewProductToDentrust(ins.id, { ...d, image_url: mainPhoto, purchase_price: pPrice, sale_price: sPrice, is_hidden_from_website: isHidden, section: effectiveSec, orig_section: origSec })
         .catch(err => console.error('[sync new product]', err.message));
     }
+    invalidateBotProductsCache();
     res.status(201).json({ ok: true, id: ins.id });
   } catch (err) {
     console.error('[POST /api/products]', err.message, err.stack);
@@ -1179,6 +1180,7 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
         .catch(err => console.error('[AutoUpload Product Image error]:', err.message));
     }
 
+    invalidateBotProductsCache();
     res.json({ ok: true, is_hidden_from_website: isHidden });
   } catch (err) {
     console.error('[PRODUCT UPDATE ERROR] pid:', pid, 'error:', err.message);
@@ -1199,6 +1201,7 @@ app.delete(`${BASE}/api/products/:pid`, async (req, res) => {
         finally { client.release(); }
       } catch (e) { syncError = e.message; }
     }
+    invalidateBotProductsCache();
     const resp = { ok: true };
     if (syncError) resp.sync_warning = `حُذف من POS لكن فشل الحذف من DenTrust: ${syncError}`;
     res.json(resp);
@@ -1209,6 +1212,7 @@ app.post(`${BASE}/api/products/:pid/apply-discount`, async (req, res) => {
   const pid = parseInt(req.params.pid, 10);
   try {
     await posDb.query('UPDATE products SET sale_price=$1 WHERE id=$2', [parseFloat(req.body.new_price || 0), pid]);
+    invalidateBotProductsCache();
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
@@ -5926,6 +5930,13 @@ let _productsCacheAt = 0;
 let _fullCatalogTextCache = null;
 let _fullCatalogTextCacheAt = 0;
 const KNOWLEDGE_TTL = 180_000; // 3 min cache
+
+function invalidateBotProductsCache() {
+  _productsCache = null;
+  _productsCacheAt = 0;
+  _fullCatalogTextCache = null;
+  _fullCatalogTextCacheAt = 0;
+}
 
 async function loadStoreProducts() {
   const now = Date.now();
