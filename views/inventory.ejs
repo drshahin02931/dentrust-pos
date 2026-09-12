@@ -117,6 +117,13 @@
           <span>🙈 غير معروض بالموقع (مخفي)</span>
           <span id="badge-hidden-count" class="bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">0</span>
         </button>
+
+        <button type="button" onclick="setWebsiteFilter('offers')" data-filter="offers"
+          class="web-filter-btn text-xs px-3 py-1.5 rounded-xl border font-medium transition-all bg-white text-gray-600 border-gray-200 hover:border-red-300 hover:bg-red-50/50 flex items-center gap-1.5"
+          title="عرض منتجات العروض الخاصة والتخفيضات فقط">
+          <span>🔥 العروض الخاصة</span>
+          <span id="badge-offers-count" class="bg-red-100 text-red-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">0</span>
+        </button>
       </div>
 
       <!-- Filter count and Reset Button -->
@@ -386,6 +393,59 @@
         </label>
       </div>
 
+      <!-- Special Offer & Expiry Timer Section -->
+      <div class="bg-gradient-to-br from-rose-50/80 to-red-50/50 border border-red-200 rounded-2xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <span class="text-2xl">🔥</span>
+            <div>
+              <div class="text-xs font-bold text-gray-900">إعدادات العرض الخاص والتوقيت (Special Offer)</div>
+              <div class="text-[11px] text-gray-500">تفعيل كعرض على الموقع مع عداد تنازلي وسعر مشطوب</div>
+            </div>
+          </div>
+          <label class="flex items-center gap-2 cursor-pointer bg-white px-3.5 py-1.5 rounded-xl border border-red-300 shadow-xs hover:bg-red-50 transition-colors">
+            <input type="checkbox" id="f-is-offer" onchange="toggleOfferFields(this.checked)" class="w-4 h-4 accent-red-600 rounded"/>
+            <span class="text-xs font-bold text-red-600">تفعيل كـ عرض خاص 🔥</span>
+          </label>
+        </div>
+
+        <div id="offerFieldsContainer" class="hidden pt-2 border-t border-red-200/60 space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs font-semibold text-gray-700 block mb-1">
+                <span>السعر الأصلي قبل الخصم (ج.م)</span>
+                <span class="text-red-500">*</span>
+              </label>
+              <input type="number" id="f-original-price" step="0.01" min="0" placeholder="مثال: 1200" oninput="updateDiscountPreview()"
+                class="w-full border border-red-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white font-bold text-gray-800"/>
+              <div id="discountPreviewText" class="text-[11px] font-bold text-emerald-600 mt-1 hidden"></div>
+            </div>
+
+            <div>
+              <label class="text-xs font-semibold text-gray-700 block mb-1">
+                <span>تاريخ ووقت انتهاء العرض</span>
+                <span class="text-gray-400 font-normal">(اختياري)</span>
+              </label>
+              <input type="datetime-local" id="f-offer-expires-at"
+                class="w-full border border-red-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white text-gray-800"/>
+            </div>
+          </div>
+
+          <!-- Quick Preset Duration Buttons -->
+          <div>
+            <div class="text-[11px] text-gray-500 font-medium mb-1.5">⏱️ تحديد مدة العرض السريعة (بضغطة واحدة):</div>
+            <div class="flex flex-wrap gap-1.5">
+              <button type="button" onclick="setOfferPresetHours(24)" class="text-xs bg-white hover:bg-red-50 text-red-700 border border-red-200 px-2.5 py-1 rounded-lg font-medium shadow-2xs transition-all">+24 ساعة</button>
+              <button type="button" onclick="setOfferPresetHours(48)" class="text-xs bg-white hover:bg-red-50 text-red-700 border border-red-200 px-2.5 py-1 rounded-lg font-medium shadow-2xs transition-all">+48 ساعة</button>
+              <button type="button" onclick="setOfferPresetDays(3)" class="text-xs bg-white hover:bg-red-50 text-red-700 border border-red-200 px-2.5 py-1 rounded-lg font-medium shadow-2xs transition-all">+3 أيام</button>
+              <button type="button" onclick="setOfferPresetDays(7)" class="text-xs bg-white hover:bg-red-50 text-red-700 border border-red-200 px-2.5 py-1 rounded-lg font-medium shadow-2xs transition-all">+أسبوع</button>
+              <button type="button" onclick="setOfferPresetDays(30)" class="text-xs bg-white hover:bg-red-50 text-red-700 border border-red-200 px-2.5 py-1 rounded-lg font-medium shadow-2xs transition-all">+شهر</button>
+              <button type="button" onclick="clearOfferExpiry()" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-2.5 py-1 rounded-lg font-medium shadow-2xs transition-all">بدون وقت محدد</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Sync Note (small badge) -->
       <div id="syncNote" class="hidden flex items-center gap-2 text-xs text-blue-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-1.5">
         <span>🔗</span><span id="syncNoteText">هذا المنتج مرتبط بـ DenTrust — التعديل سيتم تلقائياً</span>
@@ -439,6 +499,9 @@ function updateCounters() {
   if (badgeVis) badgeVis.textContent = visibleCount;
   const badgeHid = document.getElementById("badge-hidden-count");
   if (badgeHid) badgeHid.textContent = hiddenCount;
+  const offersCount = allProducts.filter(p => p.is_offer === true || p.is_offer === 'true' || p.is_offer === 1).length;
+  const badgeOff = document.getElementById("badge-offers-count");
+  if (badgeOff) badgeOff.textContent = offersCount;
 
   // Low stock banner
   const banner = document.getElementById("lowStockBanner");
@@ -541,19 +604,53 @@ function renderTable(products) {
       </button>
     `;
 
+    const isOffer = p.is_offer === true || p.is_offer === 'true' || p.is_offer === 1;
+    const offerBadge = isOffer
+      ? `<span class="inline-flex items-center gap-1 bg-red-100 text-red-700 border border-red-200 px-1.5 py-0.5 rounded-md text-[10px] font-black mr-1 shadow-2xs">🔥 عرض خاص</span>`
+      : '';
+    const expiryTimerBadge = isOffer && p.offer_expires_at
+      ? `<div class="text-[10px] text-red-600 font-bold mt-1 flex items-center gap-1 bg-red-50/90 px-1.5 py-0.5 rounded-md w-fit border border-red-200">
+           <span>⏳</span><span>${formatOfferRemainingTime(p.offer_expires_at)}</span>
+         </div>`
+      : '';
+    const priceCell = isOffer && p.original_price && parseFloat(p.original_price) > parseFloat(p.sale_price)
+      ? `<div>
+           <span class="text-[11px] text-gray-400 line-through block font-normal">${parseFloat(p.original_price).toFixed(2)}</span>
+           <span class="text-red-600 font-black text-sm">${parseFloat(p.sale_price||0).toFixed(2)}</span>
+         </div>`
+      : `<span class="text-blue-700 font-semibold">${parseFloat(p.sale_price||0).toFixed(2)}</span>`;
+
+    const offerQuickBtn = `
+      <button onclick="quickToggleOffer(${p.id}, event)" title="${isOffer ? 'إلغاء تفعيل العرض' : 'تفعيل سريع كـ عرض خاص'}"
+        class="text-xs px-2.5 py-2 rounded-xl font-bold transition-all flex items-center gap-1 shadow-xs min-h-[36px] ${isOffer ? 'bg-red-50 text-red-700 border border-red-300 hover:bg-red-100' : 'bg-gray-50 text-gray-500 border border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200'}">
+        <span>🔥</span>
+        <span class="text-[11px]">${isOffer ? 'عرض' : 'عادي'}</span>
+      </button>
+    `;
+
     return `<tr class="hover:bg-gray-50 ${rowBg}">
       <td class="px-4 py-3">${thumbCell}</td>
-      <td class="px-4 py-3 font-medium text-gray-800">${p.product_name}${p.dentrust_id ? ' <span class="text-xs text-blue-400" title="مرتبط بـ DenTrust">🔗</span>' : ''}${isLow && !isOut ? ' <span class="text-xs text-orange-500">⚠️</span>' : ''}${isOut ? ' <span class="text-xs text-red-500">🚫</span>' : ''}</td>
+      <td class="px-4 py-3 font-medium text-gray-800">
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <span>${p.product_name}</span>
+          ${offerBadge}
+          ${p.dentrust_id ? ' <span class="text-xs text-blue-400" title="مرتبط بـ DenTrust">🔗</span>' : ''}
+          ${isLow && !isOut ? ' <span class="text-xs text-orange-500">⚠️</span>' : ''}
+          ${isOut ? ' <span class="text-xs text-red-500">🚫</span>' : ''}
+        </div>
+        ${expiryTimerBadge}
+      </td>
       <td class="px-4 py-3"><span class="text-xs ${p.category ? 'bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-medium' : 'text-gray-300'}">${p.category || '—'}</span></td>
       <td class="px-4 py-3 font-mono text-gray-500 text-xs">${p.barcode || '—'}</td>
       <td class="px-4 py-3">${variantQtyCell(p, qtyStyle)}</td>
       <td class="px-4 py-3">${minStockCell}</td>
       <td class="px-4 py-3 text-gray-600">${parseFloat(p.purchase_price||0).toFixed(2)}</td>
-      <td class="px-4 py-3 text-blue-700 font-semibold">${parseFloat(p.sale_price||0).toFixed(2)}</td>
+      <td class="px-4 py-3">${priceCell}</td>
       <td class="px-4 py-3 text-sm ${expStyle}">${p.expiry_date || '—'}</td>
       <td class="px-4 py-3">
         <div class="flex items-center gap-2 flex-nowrap">
           ${hideBtn}
+          ${offerQuickBtn}
           <button onclick="editProduct(${p.id})" class="text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 px-3.5 py-2 rounded-xl font-bold transition-all shadow-xs min-h-[36px]">تعديل</button>
           <button onclick="deleteProduct(${p.id})" class="text-xs bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3.5 py-2 rounded-xl font-bold transition-all shadow-xs min-h-[36px]">حذف</button>
         </div>
@@ -586,6 +683,8 @@ function setWebsiteFilter(filter) {
         btn.className = 'web-filter-btn text-xs px-3 py-1.5 rounded-xl border font-bold transition-all bg-amber-600 text-white border-amber-600 shadow-sm flex items-center gap-1.5';
       } else if (filter === 'visible') {
         btn.className = 'web-filter-btn text-xs px-3 py-1.5 rounded-xl border font-bold transition-all bg-emerald-600 text-white border-emerald-600 shadow-sm flex items-center gap-1.5';
+      } else if (filter === 'offers') {
+        btn.className = 'web-filter-btn text-xs px-3 py-1.5 rounded-xl border font-bold transition-all bg-red-600 text-white border-red-600 shadow-sm flex items-center gap-1.5';
       } else {
         btn.className = 'web-filter-btn text-xs px-3 py-1.5 rounded-xl border font-bold transition-all bg-blue-700 text-white border-blue-700 shadow-sm flex items-center gap-1.5';
       }
@@ -619,11 +718,13 @@ function applyFilters() {
   const q = (document.getElementById("searchBox")?.value || "").trim().toLowerCase();
   let filtered = allProducts.slice();
 
-  // 1. فلتر حالة العرض على الموقع (الكل / معروض بالموقع / غير معروض بالموقع)
+  // 1. فلتر حالة العرض على الموقع (الكل / معروض بالموقع / غير معروض بالموقع / العروض الخاصة)
   if (activeWebsiteFilter === 'hidden') {
     filtered = filtered.filter(p => isProductHidden(p));
   } else if (activeWebsiteFilter === 'visible') {
     filtered = filtered.filter(p => !isProductHidden(p));
+  } else if (activeWebsiteFilter === 'offers') {
+    filtered = filtered.filter(p => p.is_offer === true || p.is_offer === 'true' || p.is_offer === 1);
   }
 
   // 2. فلتر الفئة
@@ -817,6 +918,10 @@ function openModal() {
   document.getElementById("modalError").classList.add("hidden");
   document.getElementById("whQuickSection").classList.add("hidden");
   document.getElementById("f-is-hidden-website").checked = false;
+  document.getElementById("f-is-offer").checked = false;
+  document.getElementById("f-original-price").value = "";
+  document.getElementById("f-offer-expires-at").value = "";
+  toggleOfferFields(false);
   clearSelectedImage();
   resetPhotos();
   resetVariants();
@@ -849,6 +954,29 @@ function editProduct(id) {
   document.getElementById("f-description").value = p.description || "";
   document.getElementById("f-is-hidden-website").checked = p.is_hidden_from_website === true || p.is_hidden_from_website === 'true' || p.is_hidden_from_website === 1 || p.is_hidden === true || p.hidden === true;
   document.getElementById("modalError").classList.add("hidden");
+
+  // إعدادات العرض والتوقيت
+  const isOff = p.is_offer === true || p.is_offer === 'true' || p.is_offer === 1;
+  document.getElementById("f-is-offer").checked = isOff;
+  document.getElementById("f-original-price").value = (p.original_price != null && p.original_price !== '') ? p.original_price : '';
+  if (p.offer_expires_at) {
+    try {
+      const d = new Date(p.offer_expires_at);
+      if (!isNaN(d.getTime())) {
+        const pad = n => String(n).padStart(2, '0');
+        const localIso = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        document.getElementById("f-offer-expires-at").value = localIso;
+      } else {
+        document.getElementById("f-offer-expires-at").value = "";
+      }
+    } catch (_) {
+      document.getElementById("f-offer-expires-at").value = "";
+    }
+  } else {
+    document.getElementById("f-offer-expires-at").value = "";
+  }
+  toggleOfferFields(isOff);
+  updateDiscountPreview();
 
   // عرض صورة المنتج الحالية إن وجدت
   clearSelectedImage();
@@ -1164,6 +1292,9 @@ async function saveProduct(e) {
       gender: genderVal,
       checkbox_values: cbGetValues(),
       is_hidden_from_website: document.getElementById("f-is-hidden-website").checked,
+      is_offer: document.getElementById("f-is-offer").checked,
+      original_price: document.getElementById("f-original-price").value ? parseFloat(document.getElementById("f-original-price").value) : null,
+      offer_expires_at: document.getElementById("f-offer-expires-at").value ? new Date(document.getElementById("f-offer-expires-at").value).toISOString() : null,
     };
     const imgBase64 = document.getElementById("f-image-base64")?.value;
     if (imgBase64) {
@@ -1186,6 +1317,81 @@ async function saveProduct(e) {
     errDiv.classList.remove("hidden");
   } finally {
     btn.disabled = false;
+  }
+}
+
+// ── دوال مساعدة للعروض الخاصة والعداد التنازلي ──────────────────────────
+function toggleOfferFields(checked) {
+  const container = document.getElementById("offerFieldsContainer");
+  if (container) {
+    container.classList.toggle("hidden", !checked);
+  }
+  if (checked) {
+    updateDiscountPreview();
+  }
+}
+
+function updateDiscountPreview() {
+  const sale = parseFloat(document.getElementById("f-sale")?.value || 0);
+  const orig = parseFloat(document.getElementById("f-original-price")?.value || 0);
+  const preview = document.getElementById("discountPreviewText");
+  if (!preview) return;
+  if (orig > 0 && sale > 0 && orig > sale) {
+    const pct = Math.round(((orig - sale) / orig) * 100);
+    const saveAmt = (orig - sale).toFixed(2);
+    preview.textContent = `✓ خصم ${pct}% (توفير ${saveAmt} ج للعميل)`;
+    preview.className = "text-[11px] font-bold text-emerald-600 mt-1";
+    preview.classList.remove("hidden");
+  } else if (orig > 0 && orig <= sale) {
+    preview.textContent = `⚠️ تنبيه: السعر الأصلي يجب أن يكون أكبر من سعر البيع`;
+    preview.className = "text-[11px] font-bold text-amber-600 mt-1";
+    preview.classList.remove("hidden");
+  } else {
+    preview.classList.add("hidden");
+  }
+}
+
+function setOfferPresetHours(hrs) {
+  const d = new Date(Date.now() + hrs * 3600 * 1000);
+  const pad = n => String(n).padStart(2, '0');
+  document.getElementById("f-offer-expires-at").value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function setOfferPresetDays(days) {
+  setOfferPresetHours(days * 24);
+}
+
+function clearOfferExpiry() {
+  document.getElementById("f-offer-expires-at").value = "";
+}
+
+function formatOfferRemainingTime(isoStr) {
+  if (!isoStr) return '';
+  const diff = new Date(isoStr).getTime() - Date.now();
+  if (diff <= 0) return 'انتهى توقيت العرض';
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
+  const mins = Math.floor((diff / (1000 * 60)) % 60);
+  if (days > 0) return `ينتهي خلال ${days} يوم و ${hours} ساعة`;
+  if (hours > 0) return `ينتهي خلال ${hours} ساعة و ${mins} دقيقة`;
+  return `ينتهي خلال ${mins} دقيقة`;
+}
+
+async function quickToggleOffer(id, e) {
+  if (e) e.stopPropagation();
+  try {
+    const r = await fetch(`${BASE}/api/products/${id}/toggle-offer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const d = await r.json();
+    if (d.ok) {
+      await loadProducts();
+    } else {
+      alert('⚠️ ' + (d.error || 'فشل تبديل العرض'));
+    }
+  } catch (err) {
+    alert('⚠️ حدث خطأ في الاتصال');
   }
 }
 

@@ -435,6 +435,7 @@ const PUBLIC_PRODUCTS_MIGRATIONS = [
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_sold_out BOOLEAN DEFAULT false",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_offer BOOLEAN DEFAULT false",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS original_price NUMERIC",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS offer_expires_at TIMESTAMPTZ",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_best_seller BOOLEAN DEFAULT false",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS category_id INTEGER",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS stock INTEGER DEFAULT 0",
@@ -482,6 +483,7 @@ SELECT
   COALESCE(p.created_at::text, NOW()::text)                       AS created_at,
   COALESCE(p.is_offer, false)                                     AS is_offer,
   p.original_price,
+  p.offer_expires_at,
   COALESCE(p.is_best_seller, false)                               AS is_best_seller,
   COALESCE(p.is_hidden_from_website, p.is_hidden, p.hidden, false) AS is_hidden_from_website,
   COALESCE(p.gender, 'unisex')                                    AS gender
@@ -529,7 +531,7 @@ BEGIN
     barcode, name, stock, purchase_price, price,
     expiry_date, photos, category_id, min_stock, supplier_id,
     details, variants, section, checkbox_values, is_offer, is_sold_out,
-    original_price, is_best_seller, gender,
+    original_price, offer_expires_at, is_best_seller, gender,
     is_hidden_from_website, is_hidden, hidden, orig_section
   ) VALUES (
     NEW.barcode,
@@ -549,6 +551,7 @@ BEGIN
     COALESCE(NEW.is_offer, false),
     (COALESCE(NEW.quantity, 0) <= 0),
     NEW.original_price,
+    NEW.offer_expires_at,
     COALESCE(NEW.is_best_seller, false),
     COALESCE(NEW.gender, 'unisex'),
     COALESCE(NEW.is_hidden_from_website, false),
@@ -637,6 +640,7 @@ BEGIN
     is_sold_out    = (COALESCE(NEW.quantity, 0) <= 0),
     is_offer       = COALESCE(NEW.is_offer, is_offer),
     original_price = NEW.original_price,
+    offer_expires_at = NEW.offer_expires_at,
     is_best_seller = COALESCE(NEW.is_best_seller, is_best_seller),
     is_hidden_from_website = COALESCE(NEW.is_hidden_from_website, is_hidden_from_website),
     is_hidden      = COALESCE(NEW.is_hidden_from_website, is_hidden),

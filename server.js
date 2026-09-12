@@ -835,7 +835,7 @@ app.get(`${BASE}/api/products/search`, async (req, res) => {
 // Columns for list endpoints — excludes heavy base64 image_url, adds has_image flag
 const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, sale_price,
   expiry_date, category, min_stock, description, variants, section, checkbox_values, gender,
-  is_offer, original_price, is_best_seller,
+  is_offer, original_price, offer_expires_at, is_best_seller,
   COALESCE(is_hidden_from_website, false) AS is_hidden_from_website,
   dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image,
   CASE
@@ -865,8 +865,8 @@ app.get(`${BASE}/api/products`, async (req, res) => {
         console.error('[GET /api/products query error]:', err.message);
         return posDb.query(
           q
-            ? `SELECT id, barcode, product_name, quantity, purchase_price, sale_price, expiry_date, category, min_stock, description, variants, section, checkbox_values, is_offer, original_price, is_best_seller, COALESCE(is_hidden_from_website, false) AS is_hidden_from_website, dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image, CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp' ELSE NULL END AS image_url FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`
-            : `SELECT id, barcode, product_name, quantity, purchase_price, sale_price, expiry_date, category, min_stock, description, variants, section, checkbox_values, is_offer, original_price, is_best_seller, COALESCE(is_hidden_from_website, false) AS is_hidden_from_website, dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image, CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp' ELSE NULL END AS image_url FROM products ORDER BY product_name`,
+            ? `SELECT id, barcode, product_name, quantity, purchase_price, sale_price, expiry_date, category, min_stock, description, variants, section, checkbox_values, is_offer, original_price, offer_expires_at, is_best_seller, COALESCE(is_hidden_from_website, false) AS is_hidden_from_website, dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image, CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp' ELSE NULL END AS image_url FROM products WHERE barcode=$1 OR product_name ILIKE $2 ORDER BY product_name`
+            : `SELECT id, barcode, product_name, quantity, purchase_price, sale_price, expiry_date, category, min_stock, description, variants, section, checkbox_values, is_offer, original_price, offer_expires_at, is_best_seller, COALESCE(is_hidden_from_website, false) AS is_hidden_from_website, dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image, CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp' ELSE NULL END AS image_url FROM products ORDER BY product_name`,
           q ? [q, `%${q}%`] : []
         ).catch(() => ({ rows: [] }));
       });
@@ -884,8 +884,8 @@ app.get(`${BASE}/api/products`, async (req, res) => {
       console.error('[GET /api/products public query error]:', err.message);
       return posDb.query(
         q
-          ? `SELECT id, barcode, product_name, quantity, purchase_price, sale_price, expiry_date, category, min_stock, description, variants, section, checkbox_values, is_offer, original_price, is_best_seller, COALESCE(is_hidden_from_website, false) AS is_hidden_from_website, dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image, CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp' ELSE NULL END AS image_url FROM products WHERE (barcode=$1 OR product_name ILIKE $2) AND ${hideCond} ORDER BY product_name`
-          : `SELECT id, barcode, product_name, quantity, purchase_price, sale_price, expiry_date, category, min_stock, description, variants, section, checkbox_values, is_offer, original_price, is_best_seller, COALESCE(is_hidden_from_website, false) AS is_hidden_from_website, dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image, CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp' ELSE NULL END AS image_url FROM products WHERE ${hideCond} ORDER BY product_name`,
+          ? `SELECT id, barcode, product_name, quantity, purchase_price, sale_price, expiry_date, category, min_stock, description, variants, section, checkbox_values, is_offer, original_price, offer_expires_at, is_best_seller, COALESCE(is_hidden_from_website, false) AS is_hidden_from_website, dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image, CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp' ELSE NULL END AS image_url FROM products WHERE (barcode=$1 OR product_name ILIKE $2) AND ${hideCond} ORDER BY product_name`
+          : `SELECT id, barcode, product_name, quantity, purchase_price, sale_price, expiry_date, category, min_stock, description, variants, section, checkbox_values, is_offer, original_price, offer_expires_at, is_best_seller, COALESCE(is_hidden_from_website, false) AS is_hidden_from_website, dentrust_id, (image_url IS NOT NULL AND (image_url LIKE 'http%' OR image_url LIKE 'data:%' OR image_url LIKE '/objects/%' OR image_url LIKE 'objects/%')) AS has_image, CASE WHEN image_url IS NOT NULL AND image_url != '' THEN 'https://dentrust.site/products_opt/' || id || '.webp' ELSE NULL END AS image_url FROM products WHERE ${hideCond} ORDER BY product_name`,
         q ? [q, `%${q}%`] : []
       ).catch(() => ({ rows: [] }));
     });
@@ -938,17 +938,30 @@ app.post(`${BASE}/api/products`, async (req, res) => {
     const isHidden = d.is_hidden_from_website === true || d.is_hidden_from_website === 'true' || d.is_hidden_from_website === 1;
     const effectiveSec = isHidden ? 'hidden' : (d.section || 'dental');
     const origSec = d.section || 'dental';
+    const isOffer = d.is_offer === true || d.is_offer === 'true' || d.is_offer === 1 || d.is_offer === '1';
+    const origPrice = (d.original_price !== undefined && d.original_price !== null && d.original_price !== '' && !isNaN(parseFloat(d.original_price)))
+      ? parseFloat(d.original_price)
+      : null;
+    const offerExpiresAt = (d.offer_expires_at && typeof d.offer_expires_at === 'string' && d.offer_expires_at.trim() !== '')
+      ? new Date(d.offer_expires_at).toISOString()
+      : null;
 
     const { rows: [ins] } = await posDb.query(
-      `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values, gender, is_hidden_from_website, is_hidden, hidden, orig_section)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+      `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values, gender, is_hidden_from_website, is_hidden, hidden, orig_section, is_offer, original_price, offer_expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING id`,
       [d.barcode || null, d.product_name, qty,
        pPrice, sPrice,
        d.expiry_date || null, mainPhoto,
        d.category || null, minStock,
        d.description || null, variantsJson, effectiveSec, cbJson, genderVal,
-       isHidden, isHidden, isHidden, origSec]
+       isHidden, isHidden, isHidden, origSec,
+       isOffer, origPrice, offerExpiresAt]
     );
+    // Explicitly ensure offer fields in public.products
+    posDb.query(
+      'UPDATE public.products SET is_offer=$1, original_price=$2, offer_expires_at=$3 WHERE id=$4',
+      [isOffer, origPrice, offerExpiresAt, ins.id]
+    ).catch(() => {});
     // حفظ كل الصور (حتى 5) مباشرة في public.products.photos
     if (d.photos && d.photos.length > 0) {
       posDb.query('UPDATE public.products SET photos=$1 WHERE id=$2',
@@ -1081,6 +1094,13 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
     const genderVal = d.gender || (d.section === 'medical' ? 'unisex' : null);
     const effectiveSec = isHidden ? 'hidden' : (d.section || 'dental');
     const origSec = d.section || 'dental';
+    const isOffer = d.is_offer === true || d.is_offer === 'true' || d.is_offer === 1 || d.is_offer === '1';
+    const origPrice = (d.original_price !== undefined && d.original_price !== null && d.original_price !== '' && !isNaN(parseFloat(d.original_price)))
+      ? parseFloat(d.original_price)
+      : null;
+    const offerExpiresAt = (d.offer_expires_at && typeof d.offer_expires_at === 'string' && d.offer_expires_at.trim() !== '')
+      ? new Date(d.offer_expires_at).toISOString()
+      : null;
 
     const params = [
       d.barcode || null,
@@ -1097,6 +1117,9 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
       cbJson,
       isHidden,
       genderVal,
+      isOffer,
+      origPrice,
+      offerExpiresAt,
       pid,
       origSec
     ];
@@ -1104,36 +1127,39 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
     const updateQuery = `UPDATE products SET barcode=$1, product_name=$2, quantity=$3,
       purchase_price=$4, sale_price=$5,
       expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
-      section=$11, checkbox_values=$12, is_hidden_from_website=$13, gender=$14 WHERE id=$15`;
+      section=$11, checkbox_values=$12, is_hidden_from_website=$13, gender=$14,
+      is_offer=$15, original_price=$16, offer_expires_at=$17 WHERE id=$18`;
 
     try {
-      await posDb.query(updateQuery, params.slice(0, 15));
+      await posDb.query(updateQuery, params.slice(0, 18));
       await posDb.query(
         `UPDATE public.products SET 
           is_hidden=$1, hidden=$1, is_hidden_from_website=$1, is_active=NOT $1,
           section=$2,
-          orig_section=CASE WHEN $1 THEN COALESCE(NULLIF(orig_section, 'hidden'), NULLIF(section, 'hidden'), $3) ELSE COALESCE(orig_section, $3) END
-         WHERE id=$4`,
-        [isHidden, effectiveSec, origSec, pid]
+          orig_section=CASE WHEN $1 THEN COALESCE(NULLIF(orig_section, 'hidden'), NULLIF(section, 'hidden'), $3) ELSE COALESCE(orig_section, $3) END,
+          is_offer=$4, original_price=$5, offer_expires_at=$6
+         WHERE id=$7`,
+        [isHidden, effectiveSec, origSec, isOffer, origPrice, offerExpiresAt, pid]
       ).catch(() => {});
     } catch (viewErr) {
       // Fallback: update on public.products directly if view trigger has issue
       await posDb.query(
         `UPDATE public.products SET barcode=$1, product_name=$2, quantity=$3,
-         purchase_price=$4, sale_price=$5,
-         expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
+         purchase_price=$4, price=$5,
+         expiry_date=$6, category_id=$7, min_stock=$8, details=$9, variants=$10,
          section=$11, checkbox_values=$12, is_hidden_from_website=$13, gender=$14,
+         is_offer=$15, original_price=$16, offer_expires_at=$17,
          is_hidden=$13, hidden=$13, is_active=NOT $13,
-         orig_section=CASE WHEN $13 THEN COALESCE(NULLIF(orig_section, 'hidden'), NULLIF(section, 'hidden'), $16) ELSE COALESCE(orig_section, $16) END
-         WHERE id=$15`,
+         orig_section=CASE WHEN $13 THEN COALESCE(NULLIF(orig_section, 'hidden'), NULLIF(section, 'hidden'), $19) ELSE COALESCE(orig_section, $19) END
+         WHERE id=$18`,
         params
       ).catch(async () => {
         await posDb.query(
-          `UPDATE products SET barcode=$1, product_name=$2, quantity=$3,
-           purchase_price=$4, sale_price=$5,
-           expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
-           section=$11, checkbox_values=$12 WHERE id=$13`,
-          params.slice(0, 12).concat([pid])
+          `UPDATE public.products SET barcode=$1, name=$2, stock=$3,
+           purchase_price=$4, price=$5,
+           expiry_date=$6, details=$7, min_stock=$8, variants=$9,
+           section=$10, checkbox_values=$11, is_offer=$12, original_price=$13, offer_expires_at=$14 WHERE id=$15`,
+          [d.barcode || null, d.product_name, qty, pPrice, sPrice, d.expiry_date || null, d.description || null, minStock, variantsJson, effectiveSec, cbJson, isOffer, origPrice, offerExpiresAt, pid]
         );
       });
     }
@@ -1336,6 +1362,53 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
     res.json({ ok: true, is_hidden_from_website: newState });
   } catch (err) {
     console.error('Toggle visibility error:', err);
+    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
+  }
+});
+
+app.post(`${BASE}/api/products/:pid/toggle-offer`, async (req, res) => {
+  const pid = parseInt(req.params.pid, 10);
+  try {
+    const { rows: [prod] } = await posDb.query(
+      'SELECT id, is_offer, price, original_price, offer_expires_at FROM public.products WHERE id=$1',
+      [pid]
+    );
+    if (!prod) return res.status(404).json({ error: 'المنتج غير موجود' });
+
+    const newOfferState = !prod.is_offer;
+    let origPrice = prod.original_price;
+    let expiresAt = prod.offer_expires_at;
+
+    if (newOfferState) {
+      if (!origPrice || parseFloat(origPrice) <= parseFloat(prod.price)) {
+        origPrice = Math.round((parseFloat(prod.price) || 0) * 1.25);
+      }
+      if (!expiresAt) {
+        expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+      }
+    } else {
+      if (req.body && req.body.restore_price && origPrice) {
+        await posDb.query('UPDATE public.products SET price=$1 WHERE id=$2', [origPrice, pid]);
+      }
+      origPrice = null;
+      expiresAt = null;
+    }
+
+    await posDb.query(
+      `UPDATE public.products SET is_offer=$1, original_price=$2, offer_expires_at=$3 WHERE id=$4`,
+      [newOfferState, origPrice, expiresAt, pid]
+    );
+
+    invalidateBotProductsCache();
+    cacheDel('site_products');
+    res.json({
+      ok: true,
+      is_offer: newOfferState,
+      original_price: origPrice,
+      offer_expires_at: expiresAt
+    });
+  } catch (err) {
+    console.error('Toggle offer error:', err);
     res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
   }
 });
@@ -9546,6 +9619,42 @@ async function main() {
 
     // ── تقرير النواقص اليومي: يشتغل يوميًا الساعة 12:00 ظهرًا بتوقيت القاهرة ──
     cron.schedule('0 12 * * *', () => { checkDailyStockAndNotify().catch(() => {}); }, { timezone: 'Africa/Cairo' });
+
+    // ── فحص العروض المنتهية دورياً كل دقيقة واستعادة السعر الأصلي المشطوب ──
+    async function checkAndExpireOffers() {
+      try {
+        const { rows } = await posDb.query(`
+          SELECT id, name as product_name, price, original_price, offer_expires_at
+          FROM public.products
+          WHERE is_offer = true
+            AND offer_expires_at IS NOT NULL
+            AND offer_expires_at <= NOW()
+        `);
+        if (rows && rows.length > 0) {
+          console.log(`[Offers Worker] Found ${rows.length} expired offer(s), restoring original price...`);
+          for (const p of rows) {
+            const restoredPrice = (p.original_price && parseFloat(p.original_price) > 0)
+              ? parseFloat(p.original_price)
+              : parseFloat(p.price);
+            await posDb.query(`
+              UPDATE public.products
+              SET price = $1,
+                  is_offer = false,
+                  original_price = NULL,
+                  offer_expires_at = NULL
+              WHERE id = $2
+            `, [restoredPrice, p.id]).catch(() => {});
+            console.log(`[Offers Worker] Product #${p.id} (${p.product_name}) offer expired -> Price restored to ${restoredPrice} EGP`);
+          }
+          invalidateBotProductsCache();
+          cacheDel('site_products');
+        }
+      } catch (err) {
+        console.warn('[Offers Worker error]:', err.message);
+      }
+    }
+    setInterval(checkAndExpireOffers, 60 * 1000);
+    setTimeout(checkAndExpireOffers, 3000);
 
     app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     app.get('/api/healthz', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
