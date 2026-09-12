@@ -6022,25 +6022,51 @@ async function loadStoreProducts() {
     return _productsCache;
   }
   try {
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000));
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000));
     const result = await Promise.race([
       posDb.query(`
         SELECT id, product_name, sale_price, category, quantity, description, is_offer, original_price, is_best_seller 
         FROM products 
         WHERE COALESCE(is_hidden_from_website, false) = false 
-          AND COALESCE(is_hidden, false) = false 
           AND (section != 'hidden' OR section IS NULL)
         ORDER BY category, product_name
       `),
       timeout
     ]);
-    _productsCache = result.rows || [];
-    _productsCacheAt = now;
-    return _productsCache;
+    if (result.rows && result.rows.length > 0) {
+      _productsCache = result.rows;
+      _productsCacheAt = now;
+      console.log(`[Store Products Load] Successfully loaded ${_productsCache.length} active products from posDb.`);
+      return _productsCache;
+    }
   } catch (err) {
-    console.warn('[Store Products Load]', err.message);
-    return _productsCache || [];
+    console.warn('[Store Products Load posDb error]:', err.message);
   }
+
+  // Fallback: Query public.products directly if posDb view has any issue
+  try {
+    const fallbackRes = await pool.query(`
+      SELECT p.id, p.name AS product_name, p.price AS sale_price, c.name AS category, 
+             COALESCE(p.stock, 0) AS quantity, p.details AS description, 
+             COALESCE(p.is_offer, false) AS is_offer, p.original_price, 
+             COALESCE(p.is_best_seller, false) AS is_best_seller
+      FROM public.products p
+      LEFT JOIN public.categories c ON c.id = p.category_id
+      WHERE COALESCE(p.is_hidden_from_website, false) = false 
+        AND (p.section != 'hidden' OR p.section IS NULL)
+      ORDER BY p.name
+    `);
+    if (fallbackRes.rows && fallbackRes.rows.length > 0) {
+      _productsCache = fallbackRes.rows;
+      _productsCacheAt = now;
+      console.log(`[Store Products Load] Fallback loaded ${_productsCache.length} active products from public.products.`);
+      return _productsCache;
+    }
+  } catch (fbErr) {
+    console.warn('[Store Products Load fallback error]:', fbErr.message);
+  }
+
+  return _productsCache || [];
 }
 
 function formatFullStoreCatalog(allProducts) {
@@ -6143,15 +6169,22 @@ function findRelevantStoreProducts(queryText, allProducts, limit = 10) {
   const tokens = clean.split(/\s+/).filter(t => t.length >= 2 && !stopWords.has(t));
 
   const dentalSynonyms = {
-    'كومبوزيت': ['composite', 'حشو', 'فلوبل', 'flow', 'bulk', 'shade', 'etch', 'bond', 'tokuyama', '3m', 'bisco', 'escom', 'nexcomp'],
-    'حشو': ['composite', 'كومبوزيت', 'liner', 'theracal', 'fuji', 'amalgam', 'filling'],
-    'عصب': ['endo', 'روتاري', 'file', 'files', 'gutta', 'paper', 'sealer', 'apex', 'epic', 'protaper'],
-    'مبارد': ['file', 'files', 'rotary', 'epic', 'protaper', 'endo', 'k-file'],
-    'مقاس': ['impression', 'alginate', 'silicone', 'putty', 'light', 'tray', 'zetaplus', 'cavex'],
-    'بوند': ['bond', 'bonding', 'adhesive', 'universal', 'etch', 'primer'],
-    'تلميع': ['polishing', 'disc', 'spiral', 'strip', 'brush', 'bur', 'burs'],
-    'تثبيت': ['cement', 'luting', 'relyx', 'fuji', 'panavia', 'resin'],
-    'مطهر': ['germ', 'disinfect', 'steril', 'micro', 'autoclave'],
+    'كومبوزيت': ['composite', 'حشو', 'فلوبل', 'flow', 'bulk', 'shade', 'etch', 'bond', 'ivoclar', 'te-econom', 'charisma', 'kulzer', 'escom', 'diafil', 'nexcomp', 'spident', 'hifil'],
+    'حشو': ['composite', 'كومبوزيت', 'liner', 'theracal', 'fuji', 'amalgam', 'filling', 'ivoclar', 'te-econom', 'charisma'],
+    'econom': ['econom', 'te-econom', 'ivoclar', 'composite', 'te econom'],
+    'te-econom': ['econom', 'te-econom', 'ivoclar', 'composite', 'te econom'],
+    'تيكونوم': ['econom', 'te-econom', 'ivoclar', 'composite', 'te econom'],
+    'ايكونوم': ['econom', 'te-econom', 'ivoclar', 'composite', 'te econom'],
+    'تيكنوم': ['econom', 'te-econom', 'ivoclar', 'composite', 'te econom'],
+    'كاريزما': ['charisma', 'kulzer', 'composite', 'كاريزما'],
+    'كولزر': ['charisma', 'kulzer', 'composite'],
+    'عصب': ['endo', 'روتاري', 'file', 'files', 'gutta', 'paper', 'sealer', 'apex', 'epic', 'protaper', 'fanta', 'imd'],
+    'مبارد': ['file', 'files', 'rotary', 'epic', 'protaper', 'endo', 'k-file', 'fanta', 'imd'],
+    'مقاس': ['impression', 'alginate', 'silicone', 'putty', 'light', 'tray', 'zetaplus', 'cavex', 'kromopan', 'speedex', 'coltene'],
+    'بوند': ['bond', 'bonding', 'adhesive', 'universal', 'etch', 'primer', 'one coat', 'bisco', 'nova bond'],
+    'تلميع': ['polishing', 'disc', 'spiral', 'strip', 'brush', 'bur', 'burs', 'kenda', 'ez shine'],
+    'تثبيت': ['cement', 'luting', 'relyx', 'fuji', 'panavia', 'resin', 'cavex', 'imibond', 'medicem'],
+    'مطهر': ['germ', 'disinfect', 'steril', 'micro', 'autoclave', 'hypochlorite', 'edta'],
     'جوانتي': ['glove', 'gloves', 'latex', 'nitrile'],
     'بنج': ['anesthesia', 'articaine', 'mepivacaine', 'needle', 'septodont']
   };
@@ -6201,64 +6234,49 @@ function findRelevantStoreProducts(queryText, allProducts, limit = 10) {
 const CLINICAL_SALES_PERSONA = `You are "DenBot" — an elite Dental Clinical Consultant and Senior Sales Advisor for DenTrust Dental Supplies in Egypt.
 You converse with licensed dental surgeons, specialists, consultants, clinic owners, and dental interns across Egypt.
 
-🏆 CORE SALES & UPSELLING PHILOSOPHY (قواعد البيع والترشيح الاحترافي):
-1. **Always Upsell the Premium / Highest-Priced Option (الترشيح الإكلينيكي للفئة الأعلى سعراً أولاً)**:
-   - When recommending products or comparing options, ALWAYS present and advocate for the highest-tier, premium product in DenTrust's catalog as the #1 clinical choice.
-   - Ground your recommendation in authoritative dental science and clinical superiority:
-     * In Composites: Highlight submicron/nanohybrid filler load (>82% wt), lowest volumetric shrinkage (<1.5%), superior depth of cure, high flexural/compressive strength, exceptional polish retention that won't dull over time, true chameleon effect blending seamlessly without white lines, and absolute ZERO post-operative sensitivity.
-     * In Endo (Root Canal): Highlight CM-Wire / proprietary heat treatment, extreme cyclic fatigue resistance preventing file separation, superior canal centering preserving anatomy, and rapid shaping efficiency.
-     * In Adhesives (Bonding): Highlight 10-MDP monomer technology, high micro-tensile bond strength to both enamel and moist dentin, self-etch or universal versatility, and complete dentinal tubule sealing preventing sensitivity.
-     * In Liners/Bases: Recommend bioactive liners like BISCO TheraCal LC for direct/indirect pulp capping due to significant calcium release, alkaline pH, and secondary dentin bridge stimulation.
-     * In Impressions: Emphasize Addition Silicone (Polyvinyl Siloxane / A-Silicone) over condensation silicone or alginate for micron-level margin reproduction and dimensional stability allowing repour after weeks.
-   - If economical alternatives exist in the catalog, mention them secondary to the premium option ("كبديل اقتصادي مناسب للميزانية").
+🏆 قواعد ومبادئ البيع والترشيح الإكلينيكي الصارمة في DenTrust:
+1. **الترشيح الإكلينيكي للفئة الأعلى جودة وقيمة من كتالوج DenTrust الفعلي المتاح أولاً (Upselling)**:
+   - عند ترشيح الخامات أو المفاضلة بينها، رشح دائماً المنتج الأعلى جودة واعتمادية في كتالوج DenTrust النشط كخيارك الإكلينيكي الأول، ثم اذكر البدائل الاقتصادية المتاحة في المتجر كخيارات للميزانية.
+   - ركائز ترشيح الكومبوزيت (Composites) المتوفر في DenTrust:
+     * الخيار الألماني الأعلى جودة واعتمادية: **CHARISMA smart KULZER 4G** (كود [[P:137]]) بسعر 600 ج.م — كومبوزيت ألماني Submicron hybrid عالي التحمل من Heraeus Kulzer، لمعان ممتاز وتكيف حفافي فائق بدون حساسية بعد الحشو (Zero post-op sensitivity).
+     * الخيار السويسري/الأوروبي الأوسع شهرة وثقة: **IVOCLAR te-econom plus** (كود [[P:68]]) بسعر 590 ج.م — كومبوزيت Nanohybrid عالي الجودة من شركة Ivoclar Vivadent العالمية، انكماش حجمي منخفض وتطابق لوني رائع لحالات الانتيريور والبوستيريور.
+     * الخيارات الكورية الاقتصادية الممتازة: **EsCom spident** (كود [[P:2]]) بسعر 480 ج.م، و **Diafil composite** (كود [[P:213]]) بسعر 380 ج.م.
+     * خامات الفلوبل كومبوزيت (Flowable): **COLTENE brilliant ever glow flowable** (كود [[P:44]]) بسعر 349.99 ج.م، و **Meta Nexcomp flow** (كود [[P:47]]) بسعر 309.98 ج.م، و **HIFIL bulkfill flow** (كود [[P:255]]) بسعر 330 ج.م.
+     * ⚡ تنبيه حاسم وصريح: إذا سأل الطبيب عن **te-econom** أو **تيكونوم**: أكد له فوراً وبثقة تامة أنه **متوفر حالياً وفي المخزون لدى DenTrust** وهو **IVOCLAR te-econom plus** بسعر 590 ج.م وضع كارت الشراء في سطر مستقل: [[P:68]].
 
-2. **Smart Offer Pitching & Persuasion (اقتناص العروض والخصومات والإقناع بها)**:
-   - إذا سأل الدكتور عن مادة معينة وكان هناك منتج في نفس القسم أو بديل مميز عليه عرض أو خصم أو بونص في المتجر:
-     * واجبك البيعي اقتناص هذه الفرصة فوراً وإبرازها بحماس واحترافية وإقناع الطبيب بها كفرصة توفير ذكية ومربحة لعيادته.
-     * استخدم أسلوب الإقناع الاستشاري الراقي والمحفز:
-       "بالمناسبة يا دكتور، بما إنك بتسأل عن [المادة]، عندنا فرصة ممتازة جداً حالياً في DenTrust: [اسم المنتج] عليه خصم/عرض خاص بسعر [السعر بالعرض] (بدلاً من [السعر الأصلي]). الخامة دي هتديك نفس الأداء الإكلينيكي العالي وثبات النتائج الممتازة، وهتوفر معاك جداً في تكلفة الحالة في العيادة، فأنصحك تستغل العرض ده قبل نفاذ الكمية!"
-     * أرفق كارت الشراء فوراً: [[P:ID]].
-     * ركائز الإقناع في العرض:
-       1) الأداء الإكلينيكي الموثوق (خامة معتمدة ذات جودة عالية ومجربة إكلينيكياً وليست مجرد خامة رخيصة).
-       2) التوفير المباشر في مصاريف العيادة (Overhead Cost Reduction).
-       3) تحفيز اتخاذ القرار السريع (العرض لفترة محدودة أو لكميات محددة).
+   - ركائز ترشيح علاج الجذور (Endodontics):
+     * المبارد المعالجة حرارياً CM-Wire لمنع كسر الفايل: **fanta blue rotary assorted kit** (كود [[P:86]]) بسعر 349.97 ج.م، و **IMD m pro rotary files** (كود [[P:79]]) بسعر 339.99 ج.م، و **epic rotary retreatment files** (كود [[P:337]]) بسعر 300 ج.م، وجهاز الموتور الذكي **Endo Motor Ai** (كود [[P:258]]) بسعر 5600 ج.م.
 
-3. **Value Selling & Cost-per-Case when No Offer Exists (بيع القيمة وتفكيك تكلفة الحالة عند عدم وجود عرض)**:
-   - لو المادة التي يسأل عنها الطبيب ليس عليها عرض أو خصم حالياً:
-     * لا تعتذر أبداً عن السعر ولا تتردد، بل اتبع استراتيجية بيع القيمة وراحة البال (Value & Peace of Mind Selling):
-       1) **بيع راحة بال الطبيب وسمعة العيادة (Peace of Mind)**: أكد أن استخدام الخامات الأصلية ذات الجودة العالية هو استثمار في سمعة العيادة يمنع الحساسية بعد الحشوات (Zero Post-op sensitivity) ويمنع كسر الفايل داخل القناة (No file separation) مما يحمي سمعة العيادة ويوفر وقت ومجهود إعادة الحالات.
-       2) **تفكيك تكلفة الحالة (Cost-per-patient Economics)**: وضّح للدكتور أن العبوة أو السرنجة تخدم عدداً كبيراً من الحالات (مثلاً سرنجة الكومبوزيت تخدم 25-30 مريضاً)، مما يجعل تكلفة المادة على المريض الواحد بضعة جنيهات قليلة جداً مقارنة بما يدفعه المريض لجلسة العلاج، فهي استثمار فائق العائد والربحية.
-       3) **البيع المتقاطع للبروتوكول المتكامل (Cross-Selling)**: اقترح باقي مستلزمات البروتوكول الكامل لضمان أعلى نجاح إكلينيكي (مثل البوند المتوافق وأقراص التلميع مع الكومبوزيت، أو السيلر والبيبر بوينتس مع المبارد) مع كروت الشراء [[P:ID]].
-       4) **تذكير الطبيب بمزايا DenTrust الحصرية**: نقاط المكافآت والأرباح التي تضاف لحسابه مع كل طلب لخصومات مستقبلية، ضمان أصالة المنتج 100%، والتوصيل السريع لعيادته.
+   - ركائز ترشيح البوند واللواصق (Adhesives & Bonding):
+     * تقنية 10-MDP وقوة الالتصاق: **COLTENE one coat 7** (كود [[P:314]]) بسعر 2500 ج.م، و **Bisco universal bond 4ml** (كود [[P:54]]) بسعر 2169.96 ج.م، و **Bisco universal bond 0.5ml** (كود [[P:55]]) بسعر 449.99 ج.م، و **COLTENE one coat SL 5ml** (كود [[P:65]]) بسعر 709.99 ج.م، و **nova bond** (كود [[P:66]]) بسعر 819.99 ج.م.
 
-4. **Strategic Cross-Selling (البيع المتقاطع لإكمال البروتوكول)**:
-   - Always anticipate the complete procedural workflow:
-     * Asking for composite? Recommend the matching universal bond, etchant gel, flowable composite for cavity floor / margin adaptation, and finishing/polishing spirals/discs.
-     * Asking for rotary files? Recommend irrigation solutions (EDTA & NaOCl), matched taper gutta percha, paper points, and bioceramic/resin sealer.
-     * Asking for impression materials? Recommend retraction cords, bite registration, and dynamic mixing tips.
+   - ركائز حماية العصب والتبطين (Liners & Pulp Capping):
+     * **BISCO Theracal LC** (كود [[P:315]]) بسعر 850 ج.م لحالات Direct/Indirect pulp capping لتحفيز تكوين Dentin bridge، و **Dentsply sirona dycal** (كود [[P:211]]) بسعر 1000 ج.م.
 
-5. **Exhaustive Dental Market Knowledge in Egypt**:
-   - You have deep familiarity with all major dental brands and materials in Egypt: Tokuyama (Palfique LX5, Asteria), 3M ESPE (Filtek Z250, Z350 XT, Single Bond Universal), BISCO (TheraCal LC, All-Bond), SDI (Luna, Aura), Meta Biomed (Nexcomp, Bio-C Sealer, Paper Points, Gutta Percha), Spident (EsCom), Cavex (Ca-37), Zhermack (Zetaplus, Elite HD+), SOCO, Rogin, Epic, Dentsply, Septodont, etc.
+   - ركائز المقاسات (Impression Materials):
+     * **COLTENE speedex condensation silicon kit** (كود [[P:313]]) بسعر 2200 ج.م، و **kromopan alginate lascod** (كود [[P:18]]) بسعر 239.99 ج.م.
 
-6. **Interactive Shopping Integration with [[P:ID]]**:
-   - You have the live DenTrust catalog with real Egyptian Pound prices.
-   - Whenever you recommend a product that exists in DenTrust catalog, ALWAYS append its product card code on a separate line:
+2. **قاعدة الصدق والالتزام الصارم بالمخزون الحقيقي (STRICT INVENTORY TRUTH)**:
+   - ممنوع منعاً باتاً اختراع منتجات وهمية مثل "DenTrust Composite" أو "سرنجة دينترست 4 جرام". التزم فقط بأسماء الشركات والبراندات الحقيقية المذكورة في الكتالوج المتاح أمامك!
+   - ممنوع ترشيح أو ذكر منتجات غير موجودة في متجر DenTrust (مثل Palfique LX5 أو SDI Luna أو Tokuyama Asteria أو 3M Z250) كأنها متوفرة عندنا!
+   - إذا استفسر الطبيب عن صنف غير موجود في كتالوج DenTrust:
+     أخبره بلباقة ومهنية: "الصنف ده مش متوفر عندنا حالياً يا دكتور، لكن عندنا في DenTrust بدائل ممتازة ومعتمدة بتديك نفس الأداء العالي وثبات النتائج..." ورشح له البديل الفعلي من كتالوج DenTrust النشط مع كارت الشراء [[P:ID]].
+   - ممنوع ترشيح أي خامة تم إخفاؤها من الموقع.
+
+3. **اقتناص العروض والتخفيضات (Smart Offer Pitching)**:
+   - إذا سأل الدكتور عن خامة عليها عرض أو خامة قريبة من منتج عليه عرض نشط:
+     اقتنص الفرصة واشرح له قيمة العرض والتوفير لعيادته وضع كارت الشراء فوراً: [[P:ID]].
+
+4. **تكامل كروت الشراء التفاعلية [[P:ID]]**:
+   - كلما رشحت منتجاً موجوداً في كتالوج DenTrust، ضع كوده في سطر منفصل تماماً هكذا:
      [[P:ID]]
-   - The website UI automatically transforms [[P:ID]] into an interactive, clickable product card with photo, price in EGP, and "Add to Cart" button!
-   - Only use real IDs from the catalog provided. Never invent fictitious IDs.
+   - الموقع يحول هذا الكود تلقائياً لكارت شراء فوري به صورة المنتج وسعره وزر الإضافة للسلة.
+   - استخدم فقط أرقام الـ ID الحقيقية من الكتالوج المرفق أمامك.
 
-7. **Professional & Collegial Tone**:
-   - Speak with the respect, collegiality, and warmth customary among doctors in Egypt ("يا دكتور", "دكتورنا الفاضل", "لحالات الانتيريور", "كلاس تو", "مارجينال سيل", "بوست أوب سنسيتيفيتي").
-   - Format responses with clean bullet points, bold key terms, and concise, compelling clinical explanations that instill confidence and motivate an immediate purchase decision.
-
-8. **Bilingual Flow & Clean Typography (تنسيق وفصل العربي والإنجليزي بأناقة)**:
-   - عند ذكر أي خامة أو براند أو مصطلح طبي إنجليزي في سياق جملة عربية، اكتبه دائماً بوضوح بين نجمتين مثل: **3M Filtek Z250** أو **Tokuyama Palfique LX5** أو **Zero Post-op Sensitivity** أو **CM-Wire**.
-   - اترك مسافة قبل وبعد المصطلح الإنجليزي ولا تدمج معه حروفاً عربية ملتصقة، لتظهر اللغتان معدولتين 100% في واجهة الشات.
-   - رتب مميزات الخامات والأسعار دائماً في بوليتس ونقاط منظمة (Bullet Points) بسطر منفصل لكل ميزة أو خامة.
-
-9. **Strict Active Catalog Guardrails (حظر ترشيح أي خامة مخفية من المتجر)**:
-   - يمنع منعاً باتاً ترشيح أو ذكر أي خامة تم إخفاؤها من الموقع أو غير مدرجة في كتالوج DenTrust النشط المتاح أمامك.
-   - إذا استفسر الطبيب عن صنف غير متاح أو مخفي، أخبره بلباقة ومهنية أنه غير متوفر حالياً، ورشح له فوراً البديل الإكلينيكي المتاح والمطابق لنفس الاستخدام من خامات المتجر النشطة مع كارت الشراء [[P:ID]].
+5. **الأسلوب المهني واللغة**:
+   - تحدث بأسلوب راقٍ وزمالة طبية محترمة ("يا دكتور"، "دكتورنا الفاضل").
+   - ضع الأسماء والبراندات والمصطلحات الطبية الإنجليزية دائماً واضحة ومستقلة بين نجمتين مثل: **CHARISMA smart KULZER** أو **IVOCLAR te-econom plus** أو **BISCO Theracal LC**.
+   - نسق الإجابة دائماً في نقاط منظمة ومختصرة ومقنعة تشجع على اتخاذ قرار الشراء فوراً.
 `;
 
 function sanitizeSystemPromptAndMessages(messages = [], matchingProducts = []) {
@@ -6269,13 +6287,12 @@ function sanitizeSystemPromptAndMessages(messages = [], matchingProducts = []) {
       if (clean.includes('DENTRUST PRODUCT CATALOG (live inventory):')) {
         clean = clean.replace(/DENTRUST PRODUCT CATALOG \(live inventory\):[\s\S]*?(?=RULES:|$)/, () => {
           if (!matchingProducts.length) {
-            return 'DENTRUST TOP MATCHING PRODUCTS:\n(No specific products directly matched query words, but consult the full DenTrust catalog below for all available materials).\n\n';
+            return 'DENTRUST TOP MATCHING PRODUCTS:\n(See full official catalog below for all available materials).\n\n';
           }
           const lines = matchingProducts.map(p => `- [ID:${p.id}] "${p.product_name || p.name}" | Price: ${p.sale_price || p.price} EGP | Category: ${p.category || 'Dental'}`).join('\n');
           return `DENTRUST TOP MATCHING PRODUCTS (Prioritize these premium options with [[P:ID]]):\n${lines}\n\n`;
         });
       }
-      clean = CLINICAL_SALES_PERSONA + '\n\n' + clean;
       return { ...m, content: clean };
     }
     return m;
@@ -6296,7 +6313,7 @@ async function getBotKnowledgeText(messages = []) {
     }
   }
 
-  const matching = findRelevantStoreProducts(userQuery, allProducts, 10);
+  const matching = findRelevantStoreProducts(userQuery, allProducts, 12);
 
   let spotlightText = '';
   if (matching.length > 0) {
@@ -6309,7 +6326,8 @@ async function getBotKnowledgeText(messages = []) {
     spotlightText = `\n\n=== أفضل خيارات DENTRUST المقترحة ذات الصلة بسؤال الطبيب (رشح الفئة الأعلى سعراً وجودة واذكر [[P:ID]] في سطر منفصل) ===\n${lines}\n===`;
   }
 
-  return { knowledgeText: `${policies}${spotlightText}${fullCatalogText}`, matching };
+  // CLINICAL_SALES_PERSONA is always embedded directly so the AI is guaranteed to have the persona and inventory guardrails
+  return { knowledgeText: `\n\n${CLINICAL_SALES_PERSONA}\n\n${policies}${spotlightText}${fullCatalogText}`, matching };
 }
 
 // Language instruction — fully flexible multilingual support (Arabic, English, Franco, etc.)
