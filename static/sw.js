@@ -5,12 +5,14 @@
    • Push notifications
 ═══════════════════════════════════════════════ */
 
-const CACHE = 'dentrust-pos-v10';
+const CACHE = 'dentrust-pos-v11';
 const STATIC_ASSETS = [
   '/',
   '/static/manifest.json',
   '/static/icon-192.png',
+  '/static/pwa-192.png',
   '/static/icon-512.png',
+  '/static/badge-monochrome.png',
 ];
 
 /* ── Install ── */
@@ -82,17 +84,31 @@ self.addEventListener('fetch', e => {
 
 /* ── Push Notifications ── */
 self.addEventListener('push', e => {
-  let data = { title: 'DenTrust POS', body: 'إشعار جديد', icon: '/static/icon-192.png', badge: '/static/icon-192.png', tag: 'dentrust-notif' };
+  let data = {
+    title: 'DenTrust POS',
+    body: 'إشعار جديد',
+    icon: '/static/pwa-192.png',
+    badge: '/static/badge-monochrome.png',
+    tag: 'dentrust-notif'
+  };
   try {
     const d = e.data ? e.data.json() : {};
     data = Object.assign(data, d);
   } catch (_) {}
 
+  // Ensure clean, valid icon and monochrome badge for Android status bar
+  let iconUrl = data.icon || '/static/pwa-192.png';
+  let badgeUrl = data.badge || '/static/badge-monochrome.png';
+  if (badgeUrl.includes('icon-192') || badgeUrl.includes('pwa-192')) {
+    badgeUrl = '/static/badge-monochrome.png';
+  }
+
   e.waitUntil(
     self.registration.showNotification(data.title, {
       body:    data.body,
-      icon:    data.icon    || '/static/icon-192.png',
-      badge:   data.badge   || '/static/icon-192.png',
+      icon:    iconUrl,
+      badge:   badgeUrl,
+      image:   data.image || undefined,
       tag:     (data.tag || 'dentrust-notif') + '-' + Date.now(),
       data:    data.url ? { url: data.url } : {},
       vibrate: [300, 100, 300, 100, 300],
