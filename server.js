@@ -7867,8 +7867,8 @@ async function sendPushNotification({
   title,
   body,
   url = 'https://dentrust.site',
-  icon = `${BASE}/static/icon-192.png`,
-  badge = `${BASE}/static/icon-192.png`,
+  icon = 'https://dentrust.site/pwa-192.png',
+  badge = 'https://dentrust.site/badge-monochrome.png',
   image = null,
   tag = 'dentrust-notif',
   targetType = 'all', // 'all', 'managers', 'customer', 'debtors', 'loyalty'
@@ -7948,8 +7948,8 @@ async function sendPushNotification({
           const payload = JSON.stringify({
             title: customTitle,
             body: customBody,
-            icon: icon || `${BASE}/static/icon-192.png`,
-            badge: badge || `${BASE}/static/icon-192.png`,
+            icon: icon || 'https://dentrust.site/pwa-192.png',
+            badge: badge || 'https://dentrust.site/badge-monochrome.png',
             image: image || null,
             tag: tag || 'dentrust-notif',
             url: url || 'https://dentrust.site'
