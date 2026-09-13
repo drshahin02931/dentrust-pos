@@ -3,7 +3,7 @@
 const EGYPT_GOVERNORATES = {
   'القاهرة': ['النزهة', 'مدينة نصر', 'المعادي', 'مصر الجديدة', 'الزيتون', 'شبرا', 'المطرية', 'عين شمس', 'الزمالك', 'وسط البلد', 'المنيل', 'الدقي', 'بولاق', 'السيدة زينب', 'الخليفة', 'مصر القديمة', 'حلوان', 'المعصرة', '15 مايو', 'التجمع الخامس', 'التجمع', 'القاهرة الجديدة', 'القطامية', 'البساتين', 'دار السلام', 'الأميرية', 'منشأة ناصر', 'الشرابية', 'روض الفرج', 'العمرانية', 'فيصل', 'الهرم', 'عين الصيرة', 'طره', 'الباجور', 'المقطم', 'الخصوص', 'شبرا الخيمة الجديدة', 'مدينة بدر', 'العبور', 'أكتوبر (جيزة)', 'الشيخ زايد', 'مدينتي', 'الرحاب', 'الشروق'],
   'الجيزة': ['الدقي', 'العجوزة', 'المهندسين', 'فيصل', 'الهرم', 'البدرشين', 'البراجيل', 'أوسيم', 'أبو رواش', 'العياط', 'الواحات البحرية', 'الصف', '6 أكتوبر', 'أكتوبر', 'الشيخ زايد', 'حدائق الأهرام', 'طموه', 'الحوامدية', 'إمبابة', 'بولاق الدكرور', 'أبو النمرس', 'كرداسة', 'أبو الغيط', 'العمرانية', 'ميدان الجيزة'],
-  'الاسكندرية': ['المنتزه', 'شرق', 'وسط', 'غرب', 'الجمرك', 'العجمي', 'العامرية', 'برج العرب', 'سيدي جابر', 'سموحة', 'محرم بك', 'ميامي', 'لوران', 'سيدي بشر', 'رشدي', 'كفر عبده', 'ستانلي', 'جليم', 'الإبراهيمية', 'كامب شيزار', 'الشاطبي', 'بحري', 'المندرة', 'العصافرة', 'المعمورة', 'أبو قير'],
+  'الاسكندرية': ['الهانوفيل', 'العجمي', 'الدخيلة', 'البيطاش', 'أبو يوسف', 'الكيلو 21', 'سيدي كرير', 'المنتزه', 'شرق', 'وسط', 'غرب', 'الجمرك', 'العامرية', 'برج العرب', 'سيدي جابر', 'سموحة', 'محرم بك', 'ميامي', 'لوران', 'سيدي بشر', 'رشدي', 'كفر عبده', 'ستانلي', 'جليم', 'الإبراهيمية', 'كامب شيزار', 'الشاطبي', 'بحري', 'المندرة', 'العصافرة', 'المعمورة', 'أبو قير'],
   'الدقهلية': ['المنصورة', 'ميت غمر', 'السنبلاوين', 'دكرنس', 'بلقاس', 'شربين', 'المنزلة', 'طلخا', 'الجمالية', 'منية النصر', 'أجا', 'بني عبيد', 'تمى الأمديد', 'ميت سلسيل', 'نبروه'],
   'الشرقية': ['الزقازيق', 'العاشر من رمضان', 'منيا القمح', 'بلبيس', 'مشتول السوق', 'القنايات', 'أبو حماد', 'القرين', 'فاقوس', 'أبو كبير', 'الحسينية', 'كفر صقر', 'أولاد صقر', 'ديرب نجم', 'الإبراهيمية', 'صان الحجر'],
   'الغربية': ['طنطا', 'المحلة الكبرى', 'المحلة', 'كفر الزيات', 'زفتى', 'السنطة', 'قطور', 'بسيون', 'سمنود'],
@@ -38,6 +38,16 @@ function normalizeArabicText(str) {
     .toLowerCase();
 }
 
+function matchArabicWord(text, word) {
+  if (!text || !word) return false;
+  try {
+    const re = new RegExp('(^|[^\\u0621-\\u064A0-9])' + word + '([^\\u0621-\\u064A0-9]|$)', 'u');
+    return re.test(text);
+  } catch (_) {
+    return text.split(/[\s,،\-\.\/\|]+/).includes(word);
+  }
+}
+
 function parseEgyptianAddress(raw) {
   if (!raw || typeof raw !== 'string') return null;
   const cleanRaw = raw.trim();
@@ -50,7 +60,7 @@ function parseEgyptianAddress(raw) {
 
   for (const city of Object.keys(EGYPT_GOVERNORATES)) {
     const normCity = normalizeArabicText(city);
-    if (normRaw.includes(normCity)) {
+    if (matchArabicWord(normRaw, normCity)) {
       detectedCity = city;
       break;
     }
@@ -65,7 +75,7 @@ function parseEgyptianAddress(raw) {
   allRegions.sort((a, b) => b.norm.length - a.norm.length);
 
   for (const item of allRegions) {
-    if (normRaw.includes(item.norm)) {
+    if (matchArabicWord(normRaw, item.norm)) {
       detectedRegion = item.district;
       if (!detectedCity) {
         detectedCity = item.gov;
@@ -75,39 +85,16 @@ function parseEgyptianAddress(raw) {
   }
 
   if (!detectedCity && !detectedRegion) {
-    detectedCity = 'القاهرة';
+    detectedCity = 'الاسكندرية';
     detectedRegion = '';
-  } else if (!detectedCity && detectedRegion) {
-    detectedCity = 'القاهرة';
-  } else if (detectedCity && !detectedRegion) {
-    detectedRegion = '';
-  }
-
-  let title = 'العيادة الرئيسية';
-  if (detectedRegion) {
-    title = 'عيادة ' + detectedRegion;
-  } else if (detectedCity && detectedCity !== 'القاهرة') {
-    title = 'عيادة ' + detectedCity;
-  }
-
-  let details = cleanRaw;
-  const parts = cleanRaw.split(/[-–—,،|\/]/).map(p => p.trim()).filter(Boolean);
-  if (parts.length > 1) {
-    const filtered = parts.filter(p => {
-      const np = normalizeArabicText(p);
-      return np !== normalizeArabicText(detectedCity) && np !== normalizeArabicText(detectedRegion);
-    });
-    if (filtered.length > 0) {
-      details = filtered.join(' - ');
-    }
   }
 
   return {
     id: 'addr_' + Math.random().toString(36).substring(2, 9),
-    title,
-    city: detectedCity,
-    region: detectedRegion,
-    details,
+    title: 'العيادة الرئيسية',
+    city: detectedCity || 'الاسكندرية',
+    region: detectedRegion || '',
+    details: cleanRaw,
     address: cleanRaw,
     is_default: true
   };
@@ -128,29 +115,39 @@ function normalizeEgyptianAddresses(addrs, legacyAddress) {
     if (typeof item === 'string') {
       return parseEgyptianAddress(item) || {
         id: 'addr_' + (idx + 1),
-        title: 'عيادة #' + (idx + 1),
-        city: 'القاهرة',
+        title: 'العيادة الرئيسية',
+        city: 'الاسكندرية',
         region: '',
         details: item,
         address: item,
         is_default: idx === 0
       };
     }
-    if (item && (!item.city || !item.region)) {
-      const rawText = item.address || item.details || item.title || '';
-      const parsed = parseEgyptianAddress(rawText);
-      if (parsed) {
-        return {
-          ...item,
-          city: item.city || parsed.city,
-          region: item.region || parsed.region,
-          details: item.details || parsed.details || rawText,
-          address: item.address || parsed.address || rawText,
-          is_default: item.is_default !== undefined ? item.is_default : (idx === 0)
-        };
-      }
+
+    if (!item || typeof item !== 'object') return item;
+
+    let updated = { ...item };
+
+    // Auto-heal corrupted "الصف / الجيزة" entry if the address is actually Alexandria / Hanoville
+    const combinedText = ((updated.title || '') + ' ' + (updated.details || '') + ' ' + (updated.address || '')).toLowerCase();
+    const isCorruptedGiza = (updated.title === 'عيادة الصف' || updated.region === 'الصف' || (updated.city === 'الجيزة' && !combinedText.includes('فيصل') && !combinedText.includes('الهرم') && !combinedText.includes('اكتوبر')));
+    const hasAlexKeywords = combinedText.includes('هانوفيل') || combinedText.includes('عجمي') || combinedText.includes('قويري') || combinedText.includes('اسكندر');
+
+    if (isCorruptedGiza && hasAlexKeywords) {
+      updated.title = (updated.title && updated.title !== 'عيادة الصف') ? updated.title : 'home';
+      updated.city = 'الاسكندرية';
+      updated.region = combinedText.includes('هانوفيل') ? 'الهانوفيل' : 'العجمي';
     }
-    return item;
+
+    if (!updated.title || updated.title === 'عيادة undefined') {
+      updated.title = 'العيادة الرئيسية';
+    }
+
+    if (updated.is_default === undefined) {
+      updated.is_default = (idx === 0);
+    }
+
+    return updated;
   });
 
   return list;
@@ -159,6 +156,7 @@ function normalizeEgyptianAddresses(addrs, legacyAddress) {
 module.exports = {
   EGYPT_GOVERNORATES,
   normalizeArabicText,
+  matchArabicWord,
   parseEgyptianAddress,
   normalizeEgyptianAddresses
 };

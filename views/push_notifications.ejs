@@ -1,0 +1,782 @@
+<%- include('partials/header', Object.assign({pageTitle: 'إشعارات الويب الذكية'}, locals)) %>
+
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6" dir="rtl">
+
+  <!-- Header & Stats Overview -->
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-gradient-to-l from-blue-800 to-indigo-900 text-white p-6 rounded-3xl shadow-xl">
+    <div class="space-y-1">
+      <div class="flex items-center gap-3">
+        <span class="text-3xl">📲</span>
+        <h1 class="text-2xl font-black tracking-tight">مركز إشعارات الويب الذكية (Web Push)</h1>
+      </div>
+      <p class="text-blue-200 text-sm">إدارة البث المباشر والحملات التلقائية المجدولة للأطباء وعملاء DenTrust</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <button onclick="loadStats()" class="bg-white/10 hover:bg-white/20 text-white font-medium px-4 py-2.5 rounded-xl border border-white/20 transition flex items-center gap-2 text-sm backdrop-blur">
+        <span>🔄</span> تحديث الإحصائيات
+      </button>
+      <button onclick="switchTab('broadcast')" class="bg-amber-400 hover:bg-amber-500 text-blue-950 font-bold px-5 py-2.5 rounded-xl shadow-lg transition flex items-center gap-2 text-sm">
+        <span>⚡</span> إرسال إشعار فوري
+      </button>
+    </div>
+  </div>
+
+  <!-- Quick Stat Cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm flex items-center gap-4">
+      <div class="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-2xl font-bold">
+        📱
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 font-semibold">إجمالي الأجهزة المشتركة</p>
+        <h3 id="statSubscribers" class="text-2xl font-black text-gray-800">--</h3>
+        <p class="text-[11px] text-emerald-600 font-medium">مستقبل نشط للإشعارات</p>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm flex items-center gap-4">
+      <div class="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-2xl font-bold">
+        🩺
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 font-semibold">أطباء بحسابات مرتبطة</p>
+        <h3 id="statLinkedDoctors" class="text-2xl font-black text-gray-800">--</h3>
+        <p class="text-[11px] text-indigo-600 font-medium">أرقام وكودات موثقة</p>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm flex items-center gap-4">
+      <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl font-bold">
+        🤖
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 font-semibold">الحملات التلقائية النشطة</p>
+        <h3 id="statActiveCampaigns" class="text-2xl font-black text-emerald-700">4 / 4</h3>
+        <p class="text-[11px] text-gray-400 font-medium">مجدولة ومفعلة بتوقيت القاهرة</p>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm flex items-center gap-4">
+      <div class="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center text-2xl font-bold">
+        📨
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 font-semibold">إجمالي الإشعارات المرسلة</p>
+        <h3 id="statTotalSent" class="text-2xl font-black text-gray-800">--</h3>
+        <p class="text-[11px] text-amber-600 font-medium">عبر جميع القنوات</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Navigation Tabs -->
+  <div class="flex border-b border-gray-200 gap-3 text-sm font-bold">
+    <button id="tabBtn-broadcast" onclick="switchTab('broadcast')" class="tab-btn active pb-3 px-4 border-b-2 border-blue-600 text-blue-600 flex items-center gap-2">
+      <span>📣</span> إرسال إشعار فوري (Broadcast)
+    </button>
+    <button id="tabBtn-automations" onclick="switchTab('automations')" class="tab-btn pb-3 px-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 flex items-center gap-2">
+      <span>🤖</span> الحملات الذكية والمجدولة (Smart Campaigns)
+    </button>
+    <button id="tabBtn-logs" onclick="switchTab('logs')" class="tab-btn pb-3 px-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 flex items-center gap-2">
+      <span>📜</span> سجل الإشعارات (History Log)
+    </button>
+  </div>
+
+  <!-- TAB 1: Manual Broadcast -->
+  <div id="tabContent-broadcast" class="tab-content space-y-6">
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- Form Inputs (8 Cols) -->
+      <div class="lg:col-span-7 bg-white rounded-3xl p-6 border border-gray-200 shadow-sm space-y-5">
+        <div class="border-b pb-4">
+          <h2 class="text-lg font-black text-gray-800 flex items-center gap-2">
+            <span>✍️</span> صياغة إشعار جديد
+          </h2>
+          <p class="text-xs text-gray-500">أرسل تنبيهاً فورياً يظهر مباشرة على شاشات هواتف وأجهزة الأطباء</p>
+        </div>
+
+        <!-- Target Audience Selector -->
+        <div>
+          <label class="block text-xs font-bold text-gray-700 mb-2">الفئة المستهدفة للإشعار</label>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+            <label class="flex items-center gap-2 p-3 border rounded-xl cursor-pointer hover:bg-blue-50/50 has-[:checked]:border-blue-600 has-[:checked]:bg-blue-50">
+              <input type="radio" name="targetType" value="all" checked onchange="handleTargetChange(this.value)" class="text-blue-600 focus:ring-0">
+              <div>
+                <div class="font-bold text-gray-800">🌐 جميع الأجهزة والمشتركين</div>
+                <div class="text-[10px] text-gray-500">بث عام لكل من سمح بالإشعارات</div>
+              </div>
+            </label>
+
+            <label class="flex items-center gap-2 p-3 border rounded-xl cursor-pointer hover:bg-blue-50/50 has-[:checked]:border-blue-600 has-[:checked]:bg-blue-50">
+              <input type="radio" name="targetType" value="customer" onchange="handleTargetChange(this.value)" class="text-blue-600 focus:ring-0">
+              <div>
+                <div class="font-bold text-gray-800">🩺 دكتور محدد (رقم / كود)</div>
+                <div class="text-[10px] text-gray-500">إرسال خاص لطبيب معين</div>
+              </div>
+            </label>
+
+            <label class="flex items-center gap-2 p-3 border rounded-xl cursor-pointer hover:bg-blue-50/50 has-[:checked]:border-blue-600 has-[:checked]:bg-blue-50">
+              <input type="radio" name="targetType" value="debtors" onchange="handleTargetChange(this.value)" class="text-blue-600 focus:ring-0">
+              <div>
+                <div class="font-bold text-gray-800">💼 أصحاب المديونيات المعلقة</div>
+                <div class="text-[10px] text-gray-500">تذكير للعملاء الذين عليهم حساب</div>
+              </div>
+            </label>
+
+            <label class="flex items-center gap-2 p-3 border rounded-xl cursor-pointer hover:bg-blue-50/50 has-[:checked]:border-blue-600 has-[:checked]:bg-blue-50">
+              <input type="radio" name="targetType" value="loyalty" onchange="handleTargetChange(this.value)" class="text-blue-600 focus:ring-0">
+              <div>
+                <div class="font-bold text-gray-800">🎁 أصحاب نقاط المكافآت</div>
+                <div class="text-[10px] text-gray-500">العملاء الذين لديهم 50 نقطة أو أكثر</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Specific Customer Input (Hidden by default) -->
+        <div id="specificCustomerBox" class="hidden p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-3">
+          <label class="block text-xs font-bold text-gray-700">بيانات الطبيب المستهدف (موبايل أو كود):</label>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <span class="text-[11px] text-gray-500">رقم الهاتف (مثال: 01012345678)</span>
+              <input type="text" id="targetPhone" placeholder="01xxxxxxxxx" class="w-full mt-1 border rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            </div>
+            <div>
+              <span class="text-[11px] text-gray-500">أو كود الطبيب (مثال: 100245)</span>
+              <input type="text" id="targetCode" placeholder="كود العميل" class="w-full mt-1 border rounded-xl px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Template Badges -->
+        <div>
+          <span class="text-xs text-gray-500 font-semibold mb-2 block">قوالب سريعة مقترحة:</span>
+          <div class="flex flex-wrap gap-2 text-xs">
+            <button type="button" onclick="applyTemplate('flash')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition font-medium">⚡ عرض خاطف</button>
+            <button type="button" onclick="applyTemplate('restock')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition font-medium">📦 نواقص الأسبوع</button>
+            <button type="button" onclick="applyTemplate('points')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition font-medium">🎁 نقاط مكافآتك</button>
+            <button type="button" onclick="applyTemplate('debt')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition font-medium">💼 تذكير ودي بالحساب</button>
+          </div>
+        </div>
+
+        <!-- Title Input -->
+        <div>
+          <div class="flex justify-between items-center mb-1">
+            <label class="text-xs font-bold text-gray-700">عنوان الإشعار (Title)</label>
+            <span id="titleCount" class="text-[11px] text-gray-400">0 / 60</span>
+          </div>
+          <input type="text" id="notifTitle" maxlength="60" oninput="updatePreview()" placeholder="مثال: خصم 5% فوري لأول أوردر كاش النهاردة! 🏁"
+            class="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm font-bold text-gray-800 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+
+        <!-- Body Input & Variables -->
+        <div>
+          <div class="flex justify-between items-center mb-1">
+            <label class="text-xs font-bold text-gray-700">نص الرسالة (Body)</label>
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] text-blue-600 font-medium">إدراج متغير:</span>
+              <button type="button" onclick="insertPlaceholder('{name}')" class="text-[11px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded hover:bg-blue-100 font-mono">{name}</button>
+              <button type="button" onclick="insertPlaceholder('{debt}')" class="text-[11px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded hover:bg-emerald-100 font-mono">{debt}</button>
+              <button type="button" onclick="insertPlaceholder('{points}')" class="text-[11px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded hover:bg-amber-100 font-mono">{points}</button>
+              <span id="bodyCount" class="text-[11px] text-gray-400 mr-2">0 / 180</span>
+            </div>
+          </div>
+          <textarea id="notifBody" rows="3" maxlength="180" oninput="updatePreview()" placeholder="اكتب نص الإشعار هنا بشكل جذاب ومشجع..."
+            class="w-full border border-gray-300 rounded-xl p-3 text-sm text-gray-800 focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+        </div>
+
+        <!-- Link and Image (Optional) -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-gray-700 mb-1">رابط الفتح عند الضغط (URL)</label>
+            <input type="url" id="notifUrl" value="https://dentrust.site" oninput="updatePreview()" placeholder="https://dentrust.site/..."
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm text-gray-700 font-mono text-left ltr focus:ring-2 focus:ring-blue-500 focus:outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-gray-700 mb-1">صورة إعلانية اختيارية (Image Banner)</label>
+            <input type="url" id="notifImage" oninput="updatePreview()" placeholder="https://... رابط صورة عريضة"
+              class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm text-gray-700 font-mono text-left ltr focus:ring-2 focus:ring-blue-500 focus:outline-none">
+          </div>
+        </div>
+
+        <!-- Action Button -->
+        <div class="pt-3 border-t flex items-center justify-between">
+          <button type="button" onclick="sendTestToMe()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold px-4 py-2.5 rounded-xl text-sm transition flex items-center gap-2">
+            <span>🧪</span> تجربة على هذا المتصفح
+          </button>
+
+          <button type="button" id="sendBroadcastBtn" onclick="confirmAndSendBroadcast()" class="bg-blue-700 hover:bg-blue-800 text-white font-bold px-8 py-2.5 rounded-xl text-sm shadow-lg transition flex items-center gap-2">
+            <span>🚀</span> إرسال الإشعار الآن
+          </button>
+        </div>
+      </div>
+
+      <!-- Live Mobile Mockup Preview (5 Cols) -->
+      <div class="lg:col-span-5 flex flex-col items-center">
+        <div class="sticky top-20 w-full max-w-sm">
+          <div class="text-xs font-bold text-gray-500 mb-3 text-center flex items-center justify-center gap-2">
+            <span>📱</span> معاينة حية لشكل الإشعار على هاتف الطبيب
+          </div>
+
+          <!-- Phone Frame -->
+          <div class="w-full bg-slate-900 rounded-[2.5rem] p-4 shadow-2xl border-4 border-slate-800">
+            <!-- Speaker & Notch -->
+            <div class="w-24 h-4 bg-slate-800 rounded-full mx-auto mb-4"></div>
+
+            <!-- Lockscreen Wallpaper / Notification Container -->
+            <div class="bg-slate-800/80 rounded-2xl p-4 border border-slate-700 backdrop-blur-md text-white space-y-3">
+              <!-- Notif Header -->
+              <div class="flex items-center justify-between text-xs text-slate-300 border-b border-slate-700/60 pb-2">
+                <div class="flex items-center gap-2">
+                  <div class="w-5 h-5 rounded-md bg-blue-600 flex items-center justify-center text-[10px] font-black">
+                    DT
+                  </div>
+                  <span class="font-bold">DenTrust Store</span>
+                </div>
+                <span class="text-[10px] text-slate-400">الآن</span>
+              </div>
+
+              <!-- Notif Content -->
+              <div class="space-y-1.5" dir="rtl">
+                <h4 id="previewTitle" class="text-sm font-black text-white leading-tight">عنوان الإشعار يظهر هنا</h4>
+                <p id="previewBody" class="text-xs text-slate-200 leading-relaxed">نص الرسالة التي ستصل للأطباء تظهر هنا مباشرة عند الكتابة...</p>
+              </div>
+
+              <!-- Image Banner Preview if provided -->
+              <div id="previewImageBox" class="hidden rounded-xl overflow-hidden max-h-36 bg-slate-700">
+                <img id="previewImage" src="" alt="Banner" class="w-full h-full object-cover">
+              </div>
+
+              <!-- Action Bar -->
+              <div class="text-[10px] text-blue-400 font-medium flex items-center justify-between pt-1">
+                <span>اضغط للفتح المباشر 🔗</span>
+                <span class="text-slate-500">dentrust.site</span>
+              </div>
+            </div>
+
+            <!-- Home indicator -->
+            <div class="w-28 h-1 bg-slate-700 rounded-full mx-auto mt-6"></div>
+          </div>
+
+          <div class="mt-4 p-3 bg-blue-50 rounded-2xl border border-blue-200 text-[11px] text-blue-800">
+            💡 <strong>ملاحظة هامة:</strong> تظهر الإشعارات للأطباء حتى لو كان المتصفح مغلقاً، بمجرد فتح الهاتف أو الاتصال بالإنترنت.
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- TAB 2: Smart Automations -->
+  <div id="tabContent-automations" class="tab-content hidden space-y-6">
+    <div class="bg-white rounded-3xl p-6 border border-gray-200 shadow-sm space-y-6">
+      <div class="border-b pb-4">
+        <h2 class="text-lg font-black text-gray-800 flex items-center gap-2">
+          <span>🤖</span> حملات الجدولة الذكية (Automated Campaigns)
+        </h2>
+        <p class="text-xs text-gray-500">الحملات الأوتوماتيكية المبرمجة لزيادة المبيعات وتحفيز الطلبات الدورية دون أي تدخل يدوي</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        <!-- 1. Thursday Restock -->
+        <div class="border rounded-3xl p-5 bg-gradient-to-b from-blue-50/40 to-transparent border-blue-200 space-y-4 relative">
+          <div class="flex items-start justify-between">
+            <div>
+              <span class="inline-block bg-blue-100 text-blue-800 text-[11px] font-black px-2.5 py-1 rounded-full mb-2">
+                📅 كل خميس — 3:30 عصراً
+              </span>
+              <h3 class="text-base font-bold text-gray-800">تذكير نواقص الويك إند والتوصيل السريع ⚡</h3>
+              <p class="text-xs text-gray-500">تذكير الأطباء بالطلب قبل بداية الأسبوع مع ميزة التوصيل في غمضة عين</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="autoCheck-thursday_restock" checked onchange="toggleCampaign('thursday_restock', this.checked)" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+
+          <div class="space-y-2">
+            <div>
+              <span class="text-[11px] text-gray-500 font-bold">العنوان:</span>
+              <input type="text" id="autoTitle-thursday_restock" value="دكتورنا العزيز.. شيكت على نواقص عيادتك؟ 🩺" class="w-full border rounded-xl px-3 py-2 text-xs font-bold text-gray-800 bg-white">
+            </div>
+            <div>
+              <span class="text-[11px] text-gray-500 font-bold">نص الرسالة:</span>
+              <textarea id="autoBody-thursday_restock" rows="2" class="w-full border rounded-xl p-2.5 text-xs text-gray-700 bg-white">اطلب نواقصك الآن من DenTrust وطلبيتك توصلك في غمضة عين قبل زحمة بداية الأسبوع ⚡</textarea>
+            </div>
+          </div>
+
+          <div class="pt-2 flex items-center justify-between border-t border-blue-100">
+            <button onclick="saveCampaignSettings('thursday_restock')" class="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition">
+              💾 حفظ التعديل
+            </button>
+            <button onclick="testCampaignNow('thursday_restock')" class="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs px-3 py-2 rounded-xl transition flex items-center gap-1">
+              <span>🧪</span> تجربة الإرسال الآن
+            </button>
+          </div>
+        </div>
+
+        <!-- 2. Saturday First Cash Order Race (5% Discount) -->
+        <div class="border rounded-3xl p-5 bg-gradient-to-b from-amber-50/40 to-transparent border-amber-200 space-y-4 relative">
+          <div class="flex items-start justify-between">
+            <div>
+              <span class="inline-block bg-amber-100 text-amber-800 text-[11px] font-black px-2.5 py-1 rounded-full mb-2">
+                🏁 كل سبت — 1:00 ظهراً (حتى 3:00 عصراً)
+              </span>
+              <h3 class="text-base font-bold text-gray-800">سباق أسرع دكتور — خصم 5% كاش 🚀</h3>
+              <p class="text-xs text-gray-500">أول أوردر كاش يطلبه أي دكتور في اليوم يأخذ خصم 5% فوري يطبقه الكاشير على الفاتورة</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="autoCheck-saturday_race" checked onchange="toggleCampaign('saturday_race', this.checked)" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+            </label>
+          </div>
+
+          <div class="p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-900 font-medium">
+            ⚠️ <strong>ملاحظة الكاشير:</strong> الخصم يطبقه الكاشير يدوياً بنسبة 5% على أول فاتورة كاش يتم تسجيلها في هذا اليوم.
+          </div>
+
+          <div class="space-y-2">
+            <div>
+              <span class="text-[11px] text-gray-500 font-bold">العنوان:</span>
+              <input type="text" id="autoTitle-saturday_race" value="سباق أسرع دكتور بدأ الآن! 🏁⚡" class="w-full border rounded-xl px-3 py-2 text-xs font-bold text-gray-800 bg-white">
+            </div>
+            <div>
+              <span class="text-[11px] text-gray-500 font-bold">نص الرسالة:</span>
+              <textarea id="autoBody-saturday_race" rows="2" class="w-full border rounded-xl p-2.5 text-xs text-gray-700 bg-white">أول أوردر كاش هيتطلب على DenTrust النهاردة هياخد خصم 5% فوري! السباق ساري حتى الساعة 3:00 عصراً.. مين الدكتور الأسرع النهاردة؟ 🚀</textarea>
+            </div>
+          </div>
+
+          <div class="pt-2 flex items-center justify-between border-t border-amber-100">
+            <button onclick="saveCampaignSettings('saturday_race')" class="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition">
+              💾 حفظ التعديل
+            </button>
+            <button onclick="testCampaignNow('saturday_race')" class="bg-amber-50 hover:bg-amber-100 text-amber-700 font-bold text-xs px-3 py-2 rounded-xl transition flex items-center gap-1">
+              <span>🧪</span> تجربة الإرسال الآن
+            </button>
+          </div>
+        </div>
+
+        <!-- 3. Gentle Debt / Credit Reminder -->
+        <div class="border rounded-3xl p-5 bg-gradient-to-b from-indigo-50/40 to-transparent border-indigo-200 space-y-4 relative">
+          <div class="flex items-start justify-between">
+            <div>
+              <span class="inline-block bg-indigo-100 text-indigo-800 text-[11px] font-black px-2.5 py-1 rounded-full mb-2">
+                💼 أسبوعياً (الأحد 2:00 ظهراً) أو عند الطلب
+              </span>
+              <h3 class="text-base font-bold text-gray-800">تذكير المديونيات الودي والرسمي ✨</h3>
+              <p class="text-xs text-gray-500">رسالة لطيفة لأصحاب المديونيات توضح الرصيد وطرق السداد (إنستاباي / فودافون كاش / مع المندوب)</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="autoCheck-debt_reminder" checked onchange="toggleCampaign('debt_reminder', this.checked)" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+            </label>
+          </div>
+
+          <div class="space-y-2">
+            <div>
+              <span class="text-[11px] text-gray-500 font-bold">العنوان:</span>
+              <input type="text" id="autoTitle-debt_reminder" value="تذكير ودي بحسابك لدى DenTrust 💼" class="w-full border rounded-xl px-3 py-2 text-xs font-bold text-gray-800 bg-white">
+            </div>
+            <div>
+              <span class="text-[11px] text-gray-500 font-bold">نص الرسالة (يتضمن تلقائياً اسم الطبيب والمبلغ):</span>
+              <textarea id="autoBody-debt_reminder" rows="2" class="w-full border rounded-xl p-2.5 text-xs text-gray-700 bg-white">دكتور {name}، رصيد الحساب المتبقي طرفكم {debt} ج.م. متاح السداد عبر إنستاباي، فودافون كاش، أو نقداً مع مندوب الطلبية القادمة ✨</textarea>
+            </div>
+          </div>
+
+          <div class="pt-2 flex items-center justify-between border-t border-indigo-100">
+            <button onclick="saveCampaignSettings('debt_reminder')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition">
+              💾 حفظ التعديل
+            </button>
+            <button onclick="testCampaignNow('debt_reminder')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs px-3 py-2 rounded-xl transition flex items-center gap-1">
+              <span>🧪</span> تجربة الإرسال الآن
+            </button>
+          </div>
+        </div>
+
+        <!-- 4. Daily Loyalty Points Reminder -->
+        <div class="border rounded-3xl p-5 bg-gradient-to-b from-purple-50/40 to-transparent border-purple-200 space-y-4 relative">
+          <div class="flex items-start justify-between">
+            <div>
+              <span class="inline-block bg-purple-100 text-purple-800 text-[11px] font-black px-2.5 py-1 rounded-full mb-2">
+                🎁 يومياً — 10:30 مساءً
+              </span>
+              <h3 class="text-base font-bold text-gray-800">تذكير نقاط المكافآت الليلي 🌙</h3>
+              <p class="text-xs text-gray-500">تذكير مسائي للأطباء أصحاب رصيد النقاط (>= 50 نقطة) لتحفيز الطلب وتذكيرهم بالخصم</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" id="autoCheck-loyalty_points" checked onchange="toggleCampaign('loyalty_points', this.checked)" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+            </label>
+          </div>
+
+          <div class="space-y-2">
+            <div>
+              <span class="text-[11px] text-gray-500 font-bold">العنوان:</span>
+              <input type="text" id="autoTitle-loyalty_points" value="يا دكتور.. نقاط مكافآتك في انتظارك! 🎁" class="w-full border rounded-xl px-3 py-2 text-xs font-bold text-gray-800 bg-white">
+            </div>
+            <div>
+              <span class="text-[11px] text-gray-500 font-bold">نص الرسالة:</span>
+              <textarea id="autoBody-loyalty_points" rows="2" class="w-full border rounded-xl p-2.5 text-xs text-gray-700 bg-white">عندك {points} نقطة مكافأة في حسابك لدى DenTrust! متسيبهمش واستخدمهم كاش في طلبك القادم ووفر فوراً ⚡</textarea>
+            </div>
+          </div>
+
+          <div class="pt-2 flex items-center justify-between border-t border-purple-100">
+            <button onclick="saveCampaignSettings('loyalty_points')" class="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition">
+              💾 حفظ التعديل
+            </button>
+            <button onclick="testCampaignNow('loyalty_points')" class="bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-xs px-3 py-2 rounded-xl transition flex items-center gap-1">
+              <span>🧪</span> تجربة الإرسال الآن
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: Logs & History -->
+  <div id="tabContent-logs" class="tab-content hidden space-y-4">
+    <div class="bg-white rounded-3xl p-6 border border-gray-200 shadow-sm space-y-4">
+      <div class="flex items-center justify-between border-b pb-4">
+        <div>
+          <h2 class="text-lg font-black text-gray-800 flex items-center gap-2">
+            <span>📜</span> سجل الإشعارات المرسلة
+          </h2>
+          <p class="text-xs text-gray-500">أحدث العمليات التي تمت بنجاح وعدد الأجهزة المستلمة</p>
+        </div>
+        <button onclick="loadLogs()" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-xl font-bold transition">
+          🔄 تحديث السجل
+        </button>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-right text-xs">
+          <thead>
+            <tr class="bg-gray-50 text-gray-600 font-bold border-b">
+              <th class="p-3">التاريخ والوقت</th>
+              <th class="p-3">العنوان</th>
+              <th class="p-3">نص الرسالة</th>
+              <th class="p-3">الفئة المستهدفة</th>
+              <th class="p-3">الأجهزة المستلمة</th>
+              <th class="p-3">بواسطة</th>
+              <th class="p-3">الحالة</th>
+            </tr>
+          </thead>
+          <tbody id="logsTableBody" class="divide-y divide-gray-100">
+            <tr>
+              <td colspan="7" class="p-8 text-center text-gray-400">جارٍ تحميل السجل...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Modal / Toast Alert Container -->
+<div id="alertToast" class="fixed bottom-6 left-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 max-w-md bg-slate-900 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center gap-3 border border-slate-700 text-sm">
+  <span id="toastIcon" class="text-xl">✅</span>
+  <span id="toastMsg" class="font-medium">تم بنجاح</span>
+</div>
+
+<script>
+const BASE = "<%= base %>";
+
+// Switch between tabs
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.remove('border-blue-600', 'text-blue-600', 'active');
+    b.classList.add('border-transparent', 'text-gray-500');
+  });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+
+  const btn = document.getElementById(`tabBtn-${tabId}`);
+  const content = document.getElementById(`tabContent-${tabId}`);
+  if (btn && content) {
+    btn.classList.add('border-blue-600', 'text-blue-600', 'active');
+    btn.classList.remove('border-transparent', 'text-gray-500');
+    content.classList.remove('hidden');
+  }
+
+  if (tabId === 'logs') loadLogs();
+}
+
+function handleTargetChange(val) {
+  const box = document.getElementById('specificCustomerBox');
+  if (val === 'customer') {
+    box.classList.remove('hidden');
+  } else {
+    box.classList.add('hidden');
+  }
+}
+
+function insertPlaceholder(tag) {
+  const textarea = document.getElementById('notifBody');
+  const start = textarea.selectionStart || textarea.value.length;
+  const end = textarea.selectionEnd || textarea.value.length;
+  textarea.value = textarea.value.substring(0, start) + tag + textarea.value.substring(end);
+  textarea.focus();
+  updatePreview();
+}
+
+function updatePreview() {
+  const title = document.getElementById('notifTitle').value.trim() || 'عنوان الإشعار يظهر هنا';
+  const body = document.getElementById('notifBody').value.trim() || 'نص الرسالة التي ستصل للأطباء تظهر هنا مباشرة عند الكتابة...';
+  const img = document.getElementById('notifImage').value.trim();
+
+  document.getElementById('previewTitle').textContent = title;
+  document.getElementById('previewBody').textContent = body;
+  document.getElementById('titleCount').textContent = `${document.getElementById('notifTitle').value.length} / 60`;
+  document.getElementById('bodyCount').textContent = `${document.getElementById('notifBody').value.length} / 180`;
+
+  const imgBox = document.getElementById('previewImageBox');
+  const imgEl = document.getElementById('previewImage');
+  if (img) {
+    imgEl.src = img;
+    imgBox.classList.remove('hidden');
+  } else {
+    imgBox.classList.add('hidden');
+  }
+}
+
+function applyTemplate(type) {
+  if (type === 'flash') {
+    document.getElementById('notifTitle').value = '⚡ عرض خاطف لفترة محدودة على DenTrust!';
+    document.getElementById('notifBody').value = 'خصومات استثنائية على أهم مستلزمات الأسنان اليوم فقط.. اطلب الآن قبل انتهاء الكمية 🩺';
+  } else if (type === 'restock') {
+    document.getElementById('notifTitle').value = 'دكتورنا العزيز.. شيكت على نواقص عيادتك؟ 🩺';
+    document.getElementById('notifBody').value = 'اطلب نواقصك الآن من DenTrust وطلبيتك توصلك في غمضة عين قبل زحمة بداية الأسبوع ⚡';
+  } else if (type === 'points') {
+    document.getElementById('notifTitle').value = 'يا دكتور.. نقاط مكافآتك في انتظارك! 🎁';
+    document.getElementById('notifBody').value = 'عندك {points} نقطة مكافأة في حسابك لدى DenTrust! متسيبهمش واستخدمهم كاش في طلبك القادم ووفر فوراً ⚡';
+  } else if (type === 'debt') {
+    document.getElementById('notifTitle').value = 'تذكير ودي بحسابك لدى DenTrust 💼';
+    document.getElementById('notifBody').value = 'دكتور {name}، رصيد الحساب المتبقي طرفكم {debt} ج.م. متاح السداد عبر إنستاباي، فودافون كاش، أو نقداً مع مندوب الطلبية القادمة ✨';
+  }
+  updatePreview();
+}
+
+function showToast(msg, isError = false) {
+  const toast = document.getElementById('alertToast');
+  const icon = document.getElementById('toastIcon');
+  const text = document.getElementById('toastMsg');
+  icon.textContent = isError ? '❌' : '✅';
+  text.textContent = msg;
+  toast.classList.remove('translate-y-20', 'opacity-0');
+  setTimeout(() => {
+    toast.classList.add('translate-y-20', 'opacity-0');
+  }, 4000);
+}
+
+// Load stats
+async function loadStats() {
+  try {
+    const res = await fetch(`${BASE}/api/admin/push/stats`);
+    const data = await res.json();
+    if (data.ok) {
+      document.getElementById('statSubscribers').textContent = data.subscribersCount || 0;
+      document.getElementById('statLinkedDoctors').textContent = data.linkedDoctorsCount || 0;
+      document.getElementById('statTotalSent').textContent = data.totalSent || 0;
+
+      if (data.settings) {
+        for (const [key, s] of Object.entries(data.settings)) {
+          const chk = document.getElementById(`autoCheck-${key}`);
+          const tit = document.getElementById(`autoTitle-${key}`);
+          const bod = document.getElementById(`autoBody-${key}`);
+          if (chk) chk.checked = !!s.enabled;
+          if (tit && s.title) tit.value = s.title;
+          if (bod && s.body) bod.value = s.body;
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load stats:', err);
+  }
+}
+
+// Load logs
+async function loadLogs() {
+  const tbody = document.getElementById('logsTableBody');
+  tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-gray-400">جارٍ تحميل السجل...</td></tr>';
+  try {
+    const res = await fetch(`${BASE}/api/admin/push/logs`);
+    const data = await res.json();
+    if (data.ok && data.logs && data.logs.length > 0) {
+      tbody.innerHTML = data.logs.map(log => {
+        const dateStr = new Date(log.created_at).toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' });
+        const targetBadge = {
+          'all': '<span class="bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-bold">الكل</span>',
+          'managers': '<span class="bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-bold">المديرين</span>',
+          'customer': '<span class="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">طبيب محدد</span>',
+          'debtors': '<span class="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-bold">مديونيات</span>',
+          'loyalty': '<span class="bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">نقاط مكافآت</span>',
+        }[log.target_type] || log.target_type;
+
+        return `
+          <tr class="hover:bg-gray-50 transition">
+            <td class="p-3 text-gray-500 font-mono text-[11px]">${dateStr}</td>
+            <td class="p-3 font-bold text-gray-800">${log.title}</td>
+            <td class="p-3 text-gray-600 max-w-xs truncate" title="${log.body}">${log.body}</td>
+            <td class="p-3">${targetBadge} ${log.target_info ? `<span class="text-gray-400">(${log.target_info})</span>` : ''}</td>
+            <td class="p-3 font-bold text-emerald-600">${log.sent_count} جهاز</td>
+            <td class="p-3 text-gray-500">${log.sent_by || 'النظام'}</td>
+            <td class="p-3"><span class="bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded">ناجح</span></td>
+          </tr>
+        `;
+      }).join('');
+    } else {
+      tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-gray-400">لا توجد إشعارات مسجلة حتى الآن</td></tr>';
+    }
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-red-500">حدث خطأ أثناء تحميل السجل</td></tr>';
+  }
+}
+
+// Send Broadcast
+async function confirmAndSendBroadcast() {
+  const title = document.getElementById('notifTitle').value.trim();
+  const body = document.getElementById('notifBody').value.trim();
+  const url = document.getElementById('notifUrl').value.trim() || 'https://dentrust.site';
+  const image = document.getElementById('notifImage').value.trim() || null;
+  const targetType = document.querySelector('input[name="targetType"]:checked').value;
+  const targetPhone = document.getElementById('targetPhone').value.trim() || null;
+  const targetCode = document.getElementById('targetCode').value.trim() || null;
+
+  if (!title || !body) {
+    showToast('برجاء كتابة عنوان ونص الإشعار أولاً!', true);
+    return;
+  }
+
+  if (targetType === 'customer' && !targetPhone && !targetCode) {
+    showToast('برجاء إدخال رقم هاتف أو كود الطبيب المستهدف!', true);
+    return;
+  }
+
+  const targetNames = {
+    'all': 'جميع المشتركين',
+    'customer': `الطبيب (${targetPhone || targetCode})`,
+    'debtors': 'أصحاب المديونيات المعلقة',
+    'loyalty': 'أصحاب نقاط المكافآت (>= 50)'
+  };
+
+  if (!confirm(`هل أنت متأكد من إرسال هذا الإشعار إلى [${targetNames[targetType]}] الآن؟`)) {
+    return;
+  }
+
+  const btn = document.getElementById('sendBroadcastBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span>⏳</span> جارٍ الإرسال...';
+
+  try {
+    const res = await fetch(`${BASE}/api/admin/push/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, body, url, image, targetType, targetPhone, targetCode })
+    });
+    const result = await res.json();
+    if (result.ok) {
+      showToast(`تم إرسال الإشعار بنجاح إلى ${result.sent} جهاز!`);
+      loadStats();
+    } else {
+      showToast(result.error || 'فشل الإرسال', true);
+    }
+  } catch (err) {
+    showToast('حدث خطأ في الاتصال بالسيرفر', true);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<span>🚀</span> إرسال الإشعار الآن';
+  }
+}
+
+// Send Test Notification to Current Device
+async function sendTestToMe() {
+  const title = document.getElementById('notifTitle').value.trim() || '🔔 تجربة إشعار DenTrust';
+  const body = document.getElementById('notifBody').value.trim() || 'هذا إشعار تجريبي لاختبار ظهور الإشعارات على جهازك!';
+  const url = document.getElementById('notifUrl').value.trim() || 'https://dentrust.site';
+  const image = document.getElementById('notifImage').value.trim() || null;
+
+  try {
+    const res = await fetch(`${BASE}/api/admin/push/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, body, url, image, targetType: 'managers' })
+    });
+    const result = await res.json();
+    if (result.ok) {
+      showToast('تم إرسال الإشعار التجريبي لجهازك بنجاح! تفقد شاشتك');
+    } else {
+      showToast(result.error || 'فشل إرسال التجربة', true);
+    }
+  } catch (err) {
+    showToast('حدث خطأ أثناء إرسال التجربة', true);
+  }
+}
+
+// Toggle Campaign
+async function toggleCampaign(key, enabled) {
+  try {
+    const res = await fetch(`${BASE}/api/admin/push/settings/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, enabled })
+    });
+    const result = await res.json();
+    if (result.ok) {
+      showToast(enabled ? 'تم تفعيل الحملة الآلية' : 'تم إيقاف الحملة الآلية');
+      loadStats();
+    }
+  } catch (err) {
+    showToast('فشل تعديل حالة الحملة', true);
+  }
+}
+
+// Save Campaign Settings
+async function saveCampaignSettings(key) {
+  const title = document.getElementById(`autoTitle-${key}`).value.trim();
+  const body = document.getElementById(`autoBody-${key}`).value.trim();
+  const enabled = document.getElementById(`autoCheck-${key}`).checked;
+
+  try {
+    const res = await fetch(`${BASE}/api/admin/push/settings/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, title, body, enabled })
+    });
+    const result = await res.json();
+    if (result.ok) {
+      showToast('تم حفظ إعدادات الحملة بنجاح ✅');
+    } else {
+      showToast(result.error || 'فشل الحفظ', true);
+    }
+  } catch (err) {
+    showToast('فشل حفظ الإعدادات', true);
+  }
+}
+
+// Test Campaign Now
+async function testCampaignNow(key) {
+  try {
+    const res = await fetch(`${BASE}/api/admin/push/test-campaign/${key}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const result = await res.json();
+    if (result.ok) {
+      showToast(`تم إرسال تجربة الحملة بنجاح إلى ${result.sent} جهاز!`);
+    } else {
+      showToast(result.error || 'فشل إرسال التجربة', true);
+    }
+  } catch (err) {
+    showToast('حدث خطأ أثناء التجربة', true);
+  }
+}
+
+// Initial Load
+document.addEventListener('DOMContentLoaded', () => {
+  loadStats();
+  updatePreview();
+});
+</script>
+
+<%- include('partials/footer', locals) %>

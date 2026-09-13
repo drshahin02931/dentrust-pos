@@ -128,6 +128,9 @@
 
       <% if (typeof isMgr !== 'undefined' && isMgr) { %>
       <div class="h-5 w-px bg-blue-500 mx-1"></div>
+      <a href="<%= base %>/push-notifications" class="nav-link <%= reqPath.includes('/push-notifications') ? 'active' : '' %>">
+        📲 إشعارات الويب
+      </a>
       <a href="<%= base %>/warehouse" class="nav-link <%= reqPath.includes('/warehouse') ? 'active' : '' %>">
         🏢 المستودع
       </a>

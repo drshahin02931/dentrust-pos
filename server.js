@@ -24,8 +24,8 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || Buffer.from('QVEuQWI4Uk42TEk0WnZNNlRTMlVwdXBTeWNPZUUwWFpQZTlXdHpNZDljS25lT0NVQnoyNnc=', 'base64').toString('utf8');
 
 // ── VAPID / Web Push ─────────────────────────────────────────────────────────
-const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  || '';
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
+const VAPID_PUBLIC_KEY  = process.env.VAPID_PUBLIC_KEY  || 'BLSGOk6fHyRrpj_U6a8_Jghe1FdUD8y1AERnzoeVX_l5ugwjdWIDCZpblkQ-LGJEK6ovcS5BotshC5Z2r-saZMQ';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '4UhKyQwITtcAc6pulElUrxClogYpnkGgoeZeOTn-Rvs';
 const VAPID_EMAIL       = process.env.VAPID_EMAIL || 'mailto:admin@dentrust.site';
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
@@ -249,6 +249,10 @@ app.get(`${BASE}/top-selling`, (req, res) => {
 app.get(`${BASE}/admin/price-tracker`, (req, res) => {
   if (!isMgr(req)) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'price_tracker');
+});
+app.get([`${BASE}/push-notifications`, `${BASE}/admin/push-notifications`], (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'push_notifications', { pageTitle: 'إشعارات الويب الذكية' });
 });
 app.get(`${BASE}/admin/users`, (req, res) => {
   if (!isMgr(req)) return res.redirect(`${BASE}/`);
@@ -7854,30 +7858,136 @@ app.delete(`${BASE}/api/website-orders/:id`, async (req, res) => {
 // ── Push Notifications ────────────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Helper: send push to all subscribed devices
-async function sendPushToAll(title, body, url = null, tag = 'dentrust-notif') {
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+// ══════════════════════════════════════════════════════════════════════════════
+// ── Web Push Notifications Engine & Smart Campaigns ──────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Helper: send push notification to all or targeted subscribers
+async function sendPushNotification({
+  title,
+  body,
+  url = 'https://dentrust.site',
+  icon = `${BASE}/static/icon-192.png`,
+  badge = `${BASE}/static/icon-192.png`,
+  image = null,
+  tag = 'dentrust-notif',
+  targetType = 'all', // 'all', 'managers', 'customer', 'debtors', 'loyalty'
+  targetPhone = null,
+  targetCode = null,
+  sentBy = 'system'
+}) {
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+    console.warn('[Push] VAPID keys not configured');
+    return { ok: false, error: 'Push notifications غير مفعلة لعدم توفر VAPID keys' };
+  }
+
   try {
-    const { rows: subs } = await posDb.query('SELECT * FROM push_subscriptions');
-    const payload = JSON.stringify({ title, body, icon: `${BASE}/static/icon-192.png`, badge: `${BASE}/static/icon-192.png`, tag, url });
+    let query = 'SELECT * FROM push_subscriptions';
+    let params = [];
+
+    if (targetType === 'managers') {
+      query = `SELECT DISTINCT ps.* FROM push_subscriptions ps
+               LEFT JOIN users u ON u.id = ps.user_id
+               WHERE u.role = 'manager' OR ps.user_id IS NOT NULL`;
+    } else if (targetType === 'customer') {
+      const cleanPhone = (targetPhone || '').replace(/\D/g, '');
+      const cleanCode = (targetCode || '').trim();
+      query = `SELECT DISTINCT ps.*, c.name as cust_name, c.total_debt, c.points_balance
+               FROM push_subscriptions ps
+               LEFT JOIN customers c ON (c.id = ps.customer_id OR c.phone = ps.customer_phone OR c.customer_code = ps.customer_code)
+               WHERE ($1 <> '' AND (ps.customer_phone = $1 OR c.phone = $1 OR ps.customer_phone LIKE '%' || $1))
+                  OR ($2 <> '' AND (ps.customer_code = $2 OR c.customer_code = $2))`;
+      params = [cleanPhone, cleanCode];
+    } else if (targetType === 'debtors') {
+      query = `SELECT DISTINCT ps.*, c.name as cust_name, c.total_debt, c.points_balance
+               FROM push_subscriptions ps
+               JOIN customers c ON (c.id = ps.customer_id OR c.phone = ps.customer_phone OR c.customer_code = ps.customer_code)
+               WHERE c.total_debt > 0`;
+    } else if (targetType === 'loyalty') {
+      query = `SELECT DISTINCT ps.*, c.name as cust_name, c.total_debt, c.points_balance
+               FROM push_subscriptions ps
+               JOIN customers c ON (c.id = ps.customer_id OR c.phone = ps.customer_phone OR c.customer_code = ps.customer_code)
+               WHERE COALESCE(c.points_balance, 0) >= 50`;
+    }
+
+    const { rows: subs } = await posDb.query(query, params).catch(() => ({ rows: [] }));
+
+    if (!subs || subs.length === 0) {
+      console.log(`[Push] No subscribers found for target: ${targetType}`);
+      await posDb.query(
+        `INSERT INTO push_notifications_log (title, body, url, target_type, target_info, sent_count, failed_count, sent_by)
+         VALUES ($1, $2, $3, $4, $5, 0, 0, $6)`,
+        [title, body, url, targetType, targetPhone || targetCode || '', sentBy]
+      ).catch(() => {});
+      return { ok: true, sent: 0, failed: 0, message: 'لا توجد أجهزة مشتركة مطابقة لهذا الفلتر حالياً' };
+    }
+
+    let okCount = 0;
+    let failCount = 0;
     const pushOptions = { urgency: 'high', TTL: 86400 };
-    const results = await Promise.allSettled(
-      subs.map(sub => {
-        const subscription = { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } };
-        return webpush.sendNotification(subscription, payload, pushOptions).catch(async err => {
-          // Remove expired/invalid subscriptions (410 Gone)
+
+    await Promise.allSettled(
+      subs.map(async sub => {
+        try {
+          let customBody = body;
+          let customTitle = title;
+          if (sub.cust_name) {
+            customBody = customBody.replace(/\{name\}/g, sub.cust_name);
+            customTitle = customTitle.replace(/\{name\}/g, sub.cust_name);
+          } else {
+            customBody = customBody.replace(/دكتور \{name\}/g, 'دكتورنا العزيز').replace(/\{name\}/g, 'دكتور');
+            customTitle = customTitle.replace(/\{name\}/g, 'دكتورنا');
+          }
+          if (sub.total_debt != null) {
+            customBody = customBody.replace(/\{debt\}/g, parseFloat(sub.total_debt).toLocaleString('ar-EG'));
+          }
+          if (sub.points_balance != null) {
+            customBody = customBody.replace(/\{points\}/g, parseInt(sub.points_balance, 10).toLocaleString('ar-EG'));
+          }
+
+          const payload = JSON.stringify({
+            title: customTitle,
+            body: customBody,
+            icon: icon || `${BASE}/static/icon-192.png`,
+            badge: badge || `${BASE}/static/icon-192.png`,
+            image: image || null,
+            tag: tag || 'dentrust-notif',
+            url: url || 'https://dentrust.site'
+          });
+
+          const subscription = {
+            endpoint: sub.endpoint,
+            keys: { p256dh: sub.p256dh, auth: sub.auth }
+          };
+
+          await webpush.sendNotification(subscription, payload, pushOptions);
+          okCount++;
+        } catch (err) {
+          failCount++;
           if (err.statusCode === 410 || err.statusCode === 404) {
             await posDb.query('DELETE FROM push_subscriptions WHERE endpoint=$1', [sub.endpoint]).catch(() => {});
           }
-          throw err;
-        });
+        }
       })
     );
-    const ok = results.filter(r => r.status === 'fulfilled').length;
-    console.log(`[Push] Sent to ${ok}/${subs.length} devices`);
+
+    await posDb.query(
+      `INSERT INTO push_notifications_log (title, body, url, target_type, target_info, sent_count, failed_count, sent_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [title, body, url, targetType, targetPhone || targetCode || '', okCount, failCount, sentBy]
+    ).catch(() => {});
+
+    console.log(`[Push] Sent to ${okCount}/${subs.length} devices (${failCount} failed)`);
+    return { ok: true, sent: okCount, failed: failCount, total: subs.length };
   } catch (err) {
-    console.error('[Push] sendPushToAll error:', err.message);
+    console.error('[Push] sendPushNotification error:', err);
+    return { ok: false, error: err.message };
   }
+}
+
+// Helper: send push to all subscribed devices
+async function sendPushToAll(title, body, url = null, tag = 'dentrust-notif', image = null) {
+  return sendPushNotification({ title, body, url, image, tag, targetType: 'all', sentBy: 'system' });
 }
 
 // Helper: send low-stock push notification (to managers only)
@@ -7891,32 +8001,7 @@ async function sendLowStockPush(lowStockItems) {
 
 // Helper: send push only to devices belonging to managers
 async function sendPushToManagers(title, body, url = null, tag = 'dentrust-notif') {
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
-  try {
-    const { rows: subs } = await posDb.query(
-      `SELECT DISTINCT ps.* FROM push_subscriptions ps
-       LEFT JOIN users u ON u.id = ps.user_id
-       WHERE u.role = 'manager' OR ps.user_id IS NULL`
-    );
-    if (!subs.length) return;
-    const payload = JSON.stringify({ title, body, icon: `${BASE}/static/icon-192.png`, badge: `${BASE}/static/icon-192.png`, tag, url });
-    const pushOptions = { urgency: 'high', TTL: 86400 };
-    const results = await Promise.allSettled(
-      subs.map(sub => {
-        const subscription = { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } };
-        return webpush.sendNotification(subscription, payload, pushOptions).catch(async err => {
-          if (err.statusCode === 410 || err.statusCode === 404) {
-            await posDb.query('DELETE FROM push_subscriptions WHERE endpoint=$1', [sub.endpoint]).catch(() => {});
-          }
-          throw err;
-        });
-      })
-    );
-    const ok = results.filter(r => r.status === 'fulfilled').length;
-    console.log(`[Push] Sent to ${ok}/${subs.length} manager devices`);
-  } catch (err) {
-    console.error('[Push] sendPushToManagers error:', err.message);
-  }
+  return sendPushNotification({ title, body, url, tag, targetType: 'managers', sentBy: 'system' });
 }
 
 // Helper: check products nearing expiry (خلال 3 شهور) and push-notify managers
@@ -7981,31 +8066,54 @@ app.all([`${BASE}/api/admin/test-daily-stock-push`, '/api/admin/test-daily-stock
   res.json({ ok: true, result });
 });
 
-// GET /api/push/vapid-public-key  — returns public VAPID key to client (open, no auth needed)
+// GET /api/push/vapid-public-key — returns public VAPID key to client (open, no auth needed)
 app.get(`${BASE}/api/push/vapid-public-key`, (req, res) => {
   if (!VAPID_PUBLIC_KEY) return res.status(503).json({ error: 'Push notifications not configured on server' });
   res.json({ publicKey: VAPID_PUBLIC_KEY });
 });
 
-// POST /api/push/subscribe  — save device push subscription
+// POST /api/push/subscribe — save device push subscription with customer metadata
 app.post(`${BASE}/api/push/subscribe`, async (req, res) => {
-  const { endpoint, keys } = req.body || {};
+  const { endpoint, keys, customerPhone, customerCode, customerName, userAgent } = req.body || {};
   if (!endpoint || !keys?.p256dh || !keys?.auth) {
     return res.status(400).json({ error: 'بيانات الاشتراك ناقصة' });
   }
   try {
     const uid = req.session?.user_id || null;
+    let custId = null;
+    let resolvedName = customerName || null;
+    if (customerPhone || customerCode) {
+      const { rows } = await posDb.query(
+        `SELECT id, name FROM customers WHERE (phone = $1 OR customer_code = $2 OR barcode = $2) LIMIT 1`,
+        [customerPhone || '', customerCode || '']
+      ).catch(() => ({ rows: [] }));
+      if (rows.length > 0) {
+        custId = rows[0].id;
+        if (!resolvedName) resolvedName = rows[0].name;
+      }
+    }
     await posDb.query(
-      `INSERT INTO push_subscriptions (endpoint, p256dh, auth, user_id)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (endpoint) DO UPDATE SET p256dh=$2, auth=$3, user_id=$4, updated_at=NOW()`,
-      [endpoint, keys.p256dh, keys.auth, uid]
+      `INSERT INTO push_subscriptions (endpoint, p256dh, auth, user_id, customer_id, customer_phone, customer_code, customer_name, user_agent)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT (endpoint) DO UPDATE SET 
+         p256dh=$2, auth=$3, 
+         user_id=COALESCE($4, push_subscriptions.user_id),
+         customer_id=COALESCE($5, push_subscriptions.customer_id),
+         customer_phone=COALESCE($6, push_subscriptions.customer_phone),
+         customer_code=COALESCE($7, push_subscriptions.customer_code),
+         customer_name=COALESCE($8, push_subscriptions.customer_name),
+         user_agent=COALESCE($9, push_subscriptions.user_agent),
+         updated_at=NOW()`,
+      [endpoint, keys.p256dh, keys.auth, uid, custId, customerPhone || null, customerCode || null, resolvedName, userAgent || req.headers['user-agent'] || null]
     );
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+  } catch (err) {
+    console.error('[Push Subscribe error]:', err.message);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
 });
 
-// DELETE /api/push/unsubscribe  — remove device subscription
+// DELETE /api/push/unsubscribe — remove device subscription
 app.delete(`${BASE}/api/push/unsubscribe`, async (req, res) => {
   const { endpoint } = req.body || {};
   if (!endpoint) return res.status(400).json({ error: 'endpoint مطلوب' });
@@ -8015,7 +8123,109 @@ app.delete(`${BASE}/api/push/unsubscribe`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
-// POST /api/push/test  — manager-only test notification
+// GET /api/admin/push/stats — subscriber stats, campaigns, and total sent
+app.get(`${BASE}/api/admin/push/stats`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    const { rows: [subCount] } = await posDb.query('SELECT COUNT(*) as c FROM push_subscriptions');
+    const { rows: [linkedCount] } = await posDb.query('SELECT COUNT(*) as c FROM push_subscriptions WHERE customer_id IS NOT NULL OR customer_phone IS NOT NULL OR customer_code IS NOT NULL');
+    const { rows: [sentCount] } = await posDb.query('SELECT COALESCE(SUM(sent_count), 0) as c FROM push_notifications_log');
+    const { rows: settingsRows } = await posDb.query('SELECT key, enabled, title, body, url FROM push_automation_settings');
+    const settings = {};
+    for (const r of settingsRows) settings[r.key] = r;
+
+    res.json({
+      ok: true,
+      subscribersCount: parseInt(subCount?.c || 0, 10),
+      linkedDoctorsCount: parseInt(linkedCount?.c || 0, 10),
+      totalSent: parseInt(sentCount?.c || 0, 10),
+      settings
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/push/logs — recent history logs
+app.get(`${BASE}/api/admin/push/logs`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    const { rows: logs } = await posDb.query('SELECT * FROM push_notifications_log ORDER BY id DESC LIMIT 40');
+    res.json({ ok: true, logs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/push/send — manual push broadcast or targeted push
+app.post(`${BASE}/api/admin/push/send`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const { title, body, url, image, targetType, targetPhone, targetCode } = req.body || {};
+  if (!title || !body) return res.status(400).json({ error: 'العنوان ونص الرسالة مطلوبان' });
+  const sentBy = req.session?.username || 'مدير';
+  const result = await sendPushNotification({
+    title,
+    body,
+    url: url || 'https://dentrust.site',
+    image: image || null,
+    targetType: targetType || 'all',
+    targetPhone,
+    targetCode,
+    sentBy
+  });
+  res.json(result);
+});
+
+// POST /api/admin/push/settings/update — update automation campaign settings
+app.post(`${BASE}/api/admin/push/settings/update`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const { key, title, body, enabled, url } = req.body || {};
+  if (!key) return res.status(400).json({ error: 'مفتاح الحملة مطلوب' });
+  try {
+    await posDb.query(
+      `UPDATE push_automation_settings 
+       SET title = COALESCE($1, title),
+           body = COALESCE($2, body),
+           enabled = COALESCE($3, enabled),
+           url = COALESCE($4, url),
+           updated_at = NOW()
+       WHERE key = $5`,
+      [title || null, body || null, enabled != null ? enabled : null, url || null, key]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/push/test-campaign/:key — test run a campaign immediately
+app.post(`${BASE}/api/admin/push/test-campaign/:key`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const { key } = req.params;
+  try {
+    const { rows: [campaign] } = await posDb.query('SELECT * FROM push_automation_settings WHERE key = $1', [key]);
+    if (!campaign) return res.status(404).json({ error: 'الحملة غير موجودة' });
+
+    let targetType = 'all';
+    if (key === 'debt_reminder') targetType = 'debtors';
+    else if (key === 'loyalty_points') targetType = 'loyalty';
+
+    const sentBy = `${req.session?.username || 'مدير'} (تجربة)`;
+    const result = await sendPushNotification({
+      title: campaign.title,
+      body: campaign.body,
+      url: campaign.url || 'https://dentrust.site',
+      tag: `test-${key}`,
+      targetType,
+      sentBy
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/push/test — manager-only test notification
 app.post(`${BASE}/api/push/test`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
   if (!VAPID_PUBLIC_KEY) return res.status(503).json({ error: 'Push notifications غير مفعّلة' });
@@ -9588,9 +9798,57 @@ async function main() {
       p256dh TEXT NOT NULL,
       auth TEXT NOT NULL,
       user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      customer_id INTEGER,
+      customer_phone TEXT,
+      customer_code TEXT,
+      customer_name TEXT,
+      user_agent TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`);
+    await posDb.query(`
+      ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS customer_id INTEGER;
+      ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS customer_phone TEXT;
+      ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS customer_code TEXT;
+      ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS customer_name TEXT;
+      ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS user_agent TEXT;
+    `).catch(() => {});
+
+    await posDb.query(`CREATE TABLE IF NOT EXISTS push_notifications_log (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      url TEXT,
+      target_type TEXT DEFAULT 'all',
+      target_info TEXT,
+      sent_count INTEGER DEFAULT 0,
+      failed_count INTEGER DEFAULT 0,
+      sent_by TEXT DEFAULT 'system',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+
+    await posDb.query(`CREATE TABLE IF NOT EXISTS push_automation_settings (
+      key TEXT PRIMARY KEY,
+      enabled BOOLEAN DEFAULT true,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      url TEXT DEFAULT 'https://dentrust.site',
+      cron_expression TEXT,
+      extra_config JSONB DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+
+    // Seed default automation campaigns if not already present
+    await posDb.query(`
+      INSERT INTO push_automation_settings (key, enabled, title, body, url, cron_expression, extra_config)
+      VALUES 
+        ('thursday_restock', true, 'دكتورنا العزيز.. شيكت على نواقص عيادتك؟ 🩺', 'اطلب نواقصك الآن من DenTrust وطلبيتك توصلك في غمضة عين قبل زحمة بداية الأسبوع ⚡', 'https://dentrust.site', '30 15 * * 4', '{}'::jsonb),
+        ('saturday_race', true, 'سباق أسرع دكتور بدأ الآن! 🏁⚡', 'أول أوردر كاش هيتطلب على DenTrust النهاردة هياخد خصم 5% فوري! السباق ساري حتى الساعة 3:00 عصراً.. مين الدكتور الأسرع النهاردة؟ 🚀', 'https://dentrust.site', '0 13 * * 6', '{"manual_invoice_discount": true}'::jsonb),
+        ('debt_reminder', true, 'تذكير ودي بحسابك لدى DenTrust 💼', 'دكتور {name}، رصيد الحساب المتبقي طرفكم {debt} ج.م. متاح السداد عبر إنستاباي، فودافون كاش، أو نقداً مع مندوب الطلبية القادمة ✨', 'https://dentrust.site', '0 14 * * 0', '{"min_debt": 100}'::jsonb),
+        ('loyalty_points', true, 'يا دكتور.. نقاط مكافآتك في انتظارك! 🎁', 'عندك {points} نقطة مكافأة في حسابك لدى DenTrust! متسيبهمش واستخدمهم كاش في طلبك القادم ووفر فوراً ⚡', 'https://dentrust.site', '30 22 * * *', '{"min_points": 50}'::jsonb)
+      ON CONFLICT (key) DO NOTHING
+    `).catch(() => {});
+
     await initPriceTracker();
     await seedManager();
     // ── Sync Queue table — تسجّل الـ sales اللي فشل sync بتاعتها ──
@@ -9637,6 +9895,83 @@ async function main() {
 
     // ── تقرير النواقص اليومي: يشتغل يوميًا الساعة 12:00 ظهرًا بتوقيت القاهرة ──
     cron.schedule('0 12 * * *', () => { checkDailyStockAndNotify().catch(() => {}); }, { timezone: 'Africa/Cairo' });
+
+    // ── الحملات التلقائية المجدولة لإشعارات الويب ──
+    // 1. خميس النواقص والتوصيل السريع (3:30 PM بتوقيت القاهرة)
+    cron.schedule('30 15 * * 4', async () => {
+      try {
+        const { rows: [setting] } = await posDb.query("SELECT * FROM push_automation_settings WHERE key = 'thursday_restock' AND enabled = true");
+        if (!setting) return;
+        console.log('[Push Cron] Executing Thursday restock campaign...');
+        await sendPushNotification({
+          title: setting.title,
+          body: setting.body,
+          url: setting.url || 'https://dentrust.site',
+          tag: 'thursday-restock',
+          targetType: 'all',
+          sentBy: 'حملة الخميس الآلية'
+        });
+      } catch (err) {
+        console.error('[Push Cron Thursday error]:', err.message);
+      }
+    }, { timezone: 'Africa/Cairo' });
+
+    // 2. سباق أسرع دكتور - كاش 5% (1:00 PM السبت بتوقيت القاهرة)
+    cron.schedule('0 13 * * 6', async () => {
+      try {
+        const { rows: [setting] } = await posDb.query("SELECT * FROM push_automation_settings WHERE key = 'saturday_race' AND enabled = true");
+        if (!setting) return;
+        console.log('[Push Cron] Executing Saturday 5% first cash order race...');
+        await sendPushNotification({
+          title: setting.title,
+          body: setting.body,
+          url: setting.url || 'https://dentrust.site',
+          tag: 'saturday-race',
+          targetType: 'all',
+          sentBy: 'سباق السبت الآلي'
+        });
+      } catch (err) {
+        console.error('[Push Cron Saturday error]:', err.message);
+      }
+    }, { timezone: 'Africa/Cairo' });
+
+    // 3. تذكير نقاط المكافآت الليلي (10:30 PM يومياً بتوقيت القاهرة)
+    cron.schedule('30 22 * * *', async () => {
+      try {
+        const { rows: [setting] } = await posDb.query("SELECT * FROM push_automation_settings WHERE key = 'loyalty_points' AND enabled = true");
+        if (!setting) return;
+        console.log('[Push Cron] Executing daily loyalty points campaign...');
+        await sendPushNotification({
+          title: setting.title,
+          body: setting.body,
+          url: setting.url || 'https://dentrust.site',
+          tag: 'daily-loyalty',
+          targetType: 'loyalty',
+          sentBy: 'حملة النقاط الآلية'
+        });
+      } catch (err) {
+        console.error('[Push Cron Loyalty error]:', err.message);
+      }
+    }, { timezone: 'Africa/Cairo' });
+
+    // 4. تذكير المديونيات الودي (Sunday 2:00 PM بتوقيت القاهرة)
+    cron.schedule('0 14 * * 0', async () => {
+      try {
+        const { rows: [setting] } = await posDb.query("SELECT * FROM push_automation_settings WHERE key = 'debt_reminder' AND enabled = true");
+        if (!setting) return;
+        console.log('[Push Cron] Executing debt reminder campaign...');
+        await sendPushNotification({
+          title: setting.title,
+          body: setting.body,
+          url: setting.url || 'https://dentrust.site',
+          tag: 'debt-reminder',
+          targetType: 'debtors',
+          sentBy: 'تذكير المديونيات الآلي'
+        });
+      } catch (err) {
+        console.error('[Push Cron Debt error]:', err.message);
+      }
+    }, { timezone: 'Africa/Cairo' });
 
     // ── فحص العروض المنتهية دورياً كل دقيقة واستعادة السعر الأصلي المشطوب ──
     async function checkAndExpireOffers() {
