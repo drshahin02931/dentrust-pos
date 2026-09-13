@@ -8123,10 +8123,75 @@ app.delete(`${BASE}/api/push/unsubscribe`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+// Helper: ensure all push tables and default settings exist on demand (self-healing)
+async function ensurePushTables() {
+  try {
+    await posDb.query(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id SERIAL PRIMARY KEY,
+      endpoint TEXT UNIQUE NOT NULL,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      customer_id INTEGER,
+      customer_phone TEXT,
+      customer_code TEXT,
+      customer_name TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+
+    await posDb.query(`
+      ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS customer_id INTEGER;
+      ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS customer_phone TEXT;
+      ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS customer_code TEXT;
+      ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS customer_name TEXT;
+      ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS user_agent TEXT;
+    `).catch(() => {});
+
+    await posDb.query(`CREATE TABLE IF NOT EXISTS push_notifications_log (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      url TEXT,
+      target_type TEXT DEFAULT 'all',
+      target_info TEXT,
+      sent_count INTEGER DEFAULT 0,
+      failed_count INTEGER DEFAULT 0,
+      sent_by TEXT DEFAULT 'system',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+
+    await posDb.query(`CREATE TABLE IF NOT EXISTS push_automation_settings (
+      key TEXT PRIMARY KEY,
+      enabled BOOLEAN DEFAULT true,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      url TEXT DEFAULT 'https://dentrust.site',
+      cron_expression TEXT,
+      extra_config JSONB DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`).catch(() => {});
+
+    await posDb.query(`
+      INSERT INTO push_automation_settings (key, enabled, title, body, url, cron_expression, extra_config)
+      VALUES 
+        ('thursday_restock', true, 'دكتورنا العزيز.. شيكت على نواقص عيادتك؟ 🩺', 'اطلب نواقصك الآن من DenTrust وطلبيتك توصلك في غمضة عين قبل زحمة بداية الأسبوع ⚡', 'https://dentrust.site', '30 15 * * 4', '{}'::jsonb),
+        ('saturday_race', true, 'سباق أسرع دكتور بدأ الآن! 🏁⚡', 'أول أوردر كاش هيتطلب على DenTrust النهاردة هياخد خصم 5% فوري! السباق ساري حتى الساعة 3:00 عصراً.. مين الدكتور الأسرع النهاردة؟ 🚀', 'https://dentrust.site', '0 13 * * 6', '{"manual_invoice_discount": true}'::jsonb),
+        ('debt_reminder', true, 'تذكير ودي بحسابك لدى DenTrust 💼', 'دكتور {name}، رصيد الحساب المتبقي طرفكم {debt} ج.م. متاح السداد عبر إنستاباي، فودافون كاش، أو نقداً مع مندوب الطلبية القادمة ✨', 'https://dentrust.site', '0 14 * * 0', '{"min_debt": 100}'::jsonb),
+        ('loyalty_points', true, 'يا دكتور.. نقاط مكافآتك في انتظارك! 🎁', 'عندك {points} نقطة مكافأة في حسابك لدى DenTrust! متسيبهمش واستخدمهم كاش في طلبك القادم ووفر فوراً ⚡', 'https://dentrust.site', '30 22 * * *', '{"min_points": 50}'::jsonb)
+      ON CONFLICT (key) DO NOTHING
+    `).catch(() => {});
+  } catch (e) {
+    console.error('[Ensure Push Tables error]:', e.message);
+  }
+}
+
 // GET /api/admin/push/stats — subscriber stats, campaigns, and total sent
 app.get(`${BASE}/api/admin/push/stats`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
   try {
+    await ensurePushTables();
     const { rows: [subCount] } = await posDb.query('SELECT COUNT(*) as c FROM push_subscriptions');
     const { rows: [linkedCount] } = await posDb.query('SELECT COUNT(*) as c FROM push_subscriptions WHERE customer_id IS NOT NULL OR customer_phone IS NOT NULL OR customer_code IS NOT NULL');
     const { rows: [sentCount] } = await posDb.query('SELECT COALESCE(SUM(sent_count), 0) as c FROM push_notifications_log');
@@ -8150,10 +8215,12 @@ app.get(`${BASE}/api/admin/push/stats`, async (req, res) => {
 app.get(`${BASE}/api/admin/push/logs`, async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
   try {
+    await ensurePushTables();
     const { rows: logs } = await posDb.query('SELECT * FROM push_notifications_log ORDER BY id DESC LIMIT 40');
     res.json({ ok: true, logs });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[Push Logs Error]:', err.message);
+    res.status(500).json({ error: err.message, logs: [] });
   }
 });
 

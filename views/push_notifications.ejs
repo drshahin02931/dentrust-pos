@@ -596,7 +596,8 @@ function showToast(msg, isError = false) {
 // Load stats
 async function loadStats() {
   try {
-    const res = await fetch(`${BASE}/api/admin/push/stats`);
+    const res = await fetch(`${BASE}/api/admin/push/stats`, { credentials: 'include' });
+    if (!res.ok) return;
     const data = await res.json();
     if (data.ok) {
       document.getElementById('statSubscribers').textContent = data.subscribersCount || 0;
@@ -615,7 +616,7 @@ async function loadStats() {
       }
     }
   } catch (err) {
-    console.error('Failed to load stats:', err);
+    console.warn('Stats load warning:', err);
   }
 }
 
@@ -624,7 +625,11 @@ async function loadLogs() {
   const tbody = document.getElementById('logsTableBody');
   tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-gray-400">جارٍ تحميل السجل...</td></tr>';
   try {
-    const res = await fetch(`${BASE}/api/admin/push/logs`);
+    const res = await fetch(`${BASE}/api/admin/push/logs`, { credentials: 'include' });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.error || `HTTP ${res.status}`);
+    }
     const data = await res.json();
     if (data.ok && data.logs && data.logs.length > 0) {
       tbody.innerHTML = data.logs.map(log => {
@@ -650,10 +655,20 @@ async function loadLogs() {
         `;
       }).join('');
     } else {
-      tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-gray-400">لا توجد إشعارات مسجلة حتى الآن</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-gray-400 font-medium">لا توجد إشعارات مسجلة حتى الآن — يمكنك إرسال إشعار تجريبي من التبويب الأول!</td></tr>';
     }
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-red-500">حدث خطأ أثناء تحميل السجل</td></tr>';
+    console.error('Logs load error:', err);
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="7" class="p-8 text-center space-y-2">
+          <p class="text-red-500 font-bold text-sm">لم يتم تحميل السجل (${err.message})</p>
+          <button onclick="loadLogs()" class="bg-blue-600 text-white text-xs px-4 py-1.5 rounded-xl hover:bg-blue-700 font-bold transition">
+            🔄 إعادة المحاولة الآن
+          </button>
+        </td>
+      </tr>
+    `;
   }
 }
 
