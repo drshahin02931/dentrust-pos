@@ -220,36 +220,60 @@
           <!-- Phone Frame -->
           <div class="w-full bg-slate-900 rounded-[2.5rem] p-4 shadow-2xl border-4 border-slate-800">
             <!-- Speaker & Notch -->
-            <div class="w-24 h-4 bg-slate-800 rounded-full mx-auto mb-4"></div>
+            <div class="w-24 h-4 bg-slate-800 rounded-full mx-auto mb-3"></div>
+
+            <!-- Simulated Android Status Bar -->
+            <div class="flex items-center justify-between px-2 text-[10px] text-slate-400 font-medium mb-3">
+              <div class="flex items-center gap-1.5">
+                <span>05:48</span>
+                <!-- The tiny monochrome tooth badge in the top status bar! -->
+                <img src="https://dentrust.site/badge-monochrome.png" alt="Status Badge" class="w-3.5 h-3.5 object-contain inline-block brightness-200" title="أيقونة شريط الحالة في الموبايل">
+              </div>
+              <div class="flex items-center gap-1 text-xs">
+                <span>📶</span>
+                <span>🔋 95%</span>
+              </div>
+            </div>
 
             <!-- Lockscreen Wallpaper / Notification Container -->
-            <div class="bg-slate-800/80 rounded-2xl p-4 border border-slate-700 backdrop-blur-md text-white space-y-3">
+            <div class="bg-slate-800/90 rounded-2xl p-4 border border-slate-700/80 shadow-xl text-white space-y-3">
               <!-- Notif Header -->
               <div class="flex items-center justify-between text-xs text-slate-300 border-b border-slate-700/60 pb-2">
                 <div class="flex items-center gap-2">
-                  <div class="w-5 h-5 rounded-md bg-blue-600 flex items-center justify-center text-[10px] font-black">
-                    DT
+                  <div class="w-5 h-5 rounded-md bg-[#0a2463] flex items-center justify-center p-0.5 border border-blue-400/30 overflow-hidden shadow-sm">
+                    <img src="https://dentrust.site/badge-monochrome.png" alt="DenTrust" class="w-full h-full object-contain">
                   </div>
-                  <span class="font-bold">DenTrust Store</span>
+                  <span class="font-bold text-white">DenTrust</span>
+                  <span class="text-[10px] text-slate-400">• dentrust.site</span>
                 </div>
                 <span class="text-[10px] text-slate-400">الآن</span>
               </div>
 
-              <!-- Notif Content -->
-              <div class="space-y-1.5" dir="rtl">
-                <h4 id="previewTitle" class="text-sm font-black text-white leading-tight">عنوان الإشعار يظهر هنا</h4>
-                <p id="previewBody" class="text-xs text-slate-200 leading-relaxed">نص الرسالة التي ستصل للأطباء تظهر هنا مباشرة عند الكتابة...</p>
+              <!-- Notif Content with Large App Logo -->
+              <div class="flex items-start gap-3" dir="rtl">
+                <!-- Text on Right -->
+                <div class="flex-1 space-y-1">
+                  <h4 id="previewTitle" class="text-sm font-black text-white leading-snug">عنوان الإشعار يظهر هنا</h4>
+                  <p id="previewBody" class="text-xs text-slate-300 leading-relaxed">نص الرسالة التي ستصل للأطباء تظهر هنا مباشرة عند الكتابة...</p>
+                </div>
+
+                <!-- Official Large Store Logo on the Left -->
+                <div class="w-12 h-12 rounded-xl bg-[#0a2463] border border-blue-500/40 p-1 flex-shrink-0 flex items-center justify-center shadow-md overflow-hidden">
+                  <img src="https://dentrust.site/pwa-192.png" alt="DenTrust Logo" class="w-full h-full object-contain rounded-lg">
+                </div>
               </div>
 
               <!-- Image Banner Preview if provided -->
-              <div id="previewImageBox" class="hidden rounded-xl overflow-hidden max-h-36 bg-slate-700">
+              <div id="previewImageBox" class="hidden rounded-xl overflow-hidden max-h-36 bg-slate-700 border border-slate-600">
                 <img id="previewImage" src="" alt="Banner" class="w-full h-full object-cover">
               </div>
 
               <!-- Action Bar -->
-              <div class="text-[10px] text-blue-400 font-medium flex items-center justify-between pt-1">
-                <span>اضغط للفتح المباشر 🔗</span>
-                <span class="text-slate-500">dentrust.site</span>
+              <div class="text-[11px] text-blue-400 font-bold flex items-center justify-between pt-1 border-t border-slate-700/50">
+                <span class="flex items-center gap-1">
+                  <span>فتح المتجر</span> 🔗
+                </span>
+                <span class="text-[10px] text-slate-400 font-mono">dentrust.site</span>
               </div>
             </div>
 
