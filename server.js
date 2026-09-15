@@ -7906,8 +7906,7 @@ async function sendPushNotification({
     } else if (targetType === 'loyalty') {
       query = `SELECT DISTINCT ps.*, c.name as cust_name, c.total_debt, c.points_balance
                FROM push_subscriptions ps
-               JOIN customers c ON (c.id = ps.customer_id OR c.phone = ps.customer_phone OR c.customer_code = ps.customer_code)
-               WHERE COALESCE(c.points_balance, 0) >= 50`;
+               LEFT JOIN customers c ON (c.id = ps.customer_id OR c.phone = ps.customer_phone OR c.customer_code = ps.customer_code)`;
     }
 
     const { rows: subs } = await posDb.query(query, params).catch(() => ({ rows: [] }));
@@ -7941,8 +7940,11 @@ async function sendPushNotification({
           if (sub.total_debt != null) {
             customBody = customBody.replace(/\{debt\}/g, parseFloat(sub.total_debt).toLocaleString('ar-EG'));
           }
-          if (sub.points_balance != null) {
+          if (sub.points_balance != null && parseInt(sub.points_balance, 10) > 0) {
             customBody = customBody.replace(/\{points\}/g, parseInt(sub.points_balance, 10).toLocaleString('ar-EG'));
+          } else {
+            customBody = customBody.replace(/عندك \{points\} نقطة مكافأة في حسابك لدى DenTrust!/g, 'نقاط مكافآتك الحصرية في انتظارك لدى DenTrust!')
+                                   .replace(/\{points\}/g, 'المزيد من');
           }
 
           const payload = JSON.stringify({
@@ -8301,6 +8303,74 @@ app.post(`${BASE}/api/push/test`, async (req, res) => {
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// ── Automated Push Notification Cron Schedulers (Africa/Cairo) ───────────────
+function initPushCronJobs() {
+  console.log('[Push Cron] Initializing automated campaign schedulers (Africa/Cairo)...');
+
+  async function runScheduledCampaign(key, defaultTarget = 'all') {
+    try {
+      await ensurePushTables();
+      const { rows: [campaign] } = await posDb.query(
+        'SELECT * FROM push_automation_settings WHERE key = $1',
+        [key]
+      );
+      if (!campaign || !campaign.enabled) {
+        console.log(`[Push Cron] Campaign "${key}" is disabled or not found — skipping.`);
+        return;
+      }
+
+      let targetType = defaultTarget;
+      if (key === 'debt_reminder') targetType = 'debtors';
+      else if (key === 'loyalty_points') targetType = 'loyalty';
+
+      console.log(`[Push Cron] Executing scheduled campaign: ${key} to ${targetType}...`);
+      const result = await sendPushNotification({
+        title: campaign.title,
+        body: campaign.body,
+        url: campaign.url || 'https://dentrust.site',
+        tag: `auto-${key}`,
+        targetType,
+        sentBy: 'النظام (حملة مجدولة)'
+      });
+      console.log(`[Push Cron] Campaign "${key}" result:`, result);
+    } catch (err) {
+      console.error(`[Push Cron] Error running campaign "${key}":`, err.message);
+    }
+  }
+
+  // 1. Thursday Restock (كل خميس - 3:30 عصراً بتوقيت القاهرة)
+  cron.schedule('30 15 * * 4', () => {
+    console.log('[Push Cron] Triggering Thursday Restock campaign...');
+    runScheduledCampaign('thursday_restock', 'all');
+  }, { timezone: 'Africa/Cairo' });
+
+  // 2. Saturday 5% Cash Race (كل سبت - 1:00 ظهراً بتوقيت القاهرة)
+  cron.schedule('0 13 * * 6', () => {
+    console.log('[Push Cron] Triggering Saturday Cash Race campaign...');
+    runScheduledCampaign('saturday_race', 'all');
+  }, { timezone: 'Africa/Cairo' });
+
+  // 3. Sunday Debt Reminder (كل أحد - 2:00 عصراً بتوقيت القاهرة)
+  cron.schedule('0 14 * * 0', () => {
+    console.log('[Push Cron] Triggering Sunday Debt Reminder campaign...');
+    runScheduledCampaign('debt_reminder', 'debtors');
+  }, { timezone: 'Africa/Cairo' });
+
+  // 4. Daily Loyalty Points Reminder (يومياً - 10:30 مساءً بتوقيت القاهرة)
+  cron.schedule('30 22 * * *', () => {
+    console.log('[Push Cron] Triggering Daily Loyalty Points campaign...');
+    runScheduledCampaign('loyalty_points', 'loyalty');
+  }, { timezone: 'Africa/Cairo' });
+
+  // 5. Daily Manager Low-Stock Check (يومياً - 12:00 ظهراً بتوقيت القاهرة)
+  cron.schedule('0 12 * * *', () => {
+    console.log('[Push Cron] Triggering Daily 12:00 Stock check...');
+    checkDailyStockAndNotify().catch(e => console.error('[Push Cron Daily Stock error]:', e.message));
+  }, { timezone: 'Africa/Cairo' });
+
+  console.log('[Push Cron] All 5 automated cron jobs registered in Africa/Cairo timezone ✓');
+}
 
 // 🏢 WAREHOUSE & PRODUCT MOVEMENT AUDIT LOG & TOP-SELLING ANALYTICS
 // ══════════════════════════════════════════════════════════════════════════════
@@ -10075,6 +10145,9 @@ async function main() {
     }
     setInterval(checkAndExpireOffers, 60 * 1000);
     setTimeout(checkAndExpireOffers, 3000);
+
+    // Initialize automated push notifications cron jobs (Africa/Cairo)
+    initPushCronJobs();
 
     app.get('/health', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
     app.get('/api/healthz', (req, res) => res.json({ status: 'ok', ts: Date.now() }));
