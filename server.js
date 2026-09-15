@@ -8076,7 +8076,14 @@ app.get(`${BASE}/api/push/vapid-public-key`, (req, res) => {
 
 // POST /api/push/subscribe — save device push subscription with customer metadata
 app.post(`${BASE}/api/push/subscribe`, async (req, res) => {
-  const { endpoint, keys, customerPhone, customerCode, customerName, userAgent } = req.body || {};
+  const b = req.body || {};
+  const endpoint = b.endpoint;
+  const keys = b.keys;
+  const customerPhone = b.customerPhone || b.customer_phone || null;
+  const customerCode = b.customerCode || b.customer_code || null;
+  const customerName = b.customerName || b.customer_name || null;
+  const userAgent = b.userAgent || b.device_info || req.headers['user-agent'] || null;
+
   if (!endpoint || !keys?.p256dh || !keys?.auth) {
     return res.status(400).json({ error: 'بيانات الاشتراك ناقصة' });
   }
