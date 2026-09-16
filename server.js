@@ -8807,7 +8807,7 @@ app.get([`${BASE}/api/clinic/overview`, '/api/clinic/overview'], async (req, res
     // جلب المخزون المقفول (Backstock)
     const { rows: inventory } = await posDb.query(`
       SELECT ci.*, sl.name as location_name, sl.type as location_type,
-             p.name as matched_product_name, p.price as store_price, p.photos as store_photos
+             p.product_name as matched_product_name, p.sale_price as store_price, p.image_url as store_photos
       FROM clinic_inventory ci
       JOIN stock_locations sl ON sl.id = ci.location_id
       LEFT JOIN products p ON p.id = ci.product_id
@@ -8941,7 +8941,7 @@ app.post([`${BASE}/api/clinic/items`, '/api/clinic/items'], async (req, res) => 
     let productId = b.product_id || null;
     if (!productId) {
       const { rows: [matchProd] } = await posDb.query(
-        'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) OR name ILIKE $2 LIMIT 1',
+        'SELECT id FROM products WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1)) OR product_name ILIKE $2 LIMIT 1',
         [customName, `%${customName}%`]
       ).catch(() => ({ rows: [] }));
       if (matchProd) productId = matchProd.id;
@@ -9156,10 +9156,10 @@ app.get([`${BASE}/api/clinic/search-catalog`, '/api/clinic/search-catalog'], asy
     const q = (req.query.q || '').trim();
     if (!q) return res.json({ ok: true, products: [] });
     const { rows } = await posDb.query(
-      `SELECT id, name, price, photos, stock_quantity, category 
+      `SELECT id, product_name as name, sale_price as price, image_url, quantity as stock_quantity, category 
        FROM products 
-       WHERE name ILIKE $1 OR barcode = $2 
-       ORDER BY name ASC LIMIT 8`,
+       WHERE product_name ILIKE $1 OR barcode = $2 
+       ORDER BY product_name ASC LIMIT 8`,
       [`%${q}%`, q]
     );
     res.json({ ok: true, products: rows });
