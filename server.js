@@ -9124,6 +9124,8 @@ app.put([`${BASE}/api/clinic/items/:id`, '/api/clinic/items/:id'], async (req, r
 
     const hasExp = b.expiry_date !== undefined;
     const expVal = (b.expiry_date && String(b.expiry_date).trim()) ? String(b.expiry_date).trim().substring(0, 10) : null;
+    const expiryAlertMonths = b.expiry_alert_months != null ? parseInt(b.expiry_alert_months, 10) : null;
+    const locationId = b.location_id != null ? parseInt(b.location_id, 10) : null;
 
     const { rows: [updated] } = await posDb.query(
       `UPDATE clinic_inventory SET
@@ -9134,14 +9136,21 @@ app.put([`${BASE}/api/clinic/items/:id`, '/api/clinic/items/:id'], async (req, r
          purchase_price = COALESCE($5, purchase_price),
          expiry_date = CASE WHEN $6::boolean THEN $7::date ELSE expiry_date END,
          unit_label = COALESCE($8, unit_label),
+         expiry_alert_months = COALESCE($9, expiry_alert_months),
+         location_id = COALESCE($10, location_id),
          updated_at = NOW()
-       WHERE id = $9 AND customer_id = $10
+       WHERE id = $11 AND customer_id = $12
        RETURNING *`,
-      [b.custom_name, b.category, b.sealed_count != null ? parseInt(b.sealed_count, 10) : null,
+      [b.custom_name || null,
+       b.category || null,
+       b.sealed_count != null ? parseInt(b.sealed_count, 10) : null,
        b.min_threshold != null ? parseInt(b.min_threshold, 10) : null,
        b.purchase_price != null ? parseFloat(b.purchase_price) : null,
        hasExp, expVal,
-       b.unit_label, itemId, doc.id]
+       b.unit_label || null,
+       expiryAlertMonths,
+       locationId,
+       itemId, doc.id]
     );
 
     if (!updated) return res.status(404).json({ error: 'الصنف غير موجود' });
