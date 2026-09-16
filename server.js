@@ -951,6 +951,7 @@ app.post(`${BASE}/api/products`, async (req, res) => {
       ? new Date(d.offer_expires_at).toISOString()
       : null;
 
+    const prodDesc = (d.description || '').trim() || (d.product_name || '');
     let ins = null;
     try {
       const res = await posDb.query(
@@ -960,7 +961,7 @@ app.post(`${BASE}/api/products`, async (req, res) => {
          pPrice, sPrice,
          d.expiry_date || null, mainPhoto,
          d.category || null, minStock,
-         d.description || null, variantsJson, effectiveSec, cbJson, genderVal,
+         prodDesc, variantsJson, effectiveSec, cbJson, genderVal,
          isHidden,
          isOffer, origPrice, offerExpiresAt]
       );
@@ -984,7 +985,7 @@ app.post(`${BASE}/api/products`, async (req, res) => {
          pPrice, sPrice,
          d.expiry_date || null, mainPhoto ? [mainPhoto] : [],
          v_cat_id, minStock,
-         d.description || null, variantsJson, effectiveSec, cbJson, genderVal,
+         prodDesc, variantsJson, effectiveSec, cbJson, genderVal,
          isHidden, isHidden, isHidden, origSec,
          isOffer, origPrice, offerExpiresAt, qty <= 0]
       );
