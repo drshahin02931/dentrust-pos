@@ -8479,23 +8479,36 @@ async function ensureClinicOsTables() {
 
     await posDb.query(`CREATE INDEX IF NOT EXISTS idx_stock_mov_cust ON stock_movements(customer_id)`).catch(() => {});
 
-    // مزامنة تواريخ الصلاحية تلقائياً من كتالوج منتجات DenTrust للأصناف المسجلة
+    // مزامنة التصنيفات وتواريخ الصلاحية تلقائياً من كتالوج منتجات DenTrust للأصناف المسجلة
     await posDb.query(`
       UPDATE clinic_inventory ci
-      SET expiry_date = CASE 
+      SET category = COALESCE(NULLIF(p.category, ''), ci.category),
+          expiry_date = CASE 
+            WHEN ci.expiry_date IS NOT NULL THEN ci.expiry_date
             WHEN p.expiry_date::text ~ '^\\d{4}-\\d{2}-\\d{2}' THEN (p.expiry_date::text)::date 
             ELSE NULL 
           END,
           product_id = COALESCE(ci.product_id, p.id)
       FROM products p
-      WHERE ci.expiry_date IS NULL
-        AND p.expiry_date IS NOT NULL
-        AND (
-          LOWER(TRIM(ci.custom_name)) = LOWER(TRIM(p.product_name))
-          OR ci.custom_name ILIKE '%' || p.product_name || '%'
-          OR p.product_name ILIKE '%' || SPLIT_PART(ci.custom_name, '—', 1) || '%'
-        )
-    `).catch(e => console.error('[Expiry auto-sync error]:', e.message));
+      WHERE (
+        ci.product_id = p.id
+        OR LOWER(TRIM(ci.custom_name)) = LOWER(TRIM(p.product_name))
+        OR ci.custom_name ILIKE '%' || p.product_name || '%'
+        OR p.product_name ILIKE '%' || SPLIT_PART(ci.custom_name, '—', 1) || '%'
+      )
+    `).catch(e => console.error('[Category/Expiry auto-sync error]:', e.message));
+
+    await posDb.query(`
+      UPDATE clinic_inventory
+      SET category = 'diamond burs'
+      WHERE custom_name ILIKE '%diamond bur%' AND (category IS NULL OR category = 'restorative' OR category = '');
+      UPDATE clinic_inventory
+      SET category = 'matrix band'
+      WHERE custom_name ILIKE '%matrix%' AND (category IS NULL OR category = 'restorative' OR category = '');
+      UPDATE clinic_inventory
+      SET category = 'bond'
+      WHERE custom_name ILIKE '%bond brush%' AND (category IS NULL OR category = 'restorative' OR category = '');
+    `).catch(() => {});
   } catch (err) {
     console.error('[Ensure Clinic OS Tables Error]:', err.message);
   }
@@ -8616,7 +8629,18 @@ async function autoRouteOrderToClinicInventory(orderAlertId) {
       if (matchedProd?.expiry_date && /^\d{4}-\d{2}-\d{2}/.test(String(matchedProd.expiry_date))) {
         expDate = String(matchedProd.expiry_date).substring(0, 10);
       }
-      const cat = matchedProd?.category || 'restorative';
+      let cat = matchedProd?.category || null;
+      if (!cat) {
+        const low = name.toLowerCase();
+        if (low.includes('diamond bur')) cat = 'diamond burs';
+        else if (low.includes('carbide bur')) cat = 'Carbide burs';
+        else if (low.includes('matrix')) cat = 'matrix band';
+        else if (low.includes('bond')) cat = 'bond';
+        else if (low.includes('etch')) cat = 'etch';
+        else if (low.includes('flowable')) cat = 'flowable composite';
+        else if (low.includes('composite')) cat = 'composite';
+        else cat = 'General';
+      }
 
       // هل الصنف مسجل من قبل في هذا المخزن؟
       const { rows: [existing] } = await posDb.query(
@@ -8631,12 +8655,13 @@ async function autoRouteOrderToClinicInventory(orderAlertId) {
           `UPDATE clinic_inventory 
            SET sealed_count = sealed_count + $1, 
                purchase_price = $2, 
+               category = COALESCE(NULLIF($6, ''), category),
                expiry_date = COALESCE(clinic_inventory.expiry_date, $3::date),
                product_id = COALESCE(clinic_inventory.product_id, $4),
                last_entry_date = NOW(), 
                updated_at = NOW() 
            WHERE id = $5`,
-          [qty, price, expDate, prodId, existing.id]
+          [qty, price, expDate, prodId, existing.id, cat]
         );
       } else {
         const { rows: [newInv] } = await posDb.query(
@@ -8857,24 +8882,36 @@ app.get([`${BASE}/api/clinic/overview`, '/api/clinic/overview'], async (req, res
       locations = [defLoc];
     }
 
-    // Sync any missing expiries from DenTrust product catalog for this doctor
+    // Sync missing expiries and exact catalog categories from DenTrust product catalog for this doctor
     await posDb.query(`
       UPDATE clinic_inventory ci
-      SET expiry_date = CASE 
+      SET category = COALESCE(NULLIF(p.category, ''), ci.category),
+          expiry_date = CASE 
+            WHEN ci.expiry_date IS NOT NULL THEN ci.expiry_date
             WHEN p.expiry_date::text ~ '^\\d{4}-\\d{2}-\\d{2}' THEN (p.expiry_date::text)::date 
             ELSE NULL 
           END,
           product_id = COALESCE(ci.product_id, p.id)
       FROM products p
       WHERE ci.customer_id = $1
-        AND ci.expiry_date IS NULL
-        AND p.expiry_date IS NOT NULL
-        AND p.expiry_date != ''
         AND (
-          LOWER(TRIM(ci.custom_name)) = LOWER(TRIM(p.product_name))
+          ci.product_id = p.id
+          OR LOWER(TRIM(ci.custom_name)) = LOWER(TRIM(p.product_name))
           OR ci.custom_name ILIKE '%' || p.product_name || '%'
           OR p.product_name ILIKE '%' || SPLIT_PART(ci.custom_name, '—', 1) || '%'
         )
+    `, [doc.id]).catch(() => {});
+
+    await posDb.query(`
+      UPDATE clinic_inventory
+      SET category = 'diamond burs'
+      WHERE customer_id = $1 AND custom_name ILIKE '%diamond bur%' AND (category IS NULL OR category = 'restorative' OR category = '');
+      UPDATE clinic_inventory
+      SET category = 'matrix band'
+      WHERE customer_id = $1 AND custom_name ILIKE '%matrix%' AND (category IS NULL OR category = 'restorative' OR category = '');
+      UPDATE clinic_inventory
+      SET category = 'bond'
+      WHERE customer_id = $1 AND custom_name ILIKE '%bond brush%' AND (category IS NULL OR category = 'restorative' OR category = '');
     `, [doc.id]).catch(() => {});
 
     // جلب المخزون المقفول (Backstock)
@@ -8984,7 +9021,23 @@ app.delete([`${BASE}/api/clinic/locations/:id`, '/api/clinic/locations/:id'], as
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ج) إضافة صنف جديد (1-Mandatory Field Only)
+// ج) جلب كافة أقسام الكتالوج المعتمدة من المتجر
+app.get([`${BASE}/api/clinic/categories`, '/api/clinic/categories'], async (req, res) => {
+  try {
+    const { rows } = await posDb.query(`
+      SELECT category, COUNT(*) as count 
+      FROM products 
+      WHERE category IS NOT NULL AND category != ''
+      GROUP BY category 
+      ORDER BY count DESC, category ASC
+    `);
+    res.json({ ok: true, categories: rows.map(r => r.category) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// د) إضافة صنف جديد (1-Mandatory Field Only)
 app.post([`${BASE}/api/clinic/items`, '/api/clinic/items'], async (req, res) => {
   try {
     await ensureClinicOsTables();
@@ -9005,12 +9058,12 @@ app.post([`${BASE}/api/clinic/items`, '/api/clinic/items'], async (req, res) => 
     const sealedCount = Math.max(0, parseInt(b.sealed_count || 1, 10));
     const minThreshold = Math.max(0, parseInt(b.min_threshold || 1, 10));
     const purchasePrice = parseFloat(b.purchase_price || 0);
-    const category = b.category || 'restorative';
+    let category = b.category || null;
     const unitLabel = (b.unit_label || 'علبة').trim();
     const expiryDate = b.expiry_date || null;
     const isExternal = b.is_external !== false;
 
-    // بحث تلقائي في كتالوج منتجات DenTrust للربط ومزامنة تاريخ الصلاحية تلقائياً
+    // بحث تلقائي في كتالوج منتجات DenTrust للربط ومزامنة تاريخ الصلاحية والتصنيف تلقائياً
     let productId = b.product_id || null;
     let autoExpDate = expiryDate;
     const { rows: [matchProd] } = await posDb.query(
@@ -9025,9 +9078,21 @@ app.post([`${BASE}/api/clinic/items`, '/api/clinic/items'], async (req, res) => 
 
     if (matchProd) {
       if (!productId) productId = matchProd.id;
+      if (!category && matchProd.category) category = matchProd.category;
       if (!autoExpDate && matchProd.expiry_date && /^\d{4}-\d{2}-\d{2}/.test(String(matchProd.expiry_date))) {
         autoExpDate = String(matchProd.expiry_date).substring(0, 10);
       }
+    }
+    if (!category) {
+      const low = customName.toLowerCase();
+      if (low.includes('diamond bur')) category = 'diamond burs';
+      else if (low.includes('carbide bur')) category = 'Carbide burs';
+      else if (low.includes('matrix')) category = 'matrix band';
+      else if (low.includes('bond')) category = 'bond';
+      else if (low.includes('etch')) category = 'etch';
+      else if (low.includes('flowable')) category = 'flowable composite';
+      else if (low.includes('composite')) category = 'composite';
+      else category = 'General';
     }
 
     const { rows: [item] } = await posDb.query(
