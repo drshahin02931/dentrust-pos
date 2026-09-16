@@ -951,17 +951,50 @@ app.post(`${BASE}/api/products`, async (req, res) => {
       ? new Date(d.offer_expires_at).toISOString()
       : null;
 
-    const { rows: [ins] } = await posDb.query(
-      `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values, gender, is_hidden_from_website, is_hidden, hidden, orig_section, is_offer, original_price, offer_expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING id`,
-      [d.barcode || null, d.product_name, qty,
-       pPrice, sPrice,
-       d.expiry_date || null, mainPhoto,
-       d.category || null, minStock,
-       d.description || null, variantsJson, effectiveSec, cbJson, genderVal,
-       isHidden, isHidden, isHidden, origSec,
-       isOffer, origPrice, offerExpiresAt]
-    );
+    let ins = null;
+    try {
+      const res = await posDb.query(
+        `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values, gender, is_hidden_from_website, is_offer, original_price, offer_expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+        [d.barcode || null, d.product_name, qty,
+         pPrice, sPrice,
+         d.expiry_date || null, mainPhoto,
+         d.category || null, minStock,
+         d.description || null, variantsJson, effectiveSec, cbJson, genderVal,
+         isHidden,
+         isOffer, origPrice, offerExpiresAt]
+      );
+      ins = res.rows[0];
+    } catch (insertErr) {
+      console.warn('[POST /api/products] View insert failed, attempting fallback directly into public.products:', insertErr.message);
+      let v_cat_id = null;
+      if (d.category && String(d.category).trim()) {
+        const { rows: cRows } = await posDb.query('SELECT id FROM public.categories WHERE LOWER(TRIM(name))=LOWER(TRIM($1)) LIMIT 1', [String(d.category).trim()]).catch(() => ({ rows: [] }));
+        if (cRows && cRows[0]) {
+          v_cat_id = cRows[0].id;
+        } else {
+          const { rows: nRows } = await posDb.query('INSERT INTO public.categories (name, section) VALUES ($1, $2) RETURNING id', [String(d.category).trim(), effectiveSec]).catch(() => ({ rows: [] }));
+          if (nRows && nRows[0]) v_cat_id = nRows[0].id;
+        }
+      }
+      const pRes = await posDb.query(
+        `INSERT INTO public.products (barcode, name, stock, purchase_price, price, expiry_date, photos, category_id, min_stock, details, variants, section, checkbox_values, gender, is_hidden_from_website, is_hidden, hidden, orig_section, is_offer, original_price, offer_expires_at, is_sold_out)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING id`,
+        [d.barcode || null, d.product_name, qty,
+         pPrice, sPrice,
+         d.expiry_date || null, mainPhoto ? [mainPhoto] : [],
+         v_cat_id, minStock,
+         d.description || null, variantsJson, effectiveSec, cbJson, genderVal,
+         isHidden, isHidden, isHidden, origSec,
+         isOffer, origPrice, offerExpiresAt, qty <= 0]
+      );
+      ins = pRes.rows[0];
+    }
+
+    if (!ins || !ins.id) {
+      throw new Error('فشل إنشاء وحفظ المنتج في قاعدة البيانات');
+    }
+
     // Explicitly ensure offer fields in public.products
     posDb.query(
       'UPDATE public.products SET is_offer=$1, original_price=$2, offer_expires_at=$3 WHERE id=$4',
@@ -987,7 +1020,7 @@ app.post(`${BASE}/api/products`, async (req, res) => {
   } catch (err) {
     console.error('[POST /api/products]', err.message, err.stack);
     if (err.code === '23505') return res.status(400).json({ error: 'الباركود مسجل مسبقاً' });
-    res.status(500).json({ error: 'خطأ داخلي' });
+    res.status(500).json({ error: 'خطأ داخلي: ' + (err.message || 'تعذر حفظ المنتج') });
   }
 });
 

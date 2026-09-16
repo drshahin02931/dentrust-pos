@@ -486,6 +486,9 @@ SELECT
   p.offer_expires_at,
   COALESCE(p.is_best_seller, false)                               AS is_best_seller,
   COALESCE(p.is_hidden_from_website, p.is_hidden, p.hidden, false) AS is_hidden_from_website,
+  COALESCE(p.is_hidden, false)                                     AS is_hidden,
+  COALESCE(p.hidden, false)                                        AS hidden,
+  COALESCE(p.orig_section, p.section, 'dental')                    AS orig_section,
   COALESCE(p.gender, 'unisex')                                    AS gender
 FROM public.products p
 LEFT JOIN public.categories c ON c.id = p.category_id
