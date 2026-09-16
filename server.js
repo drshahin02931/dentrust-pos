@@ -120,6 +120,7 @@ const OPEN_API = [
   '/api/promo/validate',
   '/api/website-registrations/count',
   '/api/cart/validate-stock',
+  '/api/clinic',
 ];
 
 function authGuard(req, res, next) {
@@ -7782,6 +7783,9 @@ app.patch(`${BASE}/api/website-orders/:id/status`, async (req, res) => {
       'UPDATE website_order_alerts SET status=$1, notes=$2, seen=true WHERE id=$3',
       [status, notes || null, id]
     );
+    if (status === 'delivered') {
+      autoRouteOrderToClinicInventory(id).catch(e => console.error('[AutoRoute error]:', e.message));
+    }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
@@ -7874,6 +7878,7 @@ async function sendPushNotification({
   targetType = 'all', // 'all', 'managers', 'customer', 'debtors', 'loyalty'
   targetPhone = null,
   targetCode = null,
+  targetCustomerId = null,
   sentBy = 'system'
 }) {
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
@@ -7892,12 +7897,14 @@ async function sendPushNotification({
     } else if (targetType === 'customer') {
       const cleanPhone = (targetPhone || '').replace(/\D/g, '');
       const cleanCode = (targetCode || '').trim();
+      const targetCustId = targetCustomerId ? parseInt(targetCustomerId, 10) : null;
       query = `SELECT DISTINCT ps.*, c.name as cust_name, c.total_debt, c.points_balance
                FROM push_subscriptions ps
                LEFT JOIN customers c ON (c.id = ps.customer_id OR c.phone = ps.customer_phone OR c.customer_code = ps.customer_code)
                WHERE ($1 <> '' AND (ps.customer_phone = $1 OR c.phone = $1 OR ps.customer_phone LIKE '%' || $1))
-                  OR ($2 <> '' AND (ps.customer_code = $2 OR c.customer_code = $2))`;
-      params = [cleanPhone, cleanCode];
+                  OR ($2 <> '' AND (ps.customer_code = $2 OR c.customer_code = $2))
+                  OR ($3::integer IS NOT NULL AND (ps.customer_id = $3::integer OR c.id = $3::integer))`;
+      params = [cleanPhone, cleanCode, targetCustId];
     } else if (targetType === 'debtors') {
       query = `SELECT DISTINCT ps.*, c.name as cust_name, c.total_debt, c.points_balance
                FROM push_subscriptions ps
@@ -8376,9 +8383,790 @@ function initPushCronJobs() {
     checkDailyStockAndNotify().catch(e => console.error('[Push Cron Daily Stock error]:', e.message));
   }, { timezone: 'Africa/Cairo' });
 
-  console.log('[Push Cron] All 5 automated cron jobs registered in Africa/Cairo timezone ✓');
+  // 6. Daily Doctor Clinic Stock Depletion Alert (12:30 ظهراً بتوقيت القاهرة - موجه لكل دكتور بمفرده)
+  cron.schedule('30 12 * * *', () => {
+    console.log('[Clinic Cron] Triggering Daily Doctor Stock Alerts...');
+    checkDoctorClinicStockAlerts().catch(e => console.error('[Clinic Stock Cron error]:', e.message));
+  }, { timezone: 'Africa/Cairo' });
+
+  // 7. Daily Doctor Clinic Expiry Alert (10:00 صباحاً بتوقيت القاهرة - موجه لكل دكتور بمفرده)
+  cron.schedule('0 10 * * *', () => {
+    console.log('[Clinic Cron] Triggering Daily Doctor Expiry Alerts...');
+    checkDoctorClinicExpiryAlerts().catch(e => console.error('[Clinic Expiry Cron error]:', e.message));
+  }, { timezone: 'Africa/Cairo' });
+
+  // 8. Weekly Doctor Clinic Comprehensive Digest (الخميس 3:30 عصراً بتوقيت القاهرة - موجه لكل دكتور بمفرده)
+  cron.schedule('30 15 * * 4', () => {
+    console.log('[Clinic Cron] Triggering Thursday Doctor Clinic Weekly Digest...');
+    sendDoctorClinicWeeklyDigest().catch(e => console.error('[Clinic Digest Cron error]:', e.message));
+  }, { timezone: 'Africa/Cairo' });
+
+  console.log('[Push & Clinic Cron] All automated cron jobs registered in Africa/Cairo timezone ✓');
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// 🦷 DENTRUST CLINIC OS — نظام إدارة ومراقبة خامات العيادات والمخازن الذكي
+// ══════════════════════════════════════════════════════════════════════════════
+
+// 1. إنشاء جداول العيادات ذاتياً (Self-Healing Schema)
+async function ensureClinicOsTables() {
+  try {
+    await posDb.query(`
+      CREATE TABLE IF NOT EXISTS stock_locations (
+        id SERIAL PRIMARY KEY,
+        customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        name VARCHAR(120) NOT NULL,
+        type VARCHAR(50) DEFAULT 'Clinic',
+        parent_location_id INTEGER REFERENCES stock_locations(id) ON DELETE SET NULL,
+        is_default BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_stock_locations_cust ON stock_locations(customer_id);
+
+      CREATE TABLE IF NOT EXISTS clinic_inventory (
+        id SERIAL PRIMARY KEY,
+        customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        location_id INTEGER NOT NULL REFERENCES stock_locations(id) ON DELETE CASCADE,
+        product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+        custom_name VARCHAR(200) NOT NULL,
+        category VARCHAR(50) DEFAULT 'restorative',
+        sealed_count INTEGER DEFAULT 0,
+        min_threshold INTEGER DEFAULT 1,
+        purchase_price NUMERIC DEFAULT 0,
+        expiry_date DATE NULL,
+        expiry_alert_months INTEGER DEFAULT 3,
+        unit_label VARCHAR(50) DEFAULT 'علبة',
+        last_entry_date TIMESTAMPTZ DEFAULT NOW(),
+        is_external BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_clinic_inv_cust ON clinic_inventory(customer_id);
+      CREATE INDEX IF NOT EXISTS idx_clinic_inv_loc ON clinic_inventory(location_id);
+
+      CREATE TABLE IF NOT EXISTS active_work_tray (
+        id SERIAL PRIMARY KEY,
+        customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        inventory_id INTEGER NOT NULL REFERENCES clinic_inventory(id) ON DELETE CASCADE,
+        location_id INTEGER NOT NULL REFERENCES stock_locations(id) ON DELETE CASCADE,
+        opened_at TIMESTAMPTZ DEFAULT NOW(),
+        status VARCHAR(20) DEFAULT 'active',
+        finished_at TIMESTAMPTZ NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_active_work_tray_cust ON active_work_tray(customer_id);
+
+      CREATE TABLE IF NOT EXISTS stock_movements (
+        id SERIAL PRIMARY KEY,
+        customer_id INTEGER NOT NULL,
+        item_id INTEGER NOT NULL REFERENCES clinic_inventory(id) ON DELETE CASCADE,
+        movement_type VARCHAR(30) NOT NULL,
+        from_location_id INTEGER REFERENCES stock_locations(id) ON DELETE SET NULL,
+        to_location_id INTEGER REFERENCES stock_locations(id) ON DELETE SET NULL,
+        quantity INTEGER NOT NULL DEFAULT 1,
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_stock_mov_cust ON stock_movements(customer_id);
+    `).catch(e => console.error('[Clinic OS Schema error]:', e.message));
+  } catch (err) {
+    console.error('[Ensure Clinic OS Tables Error]:', err.message);
+  }
+}
+
+// 2. التحقق من هوية الطبيب مع العزل التام للبيانات (Customer Isolation Helper)
+async function resolveClinicCustomer(req) {
+  const cid = req.query.customer_id || req.body?.customer_id || req.headers['x-customer-id'] || null;
+  const phone = (req.query.phone || req.body?.phone || req.headers['x-customer-phone'] || '').trim();
+  const code = (req.query.customer_code || req.body?.customer_code || req.headers['x-customer-code'] || '').trim();
+
+  if (!cid && !phone && !code) return null;
+
+  try {
+    let q = 'SELECT id, name, phone, customer_code FROM customers WHERE ';
+    let params = [];
+    if (cid && !isNaN(parseInt(cid, 10))) {
+      params.push(parseInt(cid, 10));
+      q += 'id = $1';
+    } else if (code) {
+      params.push(code);
+      q += '(LOWER(customer_code) = LOWER($1) OR barcode = $1)';
+    } else if (phone) {
+      const clean = phone.replace(/\D/g, '');
+      params.push(clean);
+      q += '(phone = $1 OR extra_phones LIKE \'%\' || $1 || \'%\')';
+    }
+    const { rows } = await posDb.query(q + ' LIMIT 1', params).catch(() => ({ rows: [] }));
+    return rows[0] || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// 3. التوجيه التلقائي لمشتريات DenTrust لمخزن العيادة (Smart Auto-Routing)
+async function autoRouteOrderToClinicInventory(orderAlertId) {
+  try {
+    await ensureClinicOsTables();
+    const { rows: [alert] } = await posDb.query('SELECT * FROM website_order_alerts WHERE id = $1', [orderAlertId]);
+    if (!alert) return;
+
+    // البحث عن الطبيب
+    let doctor = null;
+    if (alert.customer_phone || alert.customer_code) {
+      const { rows } = await posDb.query(
+        `SELECT id, name, phone, customer_code FROM customers 
+         WHERE (phone = $1 OR extra_phones LIKE '%' || $1 || '%' OR LOWER(customer_code) = LOWER($2)) LIMIT 1`,
+        [alert.customer_phone || '', alert.customer_code || '']
+      ).catch(() => ({ rows: [] }));
+      if (rows.length > 0) doctor = rows[0];
+    }
+    if (!doctor) return;
+
+    // تحديد مكان التوريد (Warehouse لو موجود، أو الفرع الافتراضي)
+    let { rows: locs } = await posDb.query(
+      'SELECT * FROM stock_locations WHERE customer_id = $1 ORDER BY (type = \'Warehouse\') DESC, is_default DESC, id ASC',
+      [doctor.id]
+    );
+    if (locs.length === 0) {
+      const { rows: [newLoc] } = await posDb.query(
+        'INSERT INTO stock_locations (customer_id, name, type, is_default) VALUES ($1, \'عيادتي الرئيسية\', \'Clinic\', true) RETURNING *',
+        [doctor.id]
+      );
+      locs = [newLoc];
+    }
+    const targetLoc = locs[0];
+
+    // جلب أصناف الطلبية
+    let orderItems = [];
+    if (alert.dentrust_order_id) {
+      try {
+        const dtClient = await dentrustDb.connect();
+        try {
+          const { rows } = await dtClient.query(
+            `SELECT oi.product_name, oi.quantity, oi.unit_price, oi.selected_option
+             FROM order_items oi WHERE oi.order_id = $1`,
+            [alert.dentrust_order_id]
+          );
+          orderItems = rows;
+        } finally { dtClient.release(); }
+      } catch (_) {}
+    }
+
+    if (orderItems.length === 0) {
+      // المحاولة البديلة من sales
+      const { rows: sItems } = await posDb.query(
+        `SELECT si.product_name, si.quantity, si.unit_price 
+         FROM sales s 
+         JOIN sale_items si ON si.sale_id = s.id 
+         WHERE s.dentrust_order_id::text = $1`,
+        [String(alert.dentrust_order_id || '')]
+      ).catch(() => ({ rows: [] }));
+      orderItems = sItems;
+    }
+
+    if (orderItems.length === 0) return;
+
+    let totalAdded = 0;
+    for (const item of orderItems) {
+      const name = (item.product_name || '').trim();
+      if (!name) continue;
+      const qty = parseInt(item.quantity || 1, 10);
+      const price = parseFloat(item.unit_price || 0);
+
+      // هل الصنف مسجل من قبل في هذا المخزن؟
+      const { rows: [existing] } = await posDb.query(
+        'SELECT id, sealed_count FROM clinic_inventory WHERE customer_id = $1 AND location_id = $2 AND LOWER(TRIM(custom_name)) = LOWER(TRIM($3)) LIMIT 1',
+        [doctor.id, targetLoc.id, name]
+      );
+
+      let invId = null;
+      if (existing) {
+        invId = existing.id;
+        await posDb.query(
+          'UPDATE clinic_inventory SET sealed_count = sealed_count + $1, purchase_price = $2, last_entry_date = NOW(), updated_at = NOW() WHERE id = $3',
+          [qty, price, existing.id]
+        );
+      } else {
+        const { rows: [newInv] } = await posDb.query(
+          `INSERT INTO clinic_inventory (customer_id, location_id, custom_name, sealed_count, min_threshold, purchase_price, unit_label, last_entry_date)
+           VALUES ($1, $2, $3, $4, 1, $5, 'علبة', NOW()) RETURNING id`,
+          [doctor.id, targetLoc.id, name, qty, price]
+        );
+        invId = newInv.id;
+      }
+
+      // تسجيل حركة الاستلام
+      await posDb.query(
+        `INSERT INTO stock_movements (customer_id, item_id, movement_type, to_location_id, quantity, notes)
+         VALUES ($1, $2, 'Entry', $3, $4, $5)`,
+        [doctor.id, invId, targetLoc.id, qty, `توريد تلقائي من مشتريات DenTrust (طلب #${alert.dentrust_order_id || alert.id})`]
+      );
+      totalAdded += qty;
+    }
+
+    // إرسال إشعار لحظي خاص وحصري لهذا الطبيب فقط
+    await sendPushNotification({
+      title: '📦 تم توريد طلبيتك لمخزون عيادتك تلقائياً!',
+      body: `دكتور {name}، تم إيداع ${totalAdded} عبوة جديدة مباشرة في ${targetLoc.name} بدون أي مجهود كتابة. بياناتك محدثة وجاهزة للاستخدام ✨`,
+      url: 'https://dentrust.site/my-account',
+      tag: 'clinic-auto-restock',
+      targetType: 'customer',
+      targetCustomerId: doctor.id,
+      targetPhone: doctor.phone,
+      sentBy: 'نظام التوريد التلقائي للعيادة'
+    });
+    console.log(`[Clinic OS] Successfully auto-routed ${totalAdded} items to doctor ID ${doctor.id} (${targetLoc.name})`);
+  } catch (err) {
+    console.error('[Clinic AutoRoute Error]:', err.message);
+  }
+}
+
+// 4. محرك التنبيهات الذكي المعزول لكل طبيب (Doctor-Targeted Alert Engine)
+
+// أ) فحص نقص الخامات اليومي (أيهما أقرب: مرور 25 يوم أو رصيد الدرج 0 أو 1)
+async function checkDoctorClinicStockAlerts() {
+  try {
+    await ensureClinicOsTables();
+    // جلب الأصناف التي وصلت للحد الأدنى أو مر عليها 25 يوماً
+    const { rows: lowItems } = await posDb.query(`
+      SELECT ci.id, ci.customer_id, ci.location_id, ci.custom_name, ci.sealed_count, ci.min_threshold, ci.unit_label,
+             sl.name as loc_name, c.name as doc_name, c.phone as doc_phone
+      FROM clinic_inventory ci
+      JOIN stock_locations sl ON sl.id = ci.location_id
+      JOIN customers c ON c.id = ci.customer_id
+      WHERE (ci.sealed_count <= ci.min_threshold OR ci.last_entry_date <= NOW() - INTERVAL '25 days')
+      ORDER BY ci.customer_id ASC, ci.sealed_count ASC
+    `);
+
+    if (lowItems.length === 0) return;
+
+    // تجميع الأصناف لكل دكتور على حدة (عزل كامل)
+    const doctorItemsMap = {};
+    for (const it of lowItems) {
+      if (!doctorItemsMap[it.customer_id]) {
+        doctorItemsMap[it.customer_id] = { doc: it, items: [] };
+      }
+      doctorItemsMap[it.customer_id].items.push(it);
+    }
+
+    for (const custId of Object.keys(doctorItemsMap)) {
+      const { doc, items } = doctorItemsMap[custId];
+      // فحص هل الصنف متوفر في فرع آخر لنفس الدكتور؟
+      const primaryItem = items[0];
+      const { rows: altStock } = await posDb.query(
+        `SELECT ci.sealed_count, sl.name as other_loc
+         FROM clinic_inventory ci
+         JOIN stock_locations sl ON sl.id = ci.location_id
+         WHERE ci.customer_id = $1 AND ci.location_id != $2 
+           AND LOWER(TRIM(ci.custom_name)) = LOWER(TRIM($3)) AND ci.sealed_count > 1 LIMIT 1`,
+        [doc.customer_id, primaryItem.location_id, primaryItem.custom_name]
+      );
+
+      let notifTitle = '';
+      let notifBody = '';
+
+      if (altStock.length > 0) {
+        // متوفر في مخزن آخر له: نوجهه للتحويل الداخلي لحفظ أمواله بأمانة تامة
+        notifTitle = '🔁 تحويل داخلي لخامات عيادتك';
+        notifBody = `دكتور {name}، صنف "${primaryItem.custom_name}" في (${primaryItem.loc_name}) شارف على النفاد (${primaryItem.sealed_count} ${primaryItem.unit_label}). يمكنك تحويل علبة من (${altStock[0].other_loc}) فوراً ⚡`;
+      } else {
+        // غير متوفر في أي فرع له: زر الطلب الفوري من DenTrust بنفس اليوم
+        notifTitle = '⚡ تنبيه نواقص العيادة — اطلب حالاً';
+        notifBody = `دكتور {name}، صنف "${primaryItem.custom_name}" وصل للحد الأدنى (${primaryItem.sealed_count} ${primaryItem.unit_label}) في (${primaryItem.loc_name}). اطلب من DenTrust حالاً وتوصلك في نفس اليوم! 🚚`;
+      }
+
+      await sendPushNotification({
+        title: notifTitle,
+        body: notifBody,
+        url: 'https://dentrust.site/my-account',
+        tag: `clinic-stock-${doc.customer_id}`,
+        targetType: 'customer',
+        targetCustomerId: doc.customer_id,
+        targetPhone: doc.doc_phone,
+        sentBy: 'تنبيه النواقص الذكي للعيادة'
+      });
+    }
+  } catch (err) {
+    console.error('[Clinic Stock Alerts Error]:', err.message);
+  }
+}
+
+// ب) فحص تواريخ الصلاحية (قبل 3 شهور وبدون أي ذكر لمرتجعات)
+async function checkDoctorClinicExpiryAlerts() {
+  try {
+    await ensureClinicOsTables();
+    const { rows: expiringItems } = await posDb.query(`
+      SELECT ci.id, ci.customer_id, ci.custom_name, ci.expiry_date, sl.name as loc_name,
+             c.phone as doc_phone
+      FROM clinic_inventory ci
+      JOIN stock_locations sl ON sl.id = ci.location_id
+      JOIN customers c ON c.id = ci.customer_id
+      WHERE ci.expiry_date IS NOT NULL 
+        AND ci.expiry_date <= CURRENT_DATE + INTERVAL '3 months'
+        AND ci.expiry_date >= CURRENT_DATE
+        AND ci.sealed_count > 0
+      ORDER BY ci.customer_id ASC, ci.expiry_date ASC
+    `);
+
+    if (expiringItems.length === 0) return;
+
+    // تجميع لكل طبيب
+    const docMap = {};
+    for (const it of expiringItems) {
+      if (!docMap[it.customer_id]) docMap[it.customer_id] = { doc: it, list: [] };
+      docMap[it.customer_id].list.push(it);
+    }
+
+    for (const custId of Object.keys(docMap)) {
+      const { doc, list } = docMap[custId];
+      const first = list[0];
+      const countMsg = list.length > 1 ? ` و${list.length - 1} أصناف أخرى` : '';
+      await sendPushNotification({
+        title: '⏳ تنبيه صلاحية بخامات العيادة',
+        body: `دكتور {name}، صنف "${first.custom_name}" في (${first.loc_name})${countMsg} ستنتهي صلاحيته خلال 3 شهور. يُرجى تقديمه في الاستخدام للحالات القادمة (FIFO) أو نقله للفرع الأكبر استهلاكاً 🩺`,
+        url: 'https://dentrust.site/my-account',
+        tag: `clinic-expiry-${doc.customer_id}`,
+        targetType: 'customer',
+        targetCustomerId: doc.customer_id,
+        targetPhone: doc.doc_phone,
+        sentBy: 'تنبيه الصلاحية الدوري للعيادة'
+      });
+    }
+  } catch (err) {
+    console.error('[Clinic Expiry Alerts Error]:', err.message);
+  }
+}
+
+// ج) التقرير الأسبوعي الشامل لمخزون العيادة (الخميس 3:30 عصراً بتوقيت القاهرة)
+async function sendDoctorClinicWeeklyDigest() {
+  try {
+    await ensureClinicOsTables();
+    const { rows: docs } = await posDb.query(`
+      SELECT DISTINCT c.id, c.name, c.phone
+      FROM customers c
+      JOIN clinic_inventory ci ON ci.customer_id = c.id
+    `);
+
+    for (const d of docs) {
+      // إحصائيات الطبيب
+      const { rows: [sealed] } = await posDb.query('SELECT COALESCE(SUM(sealed_count), 0) as total FROM clinic_inventory WHERE customer_id = $1', [d.id]);
+      const { rows: [tray] } = await posDb.query('SELECT COUNT(*) as total FROM active_work_tray WHERE customer_id = $1 AND status = \'active\'', [d.id]);
+      const { rows: expRows } = await posDb.query(
+        'SELECT COUNT(*) as total FROM clinic_inventory WHERE customer_id = $1 AND expiry_date IS NOT NULL AND expiry_date <= CURRENT_DATE + INTERVAL \'3 months\' AND expiry_date >= CURRENT_DATE AND sealed_count > 0',
+        [d.id]
+      );
+
+      const sealedTotal = parseInt(sealed?.total || 0, 10);
+      const trayTotal = parseInt(tray?.total || 0, 10);
+      const expCount = parseInt(expRows[0]?.total || 0, 10);
+
+      let body = '';
+      if (expCount === 0) {
+        body = `دكتور {name}، فحصنا مخزونك: لديك ${sealedTotal} علبة مقفولة و ${trayTotal} عبوة قيد الاستخدام على الترابيزة. ✅ كل الصلاحيات لسه بعيدة والدنيا أمان.. أسبوعك هادئ! ✨`;
+      } else {
+        body = `دكتور {name}، ملخص مخزونك: ${sealedTotal} علبة مقفولة و ${trayTotal} عبوة على الترابيزة. يُرجى مراجعة ${expCount} أصناف تقترب صلاحيتها لاستهلاكها أولاً 🩺`;
+      }
+
+      await sendPushNotification({
+        title: '🩺 تقرير أسبوعي لمخزون عيادتك',
+        body,
+        url: 'https://dentrust.site/my-account',
+        tag: `clinic-weekly-${d.id}`,
+        targetType: 'customer',
+        targetCustomerId: d.id,
+        targetPhone: d.phone,
+        sentBy: 'التقرير الأسبوعي لمخزون العيادة'
+      });
+    }
+  } catch (err) {
+    console.error('[Clinic Weekly Digest Error]:', err.message);
+  }
+}
+
+// 5. مسارات الـ API لنظام العيادات والمخزون (/api/clinic/*)
+
+// أ) الشاشة الرئيسية: جلب الفروع، المخزون المقفول، صينية الشغل، والإحصائيات
+app.get([`${BASE}/api/clinic/overview`, '/api/clinic/overview'], async (req, res) => {
+  try {
+    await ensureClinicOsTables();
+    const doc = await resolveClinicCustomer(req);
+    if (!doc) return res.status(401).json({ error: 'الطبيب غير مسجل أو تعذر التعرف عليه' });
+
+    // التأكد من وجود فرع افتراضي واحد على الأقل
+    let { rows: locations } = await posDb.query(
+      'SELECT * FROM stock_locations WHERE customer_id = $1 ORDER BY (type = \'Warehouse\') DESC, is_default DESC, id ASC',
+      [doc.id]
+    );
+    if (locations.length === 0) {
+      const { rows: [defLoc] } = await posDb.query(
+        'INSERT INTO stock_locations (customer_id, name, type, is_default) VALUES ($1, \'عيادتي الرئيسية\', \'Clinic\', true) RETURNING *',
+        [doc.id]
+      );
+      locations = [defLoc];
+    }
+
+    // جلب المخزون المقفول (Backstock)
+    const { rows: inventory } = await posDb.query(`
+      SELECT ci.*, sl.name as location_name, sl.type as location_type,
+             p.name as matched_product_name, p.price as store_price, p.photos as store_photos
+      FROM clinic_inventory ci
+      JOIN stock_locations sl ON sl.id = ci.location_id
+      LEFT JOIN products p ON p.id = ci.product_id
+      WHERE ci.customer_id = $1
+      ORDER BY ci.sealed_count ASC, ci.id DESC
+    `, [doc.id]);
+
+    // جلب صينية الشغل المفتوحة (Active Work Tray)
+    const { rows: activeTray } = await posDb.query(`
+      SELECT awt.id as tray_id, awt.opened_at, awt.status,
+             ROUND(EXTRACT(EPOCH FROM (NOW() - awt.opened_at)) / 86400) as days_opened,
+             ci.id as inventory_id, ci.custom_name, ci.category, ci.unit_label,
+             sl.id as location_id, sl.name as location_name
+      FROM active_work_tray awt
+      JOIN clinic_inventory ci ON ci.id = awt.inventory_id
+      JOIN stock_locations sl ON sl.id = awt.location_id
+      WHERE awt.customer_id = $1 AND awt.status = 'active'
+      ORDER BY awt.opened_at DESC
+    `, [doc.id]);
+
+    // الإحصائيات الذكية
+    let totalSealed = 0;
+    let lowStockCount = 0;
+    let expiringCount = 0;
+    const now = new Date();
+    const threeMonthsAhead = new Date();
+    threeMonthsAhead.setMonth(now.getMonth() + 3);
+
+    inventory.forEach(item => {
+      totalSealed += parseInt(item.sealed_count || 0, 10);
+      if (item.sealed_count <= item.min_threshold) lowStockCount++;
+      if (item.expiry_date) {
+        const exp = new Date(item.expiry_date);
+        if (exp <= threeMonthsAhead && exp >= now && item.sealed_count > 0) expiringCount++;
+      }
+    });
+
+    res.json({
+      ok: true,
+      doctor: { id: doc.id, name: doc.name, phone: doc.phone, code: doc.customer_code },
+      locations,
+      inventory,
+      activeTray,
+      stats: {
+        totalSealed,
+        activeTrayCount: activeTray.length,
+        lowStockCount,
+        expiringCount
+      }
+    });
+  } catch (err) {
+    console.error('[Clinic Overview Error]:', err.message);
+    res.status(500).json({ error: 'حدث خطأ أثناء تحميل بيانات المخزون' });
+  }
+});
+
+// ب) إدارة الفروع والمخازن (Locations CRUD)
+app.get([`${BASE}/api/clinic/locations`, '/api/clinic/locations'], async (req, res) => {
+  try {
+    await ensureClinicOsTables();
+    const doc = await resolveClinicCustomer(req);
+    if (!doc) return res.status(401).json({ error: 'غير مصرح' });
+    const { rows } = await posDb.query('SELECT * FROM stock_locations WHERE customer_id = $1 ORDER BY id ASC', [doc.id]);
+    res.json({ ok: true, locations: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post([`${BASE}/api/clinic/locations`, '/api/clinic/locations'], async (req, res) => {
+  try {
+    await ensureClinicOsTables();
+    const doc = await resolveClinicCustomer(req);
+    if (!doc) return res.status(401).json({ error: 'غير مصرح' });
+    const { name, type, parent_location_id } = req.body || {};
+    if (!name || !name.trim()) return res.status(400).json({ error: 'اسم الفرع أو المخزن مطلوب' });
+
+    const validTypes = ['Warehouse', 'Hub', 'Clinic'];
+    const locType = validTypes.includes(type) ? type : 'Clinic';
+
+    const { rows: [newLoc] } = await posDb.query(
+      `INSERT INTO stock_locations (customer_id, name, type, parent_location_id)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [doc.id, name.trim(), locType, parent_location_id || null]
+    );
+    res.json({ ok: true, location: newLoc });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete([`${BASE}/api/clinic/locations/:id`, '/api/clinic/locations/:id'], async (req, res) => {
+  try {
+    await ensureClinicOsTables();
+    const doc = await resolveClinicCustomer(req);
+    if (!doc) return res.status(401).json({ error: 'غير مصرح' });
+    const locId = parseInt(req.params.id, 10);
+
+    // التحقق من عدم حذف الفرع إذا كان هو الوحيد
+    const { rows: allLocs } = await posDb.query('SELECT id FROM stock_locations WHERE customer_id = $1', [doc.id]);
+    if (allLocs.length <= 1) return res.status(400).json({ error: 'لا يمكن حذف الفرع الوحيد المتبقي للعيادة' });
+
+    await posDb.query('DELETE FROM stock_locations WHERE id = $1 AND customer_id = $2', [locId, doc.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ج) إضافة صنف جديد (1-Mandatory Field Only)
+app.post([`${BASE}/api/clinic/items`, '/api/clinic/items'], async (req, res) => {
+  try {
+    await ensureClinicOsTables();
+    const doc = await resolveClinicCustomer(req);
+    if (!doc) return res.status(401).json({ error: 'غير مصرح' });
+
+    const b = req.body || {};
+    const customName = (b.custom_name || b.name || '').trim();
+    if (!customName) return res.status(400).json({ error: 'اسم الصنف أو المادة مطلوب (حقل إجباري)' });
+
+    let locId = b.location_id ? parseInt(b.location_id, 10) : null;
+    if (!locId) {
+      const { rows: [defLoc] } = await posDb.query('SELECT id FROM stock_locations WHERE customer_id = $1 ORDER BY is_default DESC, id ASC LIMIT 1', [doc.id]);
+      locId = defLoc ? defLoc.id : null;
+    }
+    if (!locId) return res.status(400).json({ error: 'لم يتم العثور على فرع أو مخزن للتسجيل' });
+
+    const sealedCount = Math.max(0, parseInt(b.sealed_count || 1, 10));
+    const minThreshold = Math.max(0, parseInt(b.min_threshold || 1, 10));
+    const purchasePrice = parseFloat(b.purchase_price || 0);
+    const category = b.category || 'restorative';
+    const unitLabel = (b.unit_label || 'علبة').trim();
+    const expiryDate = b.expiry_date || null;
+    const isExternal = b.is_external !== false;
+
+    // بحث تلقائي في كتالوج منتجات DenTrust للربط الذكي
+    let productId = b.product_id || null;
+    if (!productId) {
+      const { rows: [matchProd] } = await posDb.query(
+        'SELECT id FROM products WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) OR name ILIKE $2 LIMIT 1',
+        [customName, `%${customName}%`]
+      ).catch(() => ({ rows: [] }));
+      if (matchProd) productId = matchProd.id;
+    }
+
+    const { rows: [item] } = await posDb.query(
+      `INSERT INTO clinic_inventory 
+        (customer_id, location_id, product_id, custom_name, category, sealed_count, min_threshold, purchase_price, expiry_date, unit_label, is_external, last_entry_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+       RETURNING *`,
+      [doc.id, locId, productId, customName, category, sealedCount, minThreshold, purchasePrice, expiryDate, unitLabel, isExternal]
+    );
+
+    await posDb.query(
+      `INSERT INTO stock_movements (customer_id, item_id, movement_type, to_location_id, quantity, notes)
+       VALUES ($1, $2, 'Entry', $3, $4, 'تسجيل صنف جديد بالمخزون')`,
+      [doc.id, item.id, locId, sealedCount]
+    );
+
+    res.json({ ok: true, item });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// د) تعديل صنف
+app.put([`${BASE}/api/clinic/items/:id`, '/api/clinic/items/:id'], async (req, res) => {
+  try {
+    await ensureClinicOsTables();
+    const doc = await resolveClinicCustomer(req);
+    if (!doc) return res.status(401).json({ error: 'غير مصرح' });
+    const itemId = parseInt(req.params.id, 10);
+    const b = req.body || {};
+
+    const { rows: [updated] } = await posDb.query(
+      `UPDATE clinic_inventory SET
+         custom_name = COALESCE($1, custom_name),
+         category = COALESCE($2, category),
+         sealed_count = COALESCE($3, sealed_count),
+         min_threshold = COALESCE($4, min_threshold),
+         purchase_price = COALESCE($5, purchase_price),
+         expiry_date = $6,
+         unit_label = COALESCE($7, unit_label),
+         updated_at = NOW()
+       WHERE id = $8 AND customer_id = $9
+       RETURNING *`,
+      [b.custom_name, b.category, b.sealed_count != null ? parseInt(b.sealed_count, 10) : null,
+       b.min_threshold != null ? parseInt(b.min_threshold, 10) : null,
+       b.purchase_price != null ? parseFloat(b.purchase_price) : null,
+       b.expiry_date !== undefined ? (b.expiry_date || null) : null,
+       b.unit_label, itemId, doc.id]
+    );
+
+    if (!updated) return res.status(404).json({ error: 'الصنف غير موجود' });
+    res.json({ ok: true, item: updated });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// هـ) حذف صنف
+app.delete([`${BASE}/api/clinic/items/:id`, '/api/clinic/items/:id'], async (req, res) => {
+  try {
+    await ensureClinicOsTables();
+    const doc = await resolveClinicCustomer(req);
+    if (!doc) return res.status(401).json({ error: 'غير مصرح' });
+    const itemId = parseInt(req.params.id, 10);
+
+    await posDb.query('DELETE FROM clinic_inventory WHERE id = $1 AND customer_id = $2', [itemId, doc.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// و) فتح عبوة من المخزون المقفول ونقلها لصينية الشغل (Open Unit Action)
+app.post([`${BASE}/api/clinic/items/:id/open-unit`, '/api/clinic/items/:id/open-unit'], async (req, res) => {
+  try {
+    await ensureClinicOsTables();
+    const doc = await resolveClinicCustomer(req);
+    if (!doc) return res.status(401).json({ error: 'غير مصرح' });
+    const itemId = parseInt(req.params.id, 10);
+
+    const { rows: [item] } = await posDb.query(
+      'SELECT * FROM clinic_inventory WHERE id = $1 AND customer_id = $2',
+      [itemId, doc.id]
+    );
+    if (!item) return res.status(404).json({ error: 'الصنف غير موجود' });
+    if (item.sealed_count <= 0) return res.status(400).json({ error: 'لا يوجد رصيد مقفول لفتحه في هذا المخزن' });
+
+    // خصم 1 من المقفول
+    const { rows: [updatedItem] } = await posDb.query(
+      'UPDATE clinic_inventory SET sealed_count = sealed_count - 1, updated_at = NOW() WHERE id = $1 RETURNING *',
+      [item.id]
+    );
+
+    // إضافة لصينية الشغل المفتوحة
+    const { rows: [trayRecord] } = await posDb.query(
+      'INSERT INTO active_work_tray (customer_id, inventory_id, location_id, status) VALUES ($1, $2, $3, \'active\') RETURNING *',
+      [doc.id, item.id, item.location_id]
+    );
+
+    // تسجيل في حركة المخزون
+    await posDb.query(
+      `INSERT INTO stock_movements (customer_id, item_id, movement_type, from_location_id, quantity, notes)
+       VALUES ($1, $2, 'Open_Unit', $3, 1, 'فتح عبوة ونقلها لصينية الشغل بالعيادة')`,
+      [doc.id, item.id, item.location_id]
+    );
+
+    // فحص ما إذا وصل الرصيد للحد الأدنى لإطلاق تنبيه فوري للطبيب
+    if (updatedItem.sealed_count <= updatedItem.min_threshold) {
+      sendPushNotification({
+        title: '⚡ تنبيه نقص فوري بالعيادة',
+        body: `دكتور {name}، تم فتح عبوة من "${item.custom_name}". الرصيد المتبقي بالدرج المقفول أصبح (${updatedItem.sealed_count} ${item.unit_label}). اطلب من DenTrust وتوصلك في نفس اليوم! 🚚`,
+        url: 'https://dentrust.site/my-account',
+        tag: `low-stock-${item.id}`,
+        targetType: 'customer',
+        targetCustomerId: doc.id,
+        targetPhone: doc.phone,
+        sentBy: 'نظام فتح الخامات بالعيادة'
+      }).catch(() => {});
+    }
+
+    res.json({ ok: true, item: updatedItem, tray: trayRecord });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ز) إنهاء عبوة مفتوحة من صينية الشغل (Dispose / Finish Unit Action)
+app.post([`${BASE}/api/clinic/tray/:id/dispose`, '/api/clinic/tray/:id/dispose'], async (req, res) => {
+  try {
+    await ensureClinicOsTables();
+    const doc = await resolveClinicCustomer(req);
+    if (!doc) return res.status(401).json({ error: 'غير مصرح' });
+    const trayId = parseInt(req.params.id, 10);
+
+    const { rows: [tray] } = await posDb.query(
+      'SELECT * FROM active_work_tray WHERE id = $1 AND customer_id = $2',
+      [trayId, doc.id]
+    );
+    if (!tray) return res.status(404).json({ error: 'العبوة غير موجودة في صينية الشغل' });
+
+    await posDb.query(
+      'UPDATE active_work_tray SET status = \'finished\', finished_at = NOW() WHERE id = $1',
+      [trayId]
+    );
+
+    await posDb.query(
+      `INSERT INTO stock_movements (customer_id, item_id, movement_type, quantity, notes)
+       VALUES ($1, $2, 'Dispose_Unit', 1, 'انتهاء العبوة ورميها من صينية الشغل')`,
+      [doc.id, tray.inventory_id]
+    );
+
+    res.json({ ok: true, message: 'تم استهلاك العبوة وتسجيل مدة الاستخدام بنجاح ✓' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ح) تحويل خامات بين الفروع أو المخازن الداخلية (Internal Transfer)
+app.post([`${BASE}/api/clinic/transfer`, '/api/clinic/transfer'], async (req, res) => {
+  try {
+    await ensureClinicOsTables();
+    const doc = await resolveClinicCustomer(req);
+    if (!doc) return res.status(401).json({ error: 'غير مصرح' });
+
+    const { item_id, from_location_id, to_location_id, quantity } = req.body || {};
+    const qty = Math.max(1, parseInt(quantity || 1, 10));
+
+    const { rows: [sourceItem] } = await posDb.query(
+      'SELECT * FROM clinic_inventory WHERE id = $1 AND customer_id = $2 AND location_id = $3',
+      [item_id, doc.id, from_location_id]
+    );
+    if (!sourceItem || sourceItem.sealed_count < qty) {
+      return res.status(400).json({ error: 'الرصيد المتاح للتحويل في المخزن المصدر غير كافٍ' });
+    }
+
+    // خصم من المخزن المصدر
+    await posDb.query(
+      'UPDATE clinic_inventory SET sealed_count = sealed_count - $1, updated_at = NOW() WHERE id = $2',
+      [qty, sourceItem.id]
+    );
+
+    // إضافة أو تحديث في المخزن المستهدف
+    const { rows: [targetItem] } = await posDb.query(
+      'SELECT id FROM clinic_inventory WHERE customer_id = $1 AND location_id = $2 AND LOWER(TRIM(custom_name)) = LOWER(TRIM($3))',
+      [doc.id, to_location_id, sourceItem.custom_name]
+    );
+
+    let targetInvId = null;
+    if (targetItem) {
+      targetInvId = targetItem.id;
+      await posDb.query(
+        'UPDATE clinic_inventory SET sealed_count = sealed_count + $1, updated_at = NOW() WHERE id = $2',
+        [qty, targetItem.id]
+      );
+    } else {
+      const { rows: [newInv] } = await posDb.query(
+        `INSERT INTO clinic_inventory 
+          (customer_id, location_id, product_id, custom_name, category, sealed_count, min_threshold, purchase_price, expiry_date, unit_label, last_entry_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()) RETURNING id`,
+        [doc.id, to_location_id, sourceItem.product_id, sourceItem.custom_name, sourceItem.category, qty, sourceItem.min_threshold, sourceItem.purchase_price, sourceItem.expiry_date, sourceItem.unit_label]
+      );
+      targetInvId = newInv.id;
+    }
+
+    // تسجيل حركة التحويل
+    await posDb.query(
+      `INSERT INTO stock_movements (customer_id, item_id, movement_type, from_location_id, to_location_id, quantity, notes)
+       VALUES ($1, $2, 'Transfer', $3, $4, $5, 'تحويل داخلي بين الفروع')`,
+      [doc.id, sourceItem.id, from_location_id, to_location_id, qty]
+    );
+
+    res.json({ ok: true, message: 'تم التحويل الداخلي بين الفروع بنجاح ✓' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ط) البحث السريع في كتالوج متجر DenTrust (Auto-match & Upsell Card)
+app.get([`${BASE}/api/clinic/search-catalog`, '/api/clinic/search-catalog'], async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    if (!q) return res.json({ ok: true, products: [] });
+    const { rows } = await posDb.query(
+      `SELECT id, name, price, photos, stock_quantity, category 
+       FROM products 
+       WHERE name ILIKE $1 OR barcode = $2 
+       ORDER BY name ASC LIMIT 8`,
+      [`%${q}%`, q]
+    );
+    res.json({ ok: true, products: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
 // 🏢 WAREHOUSE & PRODUCT MOVEMENT AUDIT LOG & TOP-SELLING ANALYTICS
 // ══════════════════════════════════════════════════════════════════════════════
 
