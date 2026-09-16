@@ -8478,6 +8478,24 @@ async function ensureClinicOsTables() {
     `).catch(e => console.error('[stock_movements create error]:', e.message));
 
     await posDb.query(`CREATE INDEX IF NOT EXISTS idx_stock_mov_cust ON stock_movements(customer_id)`).catch(() => {});
+
+    // مزامنة تواريخ الصلاحية تلقائياً من كتالوج منتجات DenTrust للأصناف المسجلة
+    await posDb.query(`
+      UPDATE clinic_inventory ci
+      SET expiry_date = CASE 
+            WHEN p.expiry_date::text ~ '^\\d{4}-\\d{2}-\\d{2}' THEN (p.expiry_date::text)::date 
+            ELSE NULL 
+          END,
+          product_id = COALESCE(ci.product_id, p.id)
+      FROM products p
+      WHERE ci.expiry_date IS NULL
+        AND p.expiry_date IS NOT NULL
+        AND (
+          LOWER(TRIM(ci.custom_name)) = LOWER(TRIM(p.product_name))
+          OR ci.custom_name ILIKE '%' || p.product_name || '%'
+          OR p.product_name ILIKE '%' || SPLIT_PART(ci.custom_name, '—', 1) || '%'
+        )
+    `).catch(e => console.error('[Expiry auto-sync error]:', e.message));
   } catch (err) {
     console.error('[Ensure Clinic OS Tables Error]:', err.message);
   }
@@ -8582,6 +8600,24 @@ async function autoRouteOrderToClinicInventory(orderAlertId) {
       const qty = parseInt(item.quantity || 1, 10);
       const price = parseFloat(item.unit_price || 0);
 
+      // البحث عن المنتج في كتالوج منتجات DenTrust لجلب تاريخ الصلاحية تلقائياً
+      const { rows: [matchedProd] } = await posDb.query(
+        `SELECT id, expiry_date, category, product_name 
+         FROM products 
+         WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1)) 
+            OR product_name ILIKE $2 
+            OR $3 ILIKE '%' || product_name || '%'
+         LIMIT 1`,
+        [name, `%${name.split('—')[0].trim()}%`, name]
+      ).catch(() => ({ rows: [] }));
+
+      const prodId = matchedProd?.id || null;
+      let expDate = null;
+      if (matchedProd?.expiry_date && /^\d{4}-\d{2}-\d{2}/.test(String(matchedProd.expiry_date))) {
+        expDate = String(matchedProd.expiry_date).substring(0, 10);
+      }
+      const cat = matchedProd?.category || 'restorative';
+
       // هل الصنف مسجل من قبل في هذا المخزن؟
       const { rows: [existing] } = await posDb.query(
         'SELECT id, sealed_count FROM clinic_inventory WHERE customer_id = $1 AND location_id = $2 AND LOWER(TRIM(custom_name)) = LOWER(TRIM($3)) LIMIT 1',
@@ -8592,14 +8628,21 @@ async function autoRouteOrderToClinicInventory(orderAlertId) {
       if (existing) {
         invId = existing.id;
         await posDb.query(
-          'UPDATE clinic_inventory SET sealed_count = sealed_count + $1, purchase_price = $2, last_entry_date = NOW(), updated_at = NOW() WHERE id = $3',
-          [qty, price, existing.id]
+          `UPDATE clinic_inventory 
+           SET sealed_count = sealed_count + $1, 
+               purchase_price = $2, 
+               expiry_date = COALESCE(clinic_inventory.expiry_date, $3::date),
+               product_id = COALESCE(clinic_inventory.product_id, $4),
+               last_entry_date = NOW(), 
+               updated_at = NOW() 
+           WHERE id = $5`,
+          [qty, price, expDate, prodId, existing.id]
         );
       } else {
         const { rows: [newInv] } = await posDb.query(
-          `INSERT INTO clinic_inventory (customer_id, location_id, custom_name, sealed_count, min_threshold, purchase_price, unit_label, last_entry_date)
-           VALUES ($1, $2, $3, $4, 1, $5, 'علبة', NOW()) RETURNING id`,
-          [doctor.id, targetLoc.id, name, qty, price]
+          `INSERT INTO clinic_inventory (customer_id, location_id, product_id, custom_name, category, sealed_count, min_threshold, purchase_price, expiry_date, unit_label, last_entry_date)
+           VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, 'علبة', NOW()) RETURNING id`,
+          [doctor.id, targetLoc.id, prodId, name, cat, qty, price, expDate]
         );
         invId = newInv.id;
       }
@@ -8947,14 +8990,24 @@ app.post([`${BASE}/api/clinic/items`, '/api/clinic/items'], async (req, res) => 
     const expiryDate = b.expiry_date || null;
     const isExternal = b.is_external !== false;
 
-    // بحث تلقائي في كتالوج منتجات DenTrust للربط الذكي
+    // بحث تلقائي في كتالوج منتجات DenTrust للربط ومزامنة تاريخ الصلاحية تلقائياً
     let productId = b.product_id || null;
-    if (!productId) {
-      const { rows: [matchProd] } = await posDb.query(
-        'SELECT id FROM products WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1)) OR product_name ILIKE $2 LIMIT 1',
-        [customName, `%${customName}%`]
-      ).catch(() => ({ rows: [] }));
-      if (matchProd) productId = matchProd.id;
+    let autoExpDate = expiryDate;
+    const { rows: [matchProd] } = await posDb.query(
+      `SELECT id, expiry_date, category, product_name 
+       FROM products 
+       WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1)) 
+          OR product_name ILIKE $2 
+          OR $3 ILIKE '%' || product_name || '%'
+       LIMIT 1`,
+      [customName, `%${customName.split('—')[0].trim()}%`, customName]
+    ).catch(() => ({ rows: [] }));
+
+    if (matchProd) {
+      if (!productId) productId = matchProd.id;
+      if (!autoExpDate && matchProd.expiry_date && /^\d{4}-\d{2}-\d{2}/.test(String(matchProd.expiry_date))) {
+        autoExpDate = String(matchProd.expiry_date).substring(0, 10);
+      }
     }
 
     const { rows: [item] } = await posDb.query(
@@ -8962,7 +9015,7 @@ app.post([`${BASE}/api/clinic/items`, '/api/clinic/items'], async (req, res) => 
         (customer_id, location_id, product_id, custom_name, category, sealed_count, min_threshold, purchase_price, expiry_date, unit_label, is_external, last_entry_date)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
        RETURNING *`,
-      [doc.id, locId, productId, customName, category, sealedCount, minThreshold, purchasePrice, expiryDate, unitLabel, isExternal]
+      [doc.id, locId, productId, customName, category, sealedCount, minThreshold, purchasePrice, autoExpDate, unitLabel, isExternal]
     );
 
     await posDb.query(
