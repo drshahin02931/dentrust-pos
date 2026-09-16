@@ -8857,6 +8857,26 @@ app.get([`${BASE}/api/clinic/overview`, '/api/clinic/overview'], async (req, res
       locations = [defLoc];
     }
 
+    // Sync any missing expiries from DenTrust product catalog for this doctor
+    await posDb.query(`
+      UPDATE clinic_inventory ci
+      SET expiry_date = CASE 
+            WHEN p.expiry_date::text ~ '^\\d{4}-\\d{2}-\\d{2}' THEN (p.expiry_date::text)::date 
+            ELSE NULL 
+          END,
+          product_id = COALESCE(ci.product_id, p.id)
+      FROM products p
+      WHERE ci.customer_id = $1
+        AND ci.expiry_date IS NULL
+        AND p.expiry_date IS NOT NULL
+        AND p.expiry_date != ''
+        AND (
+          LOWER(TRIM(ci.custom_name)) = LOWER(TRIM(p.product_name))
+          OR ci.custom_name ILIKE '%' || p.product_name || '%'
+          OR p.product_name ILIKE '%' || SPLIT_PART(ci.custom_name, '—', 1) || '%'
+        )
+    `, [doc.id]).catch(() => {});
+
     // جلب المخزون المقفول (Backstock)
     const { rows: inventory } = await posDb.query(`
       SELECT ci.*, sl.name as location_name, sl.type as location_type,
@@ -9037,6 +9057,9 @@ app.put([`${BASE}/api/clinic/items/:id`, '/api/clinic/items/:id'], async (req, r
     const itemId = parseInt(req.params.id, 10);
     const b = req.body || {};
 
+    const hasExp = b.expiry_date !== undefined;
+    const expVal = (b.expiry_date && String(b.expiry_date).trim()) ? String(b.expiry_date).trim().substring(0, 10) : null;
+
     const { rows: [updated] } = await posDb.query(
       `UPDATE clinic_inventory SET
          custom_name = COALESCE($1, custom_name),
@@ -9044,15 +9067,15 @@ app.put([`${BASE}/api/clinic/items/:id`, '/api/clinic/items/:id'], async (req, r
          sealed_count = COALESCE($3, sealed_count),
          min_threshold = COALESCE($4, min_threshold),
          purchase_price = COALESCE($5, purchase_price),
-         expiry_date = $6,
-         unit_label = COALESCE($7, unit_label),
+         expiry_date = CASE WHEN $6::boolean THEN $7::date ELSE expiry_date END,
+         unit_label = COALESCE($8, unit_label),
          updated_at = NOW()
-       WHERE id = $8 AND customer_id = $9
+       WHERE id = $9 AND customer_id = $10
        RETURNING *`,
       [b.custom_name, b.category, b.sealed_count != null ? parseInt(b.sealed_count, 10) : null,
        b.min_threshold != null ? parseInt(b.min_threshold, 10) : null,
        b.purchase_price != null ? parseFloat(b.purchase_price) : null,
-       b.expiry_date !== undefined ? (b.expiry_date || null) : null,
+       hasExp, expVal,
        b.unit_label, itemId, doc.id]
     );
 
