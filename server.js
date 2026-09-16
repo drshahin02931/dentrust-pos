@@ -8414,20 +8414,23 @@ async function ensureClinicOsTables() {
     await posDb.query(`
       CREATE TABLE IF NOT EXISTS stock_locations (
         id SERIAL PRIMARY KEY,
-        customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+        customer_id INTEGER NOT NULL,
         name VARCHAR(120) NOT NULL,
         type VARCHAR(50) DEFAULT 'Clinic',
-        parent_location_id INTEGER REFERENCES stock_locations(id) ON DELETE SET NULL,
+        parent_location_id INTEGER,
         is_default BOOLEAN DEFAULT false,
         created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_stock_locations_cust ON stock_locations(customer_id);
+      )
+    `).catch(e => console.error('[stock_locations create error]:', e.message));
 
+    await posDb.query(`CREATE INDEX IF NOT EXISTS idx_stock_locations_cust ON stock_locations(customer_id)`).catch(() => {});
+
+    await posDb.query(`
       CREATE TABLE IF NOT EXISTS clinic_inventory (
         id SERIAL PRIMARY KEY,
-        customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-        location_id INTEGER NOT NULL REFERENCES stock_locations(id) ON DELETE CASCADE,
-        product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+        customer_id INTEGER NOT NULL,
+        location_id INTEGER NOT NULL,
+        product_id INTEGER,
         custom_name VARCHAR(200) NOT NULL,
         category VARCHAR(50) DEFAULT 'restorative',
         sealed_count INTEGER DEFAULT 0,
@@ -8440,34 +8443,41 @@ async function ensureClinicOsTables() {
         is_external BOOLEAN DEFAULT false,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_clinic_inv_cust ON clinic_inventory(customer_id);
-      CREATE INDEX IF NOT EXISTS idx_clinic_inv_loc ON clinic_inventory(location_id);
+      )
+    `).catch(e => console.error('[clinic_inventory create error]:', e.message));
 
+    await posDb.query(`CREATE INDEX IF NOT EXISTS idx_clinic_inv_cust ON clinic_inventory(customer_id)`).catch(() => {});
+    await posDb.query(`CREATE INDEX IF NOT EXISTS idx_clinic_inv_loc ON clinic_inventory(location_id)`).catch(() => {});
+
+    await posDb.query(`
       CREATE TABLE IF NOT EXISTS active_work_tray (
         id SERIAL PRIMARY KEY,
-        customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-        inventory_id INTEGER NOT NULL REFERENCES clinic_inventory(id) ON DELETE CASCADE,
-        location_id INTEGER NOT NULL REFERENCES stock_locations(id) ON DELETE CASCADE,
+        customer_id INTEGER NOT NULL,
+        inventory_id INTEGER NOT NULL,
+        location_id INTEGER NOT NULL,
         opened_at TIMESTAMPTZ DEFAULT NOW(),
         status VARCHAR(20) DEFAULT 'active',
         finished_at TIMESTAMPTZ NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_active_work_tray_cust ON active_work_tray(customer_id);
+      )
+    `).catch(e => console.error('[active_work_tray create error]:', e.message));
 
+    await posDb.query(`CREATE INDEX IF NOT EXISTS idx_active_work_tray_cust ON active_work_tray(customer_id)`).catch(() => {});
+
+    await posDb.query(`
       CREATE TABLE IF NOT EXISTS stock_movements (
         id SERIAL PRIMARY KEY,
         customer_id INTEGER NOT NULL,
-        item_id INTEGER NOT NULL REFERENCES clinic_inventory(id) ON DELETE CASCADE,
+        item_id INTEGER NOT NULL,
         movement_type VARCHAR(30) NOT NULL,
-        from_location_id INTEGER REFERENCES stock_locations(id) ON DELETE SET NULL,
-        to_location_id INTEGER REFERENCES stock_locations(id) ON DELETE SET NULL,
+        from_location_id INTEGER,
+        to_location_id INTEGER,
         quantity INTEGER NOT NULL DEFAULT 1,
         notes TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE INDEX IF NOT EXISTS idx_stock_mov_cust ON stock_movements(customer_id);
-    `).catch(e => console.error('[Clinic OS Schema error]:', e.message));
+      )
+    `).catch(e => console.error('[stock_movements create error]:', e.message));
+
+    await posDb.query(`CREATE INDEX IF NOT EXISTS idx_stock_mov_cust ON stock_movements(customer_id)`).catch(() => {});
   } catch (err) {
     console.error('[Ensure Clinic OS Tables Error]:', err.message);
   }
@@ -8860,7 +8870,7 @@ app.get([`${BASE}/api/clinic/overview`, '/api/clinic/overview'], async (req, res
     });
   } catch (err) {
     console.error('[Clinic Overview Error]:', err.message);
-    res.status(500).json({ error: 'حدث خطأ أثناء تحميل بيانات المخزون' });
+    res.status(500).json({ error: 'حدث خطأ أثناء تحميل بيانات المخزون', detail: err.message });
   }
 });
 
