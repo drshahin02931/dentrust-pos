@@ -81,14 +81,14 @@
     <table class="w-full text-sm min-w-[850px]">
       <thead class="bg-gray-50 border-b">
         <tr class="text-right text-gray-600 font-semibold">
-          <th class="px-4 py-3" data-ar="رقم الفاتورة" data-en="Invoice #">رقم الفاتورة</th>
+          <th class="px-4 py-3 sticky right-0 z-10 bg-gray-50 shadow-[-3px_0_6px_-2px_rgba(0,0,0,0.06)] font-bold" data-ar="رقم الفاتورة" data-en="Invoice #">رقم الفاتورة</th>
           <th class="px-4 py-3" data-ar="التاريخ" data-en="Date">التاريخ</th>
           <th class="px-4 py-3" data-ar="العميل" data-en="Customer">العميل</th>
           <th class="px-4 py-3" data-ar="طريقة الدفع" data-en="Payment">طريقة الدفع</th>
           <th class="px-4 py-3" data-ar="الإجمالي" data-en="Total">الإجمالي</th>
           <% if (isMgr) { %><th class="px-4 py-3 text-green-700" data-ar="الربح" data-en="Profit">الربح</th><% } %>
           <th class="px-4 py-3" data-ar="الحالة" data-en="Status">الحالة</th>
-          <th class="px-4 py-3" data-ar="إجراءات" data-en="Actions">إجراءات</th>
+          <th class="px-4 py-3 sticky left-0 z-10 bg-gray-50 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.06)] font-bold" data-ar="إجراءات" data-en="Actions">إجراءات</th>
         </tr>
       </thead>
       <tbody id="invoiceTable" class="divide-y"></tbody>
@@ -108,7 +108,7 @@
       <button onclick="closeDetail()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
     </div>
     <div id="modalBody" class="overflow-y-auto flex-1 p-5"></div>
-    <div class="p-4 border-t flex gap-3 flex-shrink-0" id="modalActions"></div>
+    <div class="p-4 border-t grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-wrap gap-2 flex-shrink-0" id="modalActions"></div>
   </div>
 </div>
 
@@ -278,7 +278,7 @@ function renderTable() {
     const canReturnThis = CAN_RETURN && inv.return_status < 2;
     const refundedStrike = inv.total_refunded > 0 ? ' <span class="text-xs text-red-400 font-normal line-through">' + inv.total_amount.toFixed(2) + '</span>' : '';
     return `<tr class="${fullyReturned?'bg-red-50/40 opacity-75':isOnline?'bg-teal-50/30 hover:bg-teal-50':'hover:bg-gray-50'} transition-colors cursor-pointer" onclick="viewInvoice(${inv.id})">
-      <td class="px-4 py-3 font-mono font-bold text-blue-700">#${String(inv.id).padStart(5,'0')}${onlineBadge}</td>
+      <td class="px-4 py-3 font-mono font-bold text-blue-700 sticky right-0 z-10 bg-white shadow-[-3px_0_6px_-2px_rgba(0,0,0,0.06)]">#${String(inv.id).padStart(5,'0')}${onlineBadge}</td>
       <td class="px-4 py-3 text-gray-600 text-xs">${inv.date.replace('T',' ').slice(0,16)}</td>
       <td class="px-4 py-3 text-gray-700">${inv.customer_name||'—'}</td>
       <td class="px-4 py-3">${payBadge}</td>

@@ -152,7 +152,7 @@
           <span id="detailVipBadge" class="hidden bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-900 font-black text-xs px-2.5 py-0.5 rounded-md shadow-xs">👑 VIP MEMBER</span>
         </div>
         <!-- Statement summary strip -->
-        <div id="statementStrip" class="hidden mt-3 grid grid-cols-3 gap-2 text-center">
+        <div id="statementStrip" class="hidden mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-center">
           <div class="bg-blue-50 rounded-xl px-2 py-2">
             <div class="text-xs text-blue-500 font-medium">إجمالي الفواتير</div>
             <div id="stmtInvoiced" class="text-sm font-black text-blue-700">—</div>
@@ -171,26 +171,26 @@
     </div>
 
     <!-- Action buttons -->
-    <div class="px-5 py-3 border-b bg-gray-50 flex gap-2 flex-wrap shrink-0">
-      <button id="btnToggleVip" onclick="toggleCustomerVip()" class="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold px-4 py-2 rounded-xl shadow-sm">
+    <div class="px-5 py-3 border-b bg-gray-50 grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-wrap gap-2 shrink-0">
+      <button id="btnToggleVip" onclick="toggleCustomerVip()" class="flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold px-4 py-2.5 rounded-xl shadow-sm min-h-[42px] w-full sm:w-auto">
         👑 تحويل إلى VIP
       </button>
-      <button onclick="resetCustomerPassword()" class="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-sm font-semibold px-4 py-2 rounded-xl shadow-sm">
+      <button onclick="resetCustomerPassword()" class="flex items-center justify-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-sm font-bold px-4 py-2.5 rounded-xl shadow-sm min-h-[42px] w-full sm:w-auto">
         🔑 تصفير كلمة المرور
       </button>
-      <button onclick="openPayModal()" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-xl shadow-sm">
+      <button onclick="openPayModal()" class="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold px-4 py-2.5 rounded-xl shadow-sm min-h-[42px] w-full sm:w-auto">
         💸 تسجيل دفعة
       </button>
-      <button onclick="triggerReconcileCustomerDebt()" class="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-sm font-semibold px-3.5 py-2 rounded-xl shadow-xs transition-all" title="توزيع وإعادة ضبط رصيد الدين تلقائياً من أحدث الفواتير لأقدمها">
+      <button onclick="triggerReconcileCustomerDebt()" class="flex items-center justify-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-sm font-bold px-3.5 py-2.5 rounded-xl shadow-xs transition-all min-h-[42px] w-full sm:w-auto" title="توزيع وإعادة ضبط رصيد الدين تلقائياً من أحدث الفواتير لأقدمها">
         🔄 تسوية الفواتير بالدين الحالي
       </button>
-      <button onclick="openManualDebtModal()" class="flex items-center gap-2 bg-orange-50 hover:bg-orange-100 text-orange-700 text-sm font-semibold px-4 py-2 rounded-xl">
+      <button onclick="openManualDebtModal()" class="flex items-center justify-center gap-2 bg-orange-50 hover:bg-orange-100 text-orange-700 text-sm font-bold px-4 py-2.5 rounded-xl min-h-[42px] w-full sm:w-auto">
         💰 إضافة سلفة/دين
       </button>
-      <button onclick="openEditCustomerModal()" class="flex items-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm font-semibold px-4 py-2 rounded-xl">
+      <button onclick="openEditCustomerModal()" class="flex items-center justify-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm font-bold px-4 py-2.5 rounded-xl min-h-[42px] w-full sm:w-auto">
         ✏️ تعديل البيانات
       </button>
-      <button id="btnDelete" onclick="confirmDelete()" class="flex items-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-semibold px-4 py-2 rounded-xl">
+      <button id="btnDelete" onclick="confirmDelete()" class="flex items-center justify-center gap-2 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-bold px-4 py-2.5 rounded-xl min-h-[42px] w-full sm:w-auto">
         🗑 حذف العميل
       </button>
     </div>
@@ -451,7 +451,7 @@ function renderCustomers(data) {
       ? ['🥇','🥈','🥉'][idx]
       : `#${idx+1}`;
     return `
-    <div onclick="openDetail(${c.id})" class="cursor-pointer rounded-2xl border shadow-sm p-4 flex items-center justify-between gap-3 hover:shadow-md transition-all
+    <div onclick="openDetail(${c.id})" class="cursor-pointer rounded-2xl border shadow-sm p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:shadow-md transition-all
       ${hasDebt ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}">
       <div class="flex items-center gap-3 min-w-0">
         <div class="relative">

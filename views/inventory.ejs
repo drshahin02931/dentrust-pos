@@ -8,7 +8,7 @@
   <!-- Financial Summary (Manager Only) -->
   <div id="financialCard" data-is-mgr="<%= isMgr ? 'true' : 'false' %>" style="<%= !isMgr ? 'display:none' : '' %>" class="bg-gradient-to-l from-blue-700 to-blue-900 text-white rounded-2xl shadow p-4">
     <div class="text-xs font-bold text-blue-200 mb-3">📊 الملخص المالي للمخزون</div>
-    <div class="grid grid-cols-3 gap-3 text-center">
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
       <div class="bg-white/10 rounded-xl p-3">
         <div id="fin-cost" class="text-xl font-black">—</div>
         <div class="text-xs text-blue-200 mt-1">💰 رأس المال المستثمر</div>
@@ -161,7 +161,7 @@
           <th class="px-4 py-3">سعر الشراء</th>
           <th class="px-4 py-3">سعر البيع</th>
           <th class="px-4 py-3">الصلاحية</th>
-          <th class="px-4 py-3">إجراءات</th>
+          <th class="px-4 py-3 sticky left-0 z-10 bg-gray-50 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.06)] font-bold">إجراءات</th>
         </tr>
       </thead>
       <tbody id="productTable" class="divide-y"></tbody>
