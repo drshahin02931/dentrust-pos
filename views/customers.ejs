@@ -130,8 +130,8 @@
 </div>
 
 <!-- ══════════════════════ Customer Detail Modal ══════════════════════ -->
-<div id="detailModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-3">
-  <div class="bg-white rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
+<div id="detailModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4 overscroll-contain" onclick="if(event.target===this)closeDetail()">
+  <div class="bg-white rounded-2xl w-full max-w-lg shadow-2xl flex flex-col h-[92vh] max-h-[92vh] overflow-hidden" onclick="event.stopPropagation()">
 
     <!-- Header -->
     <div id="detailHeader" class="p-5 border-b flex items-start justify-between shrink-0">
@@ -171,7 +171,7 @@
     </div>
 
     <!-- Action buttons -->
-    <div class="px-5 py-3 border-b bg-gray-50 grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-wrap gap-2 shrink-0">
+    <div class="px-4 py-2.5 border-b bg-gray-50 grid grid-cols-2 sm:grid-cols-2 lg:flex lg:flex-wrap gap-1.5 shrink-0 max-h-36 sm:max-h-none overflow-y-auto overscroll-contain">
       <button id="btnToggleVip" onclick="toggleCustomerVip()" class="flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold px-4 py-2.5 rounded-xl shadow-sm min-h-[42px] w-full sm:w-auto">
         👑 تحويل إلى VIP
       </button>
@@ -204,7 +204,7 @@
     </div>
 
     <!-- Scrollable content -->
-    <div class="overflow-y-auto flex-1 p-4 space-y-3" id="detailContent">
+    <div class="overflow-y-auto flex-1 min-h-0 p-3 sm:p-4 space-y-3 overscroll-contain" id="detailContent" style="-webkit-overflow-scrolling: touch;">
       <div class="text-center text-gray-400 py-8">جار التحميل...</div>
     </div>
   </div>
@@ -904,7 +904,7 @@ async function openDetail(cid) {
 
 
   document.getElementById("statementStrip").classList.add("hidden");
-  document.getElementById("detailModal").classList.remove("hidden");
+  document.getElementById("detailModal").classList.remove("hidden"); document.body.style.overflow = "hidden";
   switchTab('orders');
 
   // Load statement if customer has any credit activity
@@ -919,7 +919,7 @@ async function openDetail(cid) {
 }
 
 function closeDetail() {
-  document.getElementById("detailModal").classList.add("hidden");
+  document.getElementById("detailModal").classList.add("hidden"); document.body.style.overflow = "";
   currentCustomer = null;
 }
 

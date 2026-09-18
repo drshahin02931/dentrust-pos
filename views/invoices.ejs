@@ -101,13 +101,13 @@
 </div>
 
 <!-- Invoice Detail Modal -->
-<div id="detailModal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-  <div class="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col">
+<div id="detailModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4 overscroll-contain" onclick="if(event.target===this)closeDetail()">
+  <div class="bg-white rounded-2xl w-full max-w-2xl shadow-2xl h-[92vh] max-h-[92vh] flex flex-col overflow-hidden" onclick="event.stopPropagation()">
     <div class="p-5 border-b flex items-center justify-between flex-shrink-0">
       <h3 id="modalTitle" class="font-bold text-gray-800 text-lg">تفاصيل الفاتورة</h3>
       <button onclick="closeDetail()" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
     </div>
-    <div id="modalBody" class="overflow-y-auto flex-1 p-5"></div>
+    <div id="modalBody" class="overflow-y-auto flex-1 min-h-0 p-4 sm:p-5 overscroll-contain" style="-webkit-overflow-scrolling: touch;"></div>
     <div class="p-4 border-t grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-wrap gap-2 flex-shrink-0" id="modalActions"></div>
   </div>
 </div>
@@ -430,13 +430,13 @@ async function viewInvoice(id) {
     ${IS_MGR ? `<button onclick="closeDetail(); voidInvoice(${inv.id})" class="flex-1 bg-red-600 text-white font-semibold py-2.5 rounded-xl hover:bg-red-700">🗑 حذف نهائي</button>` : ''}
     <button onclick="closeDetail()" class="px-5 bg-gray-50 text-gray-600 font-semibold py-2.5 rounded-xl hover:bg-gray-100 border">إغلاق</button>
   `;
-    document.getElementById("detailModal").classList.remove("hidden");
+    document.getElementById("detailModal").classList.remove("hidden"); document.body.style.overflow = "hidden";
   } catch (err) {
     alert('تعذر تحميل بيانات الفاتورة: ' + (err.message || 'خطأ غير متوقع'));
   }
 }
 
-function closeDetail() { document.getElementById("detailModal").classList.add("hidden"); }
+function closeDetail() { document.getElementById("detailModal").classList.add("hidden"); document.body.style.overflow = ""; }
 function printInv(id) { window.open(`${BASE}/invoice/${id}`, "_blank"); }
 
 async function voidInvoice(id) {
