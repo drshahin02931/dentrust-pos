@@ -1866,6 +1866,8 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
           [JSON.stringify({ posCustomerId: customerId, posCustomerName: customerNameFree, saleId, totalAmount: total, paymentMethod: method, splitData: splitParsed, items })]
         ).catch(() => {});
       });
+      // 🦷 Auto-Route POS walk-in sale to Doctor's Main Clinic Warehouse immediately
+      autoRoutePosSaleToClinicInventory(saleId, customerId, items).catch(e => console.error('[AutoRoute POS sale error]:', e.message));
     }
     res.status(201).json({ ok: true, sale_id: saleId, low_stock: lowStock });
   } catch (err) {
@@ -5637,25 +5639,34 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
     const alertSummary = alertItems.map(i => `${i.product_name || i.name || '?'} x${i.quantity || 1}`).join('، ');
     const alertTotal = parseFloat(d.total_amount || d.total || 0) ||
       alertItems.reduce((s, i) => s + parseFloat(i.unit_price || 0) * parseInt(i.quantity || 1, 10), 0);
-    await posDb.query(
-      `INSERT INTO website_order_alerts
-         (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id,
-          total_amount, items_count, items_summary, promo_code, discount_amount, delivery_amount)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [
-        d.customer_name || 'عميل',
-        d.customer_phone || '',
-        d.customer_city || d.city || '',
-        [d.customer_region || d.region, d.customer_street || d.street,
-         d.customer_building || d.building_number, d.customer_landmark || d.landmark
-        ].filter(Boolean).join(' - ') || '',
-        d.dentrust_order_id || null,
-        alertTotal, alertItems.length, alertSummary || '—',
-        d.promo_code || null,
-        d.discount_amount != null && d.discount_amount !== '' ? parseFloat(d.discount_amount) : null,
-        (d.delivery_amount != null && d.delivery_amount !== '' ? parseFloat(d.delivery_amount) : (d.delivery_fee != null && d.delivery_fee !== '' ? parseFloat(d.delivery_fee) : null))
-      ]
-    ).catch(() => {});
+    let insertedAlert = null;
+    try {
+      const { rows: [al] } = await posDb.query(
+        `INSERT INTO website_order_alerts
+           (customer_name, customer_phone, customer_city, customer_address, dentrust_order_id,
+            total_amount, items_count, items_summary, promo_code, discount_amount, delivery_amount)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+        [
+          d.customer_name || 'عميل',
+          d.customer_phone || '',
+          d.customer_city || d.city || '',
+          [d.customer_region || d.region, d.customer_street || d.street,
+           d.customer_building || d.building_number, d.customer_landmark || d.landmark
+          ].filter(Boolean).join(' - ') || '',
+          d.dentrust_order_id || null,
+          alertTotal, alertItems.length, alertSummary || '—',
+          d.promo_code || null,
+          d.discount_amount != null && d.discount_amount !== '' ? parseFloat(d.discount_amount) : null,
+          (d.delivery_amount != null && d.delivery_amount !== '' ? parseFloat(d.delivery_amount) : (d.delivery_fee != null && d.delivery_fee !== '' ? parseFloat(d.delivery_fee) : null))
+        ]
+      );
+      insertedAlert = al;
+    } catch (_) {}
+
+    // 🦷 Auto-Route online order to Doctor's Main Clinic Warehouse immediately
+    if (insertedAlert?.id) {
+      autoRouteOrderToClinicInventory(insertedAlert.id, alertItems).catch(e => console.error('[AutoRoute immediate online order error]:', e.message));
+    }
 
     // 🔔 Send push notification to all staff devices
     sendPushToAll(
@@ -8495,6 +8506,11 @@ async function ensureClinicOsTables() {
       )
     `).catch(e => console.error('[active_work_tray create error]:', e.message));
 
+    await posDb.query(`
+      ALTER TABLE active_work_tray ADD COLUMN IF NOT EXISTS remaining_percentage INTEGER DEFAULT 100;
+      ALTER TABLE active_work_tray ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ DEFAULT NOW();
+    `).catch(() => {});
+
     await posDb.query(`CREATE INDEX IF NOT EXISTS idx_active_work_tray_cust ON active_work_tray(customer_id)`).catch(() => {});
 
     await posDb.query(`
@@ -8577,8 +8593,8 @@ async function resolveClinicCustomer(req) {
   }
 }
 
-// 3. التوجيه التلقائي لمشتريات DenTrust لمخزن العيادة (Smart Auto-Routing)
-async function autoRouteOrderToClinicInventory(orderAlertId) {
+// 3. التوجيه التلقائي لمشتريات DenTrust لمخزن العيادة الرئيسي (Smart Auto-Routing to Main Warehouse)
+async function autoRouteOrderToClinicInventory(orderAlertId, fallbackItems = null) {
   try {
     await ensureClinicOsTables();
     const { rows: [alert] } = await posDb.query('SELECT * FROM website_order_alerts WHERE id = $1', [orderAlertId]);
@@ -8596,17 +8612,33 @@ async function autoRouteOrderToClinicInventory(orderAlertId) {
     }
     if (!doctor) return;
 
-    // تحديد مكان التوريد (Warehouse لو موجود، أو الفرع الافتراضي)
+    // تجنب التكرار لو تم التوريد مسبقاً
+    const orderKey = alert.dentrust_order_id || alert.id;
+    const { rows: [alreadyRouted] } = await posDb.query(
+      `SELECT id FROM stock_movements WHERE customer_id = $1 AND notes LIKE $2 LIMIT 1`,
+      [doctor.id, `%طلب #${orderKey}%`]
+    ).catch(() => ({ rows: [] }));
+    if (alreadyRouted) {
+      console.log(`[Clinic OS] Order #${orderKey} already routed to inventory. Skipping duplicate.`);
+      return;
+    }
+
+    // تحديد مكان التوريد (المخزن الرئيسي دائماً)
     let { rows: locs } = await posDb.query(
-      'SELECT * FROM stock_locations WHERE customer_id = $1 ORDER BY (type = \'Warehouse\') DESC, is_default DESC, id ASC',
+      `SELECT * FROM stock_locations WHERE customer_id = $1 ORDER BY (type = 'Warehouse') DESC, (name ILIKE '%المخزن الرئيسي%') DESC, is_default DESC, id ASC`,
       [doctor.id]
     );
-    if (locs.length === 0) {
-      const { rows: [newLoc] } = await posDb.query(
-        'INSERT INTO stock_locations (customer_id, name, type, is_default) VALUES ($1, \'عيادتي الرئيسية\', \'Clinic\', true) RETURNING *',
-        [doctor.id]
-      );
-      locs = [newLoc];
+    if (locs.length === 0 || locs[0].type !== 'Warehouse') {
+      const warehouseLoc = locs.find(l => l.type === 'Warehouse');
+      if (warehouseLoc) {
+        locs = [warehouseLoc, ...locs.filter(l => l.id !== warehouseLoc.id)];
+      } else {
+        const { rows: [newLoc] } = await posDb.query(
+          `INSERT INTO stock_locations (customer_id, name, type, is_default) VALUES ($1, 'المخزن الرئيسي', 'Warehouse', true) RETURNING *`,
+          [doctor.id]
+        );
+        locs = [newLoc, ...locs];
+      }
     }
     const targetLoc = locs[0];
 
@@ -8636,6 +8668,15 @@ async function autoRouteOrderToClinicInventory(orderAlertId) {
         [String(alert.dentrust_order_id || '')]
       ).catch(() => ({ rows: [] }));
       orderItems = sItems;
+    }
+
+    if (orderItems.length === 0 && fallbackItems && Array.isArray(fallbackItems) && fallbackItems.length > 0) {
+      orderItems = fallbackItems.map(i => ({
+        product_name: i.product_name || i.name,
+        quantity: i.quantity || 1,
+        unit_price: i.unit_price || i.price || 0,
+        selected_option: i.selected_option || i.selectedOption || null
+      }));
     }
 
     if (orderItems.length === 0) return;
@@ -8726,6 +8767,110 @@ async function autoRouteOrderToClinicInventory(orderAlertId) {
       targetPhone: doctor.phone,
       sentBy: 'نظام التوريد التلقائي للعيادة'
     });
+    
+// 3.ب التوجيه التلقائي لمبيعات الكاشير المباشرة لمخزن العيادة الرئيسي
+async function autoRoutePosSaleToClinicInventory(saleId, customerId, saleItems) {
+  try {
+    if (!customerId) return;
+    await ensureClinicOsTables();
+    const { rows: [doctor] } = await posDb.query('SELECT id, name, phone, customer_code FROM customers WHERE id = $1', [customerId]);
+    if (!doctor) return;
+
+    // الحصول على المخزن الرئيسي
+    let { rows: locs } = await posDb.query(
+      `SELECT * FROM stock_locations WHERE customer_id = $1 ORDER BY (type = 'Warehouse') DESC, (name ILIKE '%المخزن الرئيسي%') DESC, is_default DESC, id ASC`,
+      [doctor.id]
+    );
+    if (locs.length === 0 || locs[0].type !== 'Warehouse') {
+      const warehouseLoc = locs.find(l => l.type === 'Warehouse');
+      if (warehouseLoc) {
+        locs = [warehouseLoc, ...locs.filter(l => l.id !== warehouseLoc.id)];
+      } else {
+        const { rows: [newLoc] } = await posDb.query(
+          `INSERT INTO stock_locations (customer_id, name, type, is_default) VALUES ($1, 'المخزن الرئيسي', 'Warehouse', true) RETURNING *`,
+          [doctor.id]
+        );
+        locs = [newLoc, ...locs];
+      }
+    }
+    const targetLoc = locs[0];
+
+    let totalAdded = 0;
+    for (const item of (saleItems || [])) {
+      const name = (item.product_name || item.name || '').trim();
+      if (!name) continue;
+      const qty = parseInt(item.quantity || 1, 10);
+      const price = parseFloat(item.unit_price || 0);
+
+      const { rows: [matchedProd] } = await posDb.query(
+        `SELECT id, expiry_date, category, product_name 
+         FROM products 
+         WHERE LOWER(TRIM(product_name)) = LOWER(TRIM($1)) 
+            OR product_name ILIKE $2 
+            OR $3 ILIKE '%' || product_name || '%'
+         LIMIT 1`,
+        [name, `%${name.split('—')[0].trim()}%`, name]
+      ).catch(() => ({ rows: [] }));
+
+      const prodId = matchedProd?.id || null;
+      let expDate = null;
+      if (matchedProd?.expiry_date && /^\d{4}-\d{2}-\d{2}/.test(String(matchedProd.expiry_date))) {
+        expDate = String(matchedProd.expiry_date).substring(0, 10);
+      }
+      let cat = matchedProd?.category || 'General';
+
+      const { rows: [existing] } = await posDb.query(
+        'SELECT id, sealed_count FROM clinic_inventory WHERE customer_id = $1 AND location_id = $2 AND LOWER(TRIM(custom_name)) = LOWER(TRIM($3)) LIMIT 1',
+        [doctor.id, targetLoc.id, name]
+      );
+
+      let invId = null;
+      if (existing) {
+        invId = existing.id;
+        await posDb.query(
+          `UPDATE clinic_inventory 
+           SET sealed_count = sealed_count + $1, 
+               purchase_price = $2, 
+               category = COALESCE(NULLIF($6, ''), category),
+               expiry_date = COALESCE(clinic_inventory.expiry_date, $3::date),
+               product_id = COALESCE(clinic_inventory.product_id, $4),
+               last_entry_date = NOW(), 
+               updated_at = NOW() 
+           WHERE id = $5`,
+          [qty, price, expDate, prodId, existing.id, cat]
+        );
+      } else {
+        const { rows: [newInv] } = await posDb.query(
+          `INSERT INTO clinic_inventory (customer_id, location_id, product_id, custom_name, category, sealed_count, min_threshold, purchase_price, expiry_date, unit_label, last_entry_date)
+           VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, 'علبة', NOW()) RETURNING id`,
+          [doctor.id, targetLoc.id, prodId, name, cat, qty, price, expDate]
+        );
+        invId = newInv.id;
+      }
+
+      await posDb.query(
+        `INSERT INTO stock_movements (customer_id, item_id, movement_type, to_location_id, quantity, notes)
+         VALUES ($1, $2, 'Entry', $3, $4, $5)`,
+        [doctor.id, invId, targetLoc.id, qty, `توريد تلقائي من فاتورة فرع DenTrust #${saleId}`]
+      );
+      totalAdded += qty;
+    }
+
+    await sendPushNotification({
+      title: '📦 تم توريد مشترياتك لمخزن عيادتك تلقائياً!',
+      body: `دكتور ${doctor.name}، تم إيداع ${totalAdded} عبوة من فاتورة الكاشير #${saleId} مباشرة في ${targetLoc.name} ✨`,
+      url: 'https://dentrust.site/my-account',
+      tag: 'clinic-auto-restock',
+      targetType: 'customer',
+      targetCustomerId: doctor.id,
+      targetPhone: doctor.phone,
+      sentBy: 'كاشير DenTrust'
+    }).catch(() => {});
+  } catch (err) {
+    console.error('[autoRoutePosSaleToClinicInventory Error]:', err.message);
+  }
+}
+
     console.log(`[Clinic OS] Successfully auto-routed ${totalAdded} items to doctor ID ${doctor.id} (${targetLoc.name})`);
   } catch (err) {
     console.error('[Clinic AutoRoute Error]:', err.message);
@@ -8962,8 +9107,10 @@ app.get([`${BASE}/api/clinic/overview`, '/api/clinic/overview'], async (req, res
     // جلب صينية الشغل المفتوحة (Active Work Tray)
     const { rows: activeTray } = await posDb.query(`
       SELECT awt.id as tray_id, awt.opened_at, awt.status,
+             COALESCE(awt.remaining_percentage, 100) as remaining_percentage,
+             awt.last_checked_at,
              ROUND(EXTRACT(EPOCH FROM (NOW() - awt.opened_at)) / 86400) as days_opened,
-             ci.id as inventory_id, ci.custom_name, ci.category, ci.unit_label,
+             ci.id as inventory_id, ci.custom_name, ci.category, ci.unit_label, ci.sealed_count,
              sl.id as location_id, sl.name as location_name
       FROM active_work_tray awt
       JOIN clinic_inventory ci ON ci.id = awt.inventory_id
@@ -9254,6 +9401,43 @@ app.post([`${BASE}/api/clinic/items/:id/open-unit`, '/api/clinic/items/:id/open-
     }
 
     res.json({ ok: true, item: updatedItem, tray: trayRecord });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// تحديث نسبة استهلاك العبوة المفتوحة في صينية الشغل (Update Remaining Percentage)
+app.patch([`${BASE}/api/clinic/tray/:id/percentage`, '/api/clinic/tray/:id/percentage'], async (req, res) => {
+  try {
+    await ensureClinicOsTables();
+    const doc = await resolveClinicCustomer(req);
+    if (!doc) return res.status(401).json({ error: 'غير مصرح' });
+    const trayId = parseInt(req.params.id, 10);
+    const percentage = Math.max(0, Math.min(100, parseInt(req.body.percentage ?? 100, 10)));
+
+    const { rows: [tray] } = await posDb.query(
+      'SELECT * FROM active_work_tray WHERE id = $1 AND customer_id = $2',
+      [trayId, doc.id]
+    );
+    if (!tray) return res.status(404).json({ error: 'العبوة غير موجودة في صينية الشغل' });
+
+    if (percentage === 0) {
+      await posDb.query(
+        'UPDATE active_work_tray SET remaining_percentage = 0, status = \'finished\', finished_at = NOW(), last_checked_at = NOW() WHERE id = $1',
+        [trayId]
+      );
+      await posDb.query(
+        `INSERT INTO stock_movements (customer_id, item_id, movement_type, quantity, notes)
+         VALUES ($1, $2, 'Dispose_Unit', 1, 'انتهاء العبوة ورميها من صينية الشغل (استهلاك 100%)')`,
+        [doc.id, tray.inventory_id]
+      );
+    } else {
+      await posDb.query(
+        'UPDATE active_work_tray SET remaining_percentage = $1, last_checked_at = NOW() WHERE id = $2',
+        [percentage, trayId]
+      );
+    }
+
+    res.json({ ok: true, tray_id: trayId, remaining_percentage: percentage });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -11021,6 +11205,33 @@ async function main() {
 
     // ── تقرير النواقص اليومي: يشتغل يوميًا الساعة 12:00 ظهرًا بتوقيت القاهرة ──
     cron.schedule('0 12 * * *', () => { checkDailyStockAndNotify().catch(() => {}); }, { timezone: 'Africa/Cairo' });
+
+    // ── تذكير الجرد المسائي السريع لخامات العيادة: يشتغل يومياً الساعة 10:00 مساءً بتوقيت القاهرة ──
+    cron.schedule('0 22 * * *', async () => {
+      try {
+        const { rows: doctorsWithTray } = await posDb.query(`
+          SELECT DISTINCT c.id, c.name, c.phone
+          FROM active_work_tray awt
+          JOIN customers c ON c.id = awt.customer_id
+          WHERE awt.status = 'active'
+        `);
+        for (const doc of doctorsWithTray) {
+          await sendPushNotification({
+            title: '🌙 جرد خامات الكرسي السريع (دقيقة واحدة)',
+            body: `مساء الخير دكتور ${doc.name}، راجع نسب خامات الشغل المفتوحة اليوم لتأمين نواقص عيادتك لبكرة ✨`,
+            url: 'https://dentrust.site/my-account?tab=clinic_os&sub=tray&closing=1',
+            tag: 'nightly-closing-check',
+            targetType: 'customer',
+            targetCustomerId: doc.id,
+            targetPhone: doc.phone,
+            sentBy: 'نظام الجرد المسائي الآلي'
+          }).catch(() => {});
+        }
+      } catch (err) {
+        console.error('[Nightly closing check error]:', err.message);
+      }
+    }, { timezone: 'Africa/Cairo' });
+
 
     // ── الحملات التلقائية المجدولة لإشعارات الويب ──
     // 1. خميس النواقص والتوصيل السريع (3:30 PM بتوقيت القاهرة)
