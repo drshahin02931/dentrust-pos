@@ -9049,10 +9049,22 @@ app.get([`${BASE}/api/clinic/overview`, '/api/clinic/overview'], async (req, res
     if (!doc) return res.status(401).json({ error: 'الطبيب غير مسجل أو تعذر التعرف عليه' });
 
     // التأكد من وجود فرع افتراضي واحد على الأقل
-    let { rows: locations } = await posDb.query(
-      'SELECT * FROM stock_locations WHERE customer_id = $1 ORDER BY (type = \'Warehouse\') DESC, is_default DESC, id ASC',
-      [doc.id]
-    );
+    let { rows: locations } = await posDb.query(`
+      SELECT sl.*, psl.name as parent_name, psl.type as parent_type
+      FROM stock_locations sl
+      LEFT JOIN stock_locations psl ON psl.id = sl.parent_location_id
+      WHERE sl.customer_id = $1
+      ORDER BY 
+        CASE sl.type 
+          WHEN 'Warehouse' THEN 1 
+          WHEN 'Hub' THEN 2 
+          WHEN 'Clinic' THEN 3 
+          WHEN 'Clinic_Storage' THEN 4 
+          WHEN 'Unit_Office' THEN 5 
+          WHEN 'Drawer' THEN 6 
+          ELSE 7 
+        END ASC, sl.id ASC
+    `, [doc.id]);
     if (locations.length === 0) {
       const { rows: [defLoc] } = await posDb.query(
         'INSERT INTO stock_locations (customer_id, name, type, is_default) VALUES ($1, \'عيادتي الرئيسية\', \'Clinic\', true) RETURNING *',
@@ -9161,7 +9173,22 @@ app.get([`${BASE}/api/clinic/locations`, '/api/clinic/locations'], async (req, r
     await ensureClinicOsTables();
     const doc = await resolveClinicCustomer(req);
     if (!doc) return res.status(401).json({ error: 'غير مصرح' });
-    const { rows } = await posDb.query('SELECT * FROM stock_locations WHERE customer_id = $1 ORDER BY id ASC', [doc.id]);
+    const { rows } = await posDb.query(`
+      SELECT sl.*, psl.name as parent_name, psl.type as parent_type
+      FROM stock_locations sl
+      LEFT JOIN stock_locations psl ON psl.id = sl.parent_location_id
+      WHERE sl.customer_id = $1
+      ORDER BY 
+        CASE sl.type 
+          WHEN 'Warehouse' THEN 1 
+          WHEN 'Hub' THEN 2 
+          WHEN 'Clinic' THEN 3 
+          WHEN 'Clinic_Storage' THEN 4 
+          WHEN 'Unit_Office' THEN 5 
+          WHEN 'Drawer' THEN 6 
+          ELSE 7 
+        END ASC, sl.id ASC
+    `, [doc.id]);
     res.json({ ok: true, locations: rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -9174,7 +9201,7 @@ app.post([`${BASE}/api/clinic/locations`, '/api/clinic/locations'], async (req, 
     const { name, type, parent_location_id } = req.body || {};
     if (!name || !name.trim()) return res.status(400).json({ error: 'اسم الفرع أو المخزن مطلوب' });
 
-    const validTypes = ['Warehouse', 'Hub', 'Clinic'];
+    const validTypes = ['Warehouse', 'Hub', 'Clinic', 'Clinic_Storage', 'Unit_Office', 'Drawer'];
     const locType = validTypes.includes(type) ? type : 'Clinic';
 
     const { rows: [newLoc] } = await posDb.query(
@@ -9373,10 +9400,12 @@ app.post([`${BASE}/api/clinic/items/:id/open-unit`, '/api/clinic/items/:id/open-
       [item.id]
     );
 
+    // تحديد مكان الكرسي المستلم
+    const targetLocId = req.body?.target_location_id ? parseInt(req.body.target_location_id, 10) : item.location_id;
     // إضافة لصينية الشغل المفتوحة
     const { rows: [trayRecord] } = await posDb.query(
-      'INSERT INTO active_work_tray (customer_id, inventory_id, location_id, status) VALUES ($1, $2, $3, \'active\') RETURNING *',
-      [doc.id, item.id, item.location_id]
+      'INSERT INTO active_work_tray (customer_id, inventory_id, location_id, remaining_percentage, status) VALUES ($1, $2, $3, 100, \'active\') RETURNING *',
+      [doc.id, item.id, targetLocId]
     );
 
     // تسجيل في حركة المخزون
