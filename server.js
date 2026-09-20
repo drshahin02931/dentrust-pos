@@ -1867,7 +1867,7 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
         ).catch(() => {});
       });
       // 🦷 Auto-Route POS walk-in sale to Doctor's Main Clinic Warehouse immediately
-      autoRoutePosSaleToClinicInventory(saleId, customerId, items).catch(e => console.error('[AutoRoute POS sale error]:', e.message));
+      try { if (typeof autoRoutePosSaleToClinicInventory === 'function') { autoRoutePosSaleToClinicInventory(saleId, customerId, items).catch(e => console.error('[AutoRoute POS sale error]:', e.message)); } } catch (routeErr) { console.error('[AutoRoute POS sync error]:', routeErr.message); }
     }
     res.status(201).json({ ok: true, sale_id: saleId, low_stock: lowStock });
   } catch (err) {
@@ -8767,7 +8767,13 @@ async function autoRouteOrderToClinicInventory(orderAlertId, fallbackItems = nul
       targetPhone: doctor.phone,
       sentBy: 'نظام التوريد التلقائي للعيادة'
     });
-    
+
+    console.log(`[Clinic OS] Successfully auto-routed ${totalAdded} items to doctor ID ${doctor.id} (${targetLoc.name})`);
+  } catch (err) {
+    console.error('[Clinic AutoRoute Error]:', err.message);
+  }
+}
+
 // 3.ب التوجيه التلقائي لمبيعات الكاشير المباشرة لمخزن العيادة الرئيسي
 async function autoRoutePosSaleToClinicInventory(saleId, customerId, saleItems) {
   try {
@@ -8871,13 +8877,7 @@ async function autoRoutePosSaleToClinicInventory(saleId, customerId, saleItems) 
   }
 }
 
-    console.log(`[Clinic OS] Successfully auto-routed ${totalAdded} items to doctor ID ${doctor.id} (${targetLoc.name})`);
-  } catch (err) {
-    console.error('[Clinic AutoRoute Error]:', err.message);
-  }
-}
-
-// 4. محرك التنبيهات الذكي المعزول لكل طبيب (Doctor-Targeted Alert Engine)
+    // 4. محرك التنبيهات الذكي المعزول لكل طبيب (Doctor-Targeted Alert Engine)
 
 // أ) فحص نقص الخامات اليومي (أيهما أقرب: مرور 25 يوم أو رصيد الدرج 0 أو 1)
 async function checkDoctorClinicStockAlerts() {
