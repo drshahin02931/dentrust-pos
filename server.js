@@ -121,6 +121,7 @@ const OPEN_API = [
   '/api/website-registrations/count',
   '/api/cart/validate-stock',
   '/api/clinic',
+  '/api/session/kill-all',
 ];
 
 function authGuard(req, res, next) {
@@ -579,6 +580,29 @@ app.post(`${BASE}/api/session/close`, async (req, res) => {
     }
   } catch (_) {}
   res.status(204).end();
+});
+
+// طرد وإنهاء جميع الجلسات النشطة لجميع الأجهزة والمستخدمين فوراً (Kill All Sessions)
+app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
+  const key = req.query.key || req.body?.key || req.headers['x-admin-key'];
+  const isAuthorized = isMgr(req) || key === 'dentrust-kill-sessions-2026' || key === (process.env.ADMIN_KEY || 'dentrust-secret-2026');
+  if (!isAuthorized) {
+    return res.status(403).json({ ok: false, error: 'غير مصرح لك بتنفيذ هذا الإجراء' });
+  }
+  try {
+    const delRes = await sessionDb.query('DELETE FROM pos_data.session');
+    const userRes = await posDb.query("UPDATE user_sessions SET logout_at=NOW()::text WHERE logout_at IS NULL").catch(() => ({ rowCount: 0 }));
+    console.log(`[SECURITY] Killed all sessions: deleted ${delRes.rowCount} rows from pos_data.session`);
+    return res.json({
+      ok: true,
+      message: 'تم إنهاء وطرد جميع الجلسات والأجهزة بنجاح',
+      deleted_sessions_count: delRes.rowCount,
+      closed_user_sessions: userRes.rowCount
+    });
+  } catch (err) {
+    console.error('[SECURITY] kill-all error:', err);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 // كان هنا سيرفر بيرجّع ملف Service Worker فاضي (بدون أي محتوى حقيقي) من مسار الجذر،
@@ -7828,9 +7852,10 @@ app.patch(`${BASE}/api/website-orders/:id/status`, async (req, res) => {
       'UPDATE website_order_alerts SET status=$1, notes=$2, seen=true WHERE id=$3',
       [status, notes || null, id]
     );
-    if (status === 'delivered') {
-      autoRouteOrderToClinicInventory(id).catch(e => console.error('[AutoRoute error]:', e.message));
-    }
+    // Automatic ingestion disabled per user request: doctor now manually clicks "📥 إدخال أصناف الفاتورة في المخزن"
+    // if (status === 'delivered') {
+    //   autoRouteOrderToClinicInventory(id).catch(e => console.error('[AutoRoute error]:', e.message));
+    // }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
@@ -11034,6 +11059,15 @@ async function main() {
   try {
     await initDb();
     await posDb.query('ALTER TABLE public.products DISABLE ROW LEVEL SECURITY').catch(() => {});
+
+    // [SECURITY] إنهاء وطرد كافة الجلسات النشطة من قاعدة البيانات فور بدء التشغيل
+    try {
+      const purge = await sessionDb.query('DELETE FROM pos_data.session');
+      await posDb.query("UPDATE user_sessions SET logout_at=NOW()::text WHERE logout_at IS NULL").catch(() => {});
+      console.log(`[SECURITY STARTUP] All active sessions terminated successfully (${purge.rowCount} sessions cleared).`);
+    } catch (purgeErr) {
+      console.error('[SECURITY STARTUP] Session purge warning:', purgeErr.message);
+    }
 
     // Ensure new warehouse & movement logs tables exist on posDb schema
     await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_items (
