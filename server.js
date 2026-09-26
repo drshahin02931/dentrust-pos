@@ -589,6 +589,52 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
   if (!isAuthorized) {
     return res.status(403).json({ ok: false, error: 'غير مصرح لك بتنفيذ هذا الإجراء' });
   }
+
+  // إذا كان المطلوب تسوية مديونية دكتور سمر عمارة
+  if (req.query.action === 'fix-samar' || req.body?.action === 'fix-samar') {
+    try {
+      await posDb.query("UPDATE customer_payments SET amount=30000, cash_amount=30000, note='تصحيح سداد 30,000 ج بدلا من 38,421 ج' WHERE id=102").catch(() => {});
+      await posDb.query("UPDATE customers SET total_debt=42930 WHERE id=22");
+      const { rows: samarSales } = await posDb.query(
+        "SELECT id, total_amount, amount_received, payment_method, payment_split, paid_amount FROM sales WHERE customer_id = 22 ORDER BY date DESC, id DESC"
+      );
+      let remDebt = 42930;
+      for (const s of samarSales) {
+        let origDebt = 0;
+        if (s.payment_method === 'split') {
+          try { origDebt = parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
+        } else if (s.payment_method === 'credit') {
+          origDebt = Math.max(0, parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0));
+        }
+        if (s.payment_method !== 'credit' && s.payment_method !== 'split') continue;
+        if (remDebt > 0) {
+          const debtOnThis = Math.min(origDebt, remDebt);
+          const paidOnThis = Math.max(0, origDebt - debtOnThis);
+          const isFullyPaid = (debtOnThis <= 0.001);
+          await safeUpdateSaleCreditStatus(posDb, s.id, paidOnThis, isFullyPaid);
+          remDebt -= debtOnThis;
+        } else {
+          await safeUpdateSaleCreditStatus(posDb, s.id, origDebt, true);
+        }
+      }
+      return res.json({ ok: true, message: 'تم تثبيت مديونية د. سمر عمارة على 42,930 ج وتصحيح الدفعة وتسوية الفواتير بنجاح', total_debt: 42930 });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  }
+
+  // تسوية أي عميل آخر برقم المديونية المطلوب
+  if (req.query.set_debt && req.query.cid) {
+    try {
+      const cid = parseInt(req.query.cid, 10);
+      const newDebt = parseFloat(req.query.set_debt);
+      await posDb.query("UPDATE customers SET total_debt=$1 WHERE id=$2", [newDebt, cid]);
+      return res.json({ ok: true, cid, total_debt: newDebt });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  }
+
   try {
     const delRes = await sessionDb.query('DELETE FROM pos_data.session');
     const userRes = await posDb.query("UPDATE user_sessions SET logout_at=NOW()::text WHERE logout_at IS NULL").catch(() => ({ rowCount: 0 }));
