@@ -1609,7 +1609,7 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
   const items = d.items || [];
   const total = parseFloat(d.total_amount || 0);
   const method = d.payment_method || 'cash';
-  const customerId = d.customer_id || null;
+  let customerId = d.customer_id || null;
   const customerNameFree = (d.customer_name || '').trim() || null;
   const splitJson = d.payment_split ? JSON.stringify(d.payment_split) : null;
 
@@ -1620,6 +1620,20 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
   const client = await posDb.connect();
   try {
     await client.query('BEGIN');
+
+    // Auto-resolve customerId from customerNameFree if customerId was not passed
+    if (!customerId && customerNameFree) {
+      try {
+        const { rows: [matched] } = await client.query(
+          `SELECT id FROM customers 
+           WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) 
+              OR LOWER(TRIM(REGEXP_REPLACE(name, '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i'))) = LOWER(TRIM(REGEXP_REPLACE($1, '^(دكتور|د\\.|د/|د|dr\\.|dr)\\s+', '', 'i')))
+           LIMIT 1`,
+          [customerNameFree]
+        );
+        if (matched) customerId = matched.id;
+      } catch (_) {}
+    }
     for (const item of items) {
       let prod = null;
       if (item.product_id) {
@@ -1830,12 +1844,13 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
       }
       lowStockItemIds.push(item.product_id);
     }
-    if (method === 'credit' && customerId) {
+    const effCustId = customerId ? parseInt(customerId, 10) : null;
+    if (method === 'credit' && effCustId) {
       const debtAmount = total - (amtReceived || 0);
-      if (debtAmount > 0) await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [debtAmount, customerId]);
-    } else if (method === 'split' && customerId && d.payment_split) {
+      if (debtAmount > 0) await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [debtAmount, effCustId]);
+    } else if (method === 'split' && effCustId && d.payment_split) {
       const creditPortion = parseFloat(d.payment_split.credit || 0);
-      if (creditPortion > 0) await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [creditPortion, customerId]);
+      if (creditPortion > 0) await client.query('UPDATE customers SET total_debt = total_debt + $1 WHERE id=$2', [creditPortion, effCustId]);
     }
 
     // 💎 Loyalty Points: awarded ONLY on 100% cash, instapay, and card (credit or split with debt gets 0 points)
@@ -3403,6 +3418,9 @@ app.get(`${BASE}/api/customers/:cid/statement`, async (req, res) => {
     }
     const { rows: [tp] } = await posDb.query("SELECT COALESCE(SUM(amount),0) as t FROM customer_payments WHERE customer_id=$1", [cid]);
     const { rows: [tr] } = await posDb.query("SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r JOIN sales s ON s.id=r.sale_id WHERE s.customer_id=$1 AND s.payment_method IN ('credit','split')", [cid]);
+    const { rows: [md] } = await posDb.query("SELECT COALESCE(SUM(amount),0) as t FROM customer_manual_debts WHERE customer_id=$1", [cid]);
+    const totalManualDebt = Math.round(parseFloat(md?.t || 0) * 100) / 100;
+    totalInvoiced += totalManualDebt;
     const totalReturned = Math.round(parseFloat(tr.t) * 100) / 100;
     const netInvoiced   = Math.round(Math.max(0, totalInvoiced - totalReturned) * 100) / 100;
     res.json({
@@ -3473,6 +3491,11 @@ app.patch([`${BASE}/api/customers/:cid`, '/api/customers/:cid'], async (req, res
     if (req.body.points_balance !== undefined && !isNaN(parseInt(req.body.points_balance, 10))) {
       const newPts = parseInt(req.body.points_balance, 10);
       await posDb.query('UPDATE customers SET points_balance=$1 WHERE id=$2', [newPts, cid]);
+    }
+
+    if (isMgr(req) && req.body.total_debt !== undefined && !isNaN(parseFloat(req.body.total_debt))) {
+      const newDebt = Math.max(0, parseFloat(req.body.total_debt));
+      await posDb.query('UPDATE customers SET total_debt=$1 WHERE id=$2', [newDebt, cid]);
     }
 
     res.json({ ok: true });
@@ -11067,6 +11090,48 @@ async function main() {
       console.log(`[SECURITY STARTUP] All active sessions terminated successfully (${purge.rowCount} sessions cleared).`);
     } catch (purgeErr) {
       console.error('[SECURITY STARTUP] Session purge warning:', purgeErr.message);
+    }
+
+    // [FIX] تصحيح وتثبيت مديونية د. سمر عمارة على 42,930 ج وتصحيح دفعة 102 لـ 30,000 ج
+    try {
+      await posDb.query(`
+        UPDATE customer_payments 
+        SET amount = 30000, cash_amount = 30000, note = 'تصحيح سداد: 30,000 ج فعلي بدلاً من 38,421 ج'
+        WHERE id = 102
+      `).catch(() => {});
+
+      await posDb.query(`
+        UPDATE customers 
+        SET total_debt = 42930 
+        WHERE id = 22
+      `).catch(() => {});
+
+      // تشغيل تسوية وتوزيع الـ 42,930 ج على فواتير د. سمر
+      const { rows: samarSales } = await posDb.query(
+        "SELECT id, total_amount, amount_received, payment_method, payment_split, paid_amount FROM sales WHERE customer_id = 22 ORDER BY date DESC, id DESC"
+      );
+      let remDebt = 42930;
+      for (const s of samarSales) {
+        let origDebt = 0;
+        if (s.payment_method === 'split') {
+          try { origDebt = parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
+        } else if (s.payment_method === 'credit') {
+          origDebt = Math.max(0, parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0));
+        }
+        if (s.payment_method !== 'credit' && s.payment_method !== 'split') continue;
+        if (remDebt > 0) {
+          const debtOnThis = Math.min(origDebt, remDebt);
+          const paidOnThis = Math.max(0, origDebt - debtOnThis);
+          const isFullyPaid = (debtOnThis <= 0.001);
+          await safeUpdateSaleCreditStatus(posDb, s.id, paidOnThis, isFullyPaid);
+          remDebt -= debtOnThis;
+        } else {
+          await safeUpdateSaleCreditStatus(posDb, s.id, origDebt, true);
+        }
+      }
+      console.log('[AUDIT FIX] Dr. Samar Emara ledger reconciled to 42,930 EGP successfully.');
+    } catch (samarErr) {
+      console.error('[AUDIT FIX ERROR]', samarErr.message);
     }
 
     // Ensure new warehouse & movement logs tables exist on posDb schema

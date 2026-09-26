@@ -1854,6 +1854,10 @@ loadCustomers();
         <input id="ec-points" type="number" min="0" step="1" class="w-full border rounded-xl px-3 py-2 text-sm font-mono font-bold text-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-300" placeholder="0"/>
       </div>
       <div>
+        <label class="text-xs font-bold text-red-700 block mb-1">💰 إجمالي رصيد المديونية (ج.م)</label>
+        <input id="ec-debt" type="number" min="0" step="0.01" class="w-full border border-red-200 rounded-xl px-3 py-2 text-sm font-mono font-bold text-red-700 focus:outline-none focus:ring-2 focus:ring-red-300" placeholder="0.00"/>
+      </div>
+      <div>
         <label class="text-xs font-medium text-gray-600">خطة التقسيط</label>
         <input id="ec-plan" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="مثال: 500 جنيه شهرياً"/>
       </div>
@@ -1959,6 +1963,7 @@ function openEditCustomerModal() {
   if (!currentCustomer) return;
   document.getElementById('ec-name').value    = currentCustomer.name || '';
   document.getElementById('ec-phone').value   = currentCustomer.phone || '';
+  document.getElementById('ec-debt').value    = parseFloat(currentCustomer.total_debt || 0);
   document.getElementById('ec-plan').value    = currentCustomer.installment_plan || '';
   document.getElementById('ec-points').value  = parseInt(currentCustomer.points_balance || 0, 10);
   document.getElementById('ecErr').classList.add('hidden');
@@ -2023,6 +2028,8 @@ async function saveEditCustomer(e) {
 
   const name = document.getElementById('ec-name').value.trim();
   const phone = document.getElementById('ec-phone').value.trim();
+  const debtVal = parseFloat(document.getElementById('ec-debt').value);
+  const total_debt = isNaN(debtVal) ? undefined : debtVal;
   const plan = document.getElementById('ec-plan').value.trim();
   const pointsVal = parseInt(document.getElementById('ec-points').value, 10);
   const points_balance = isNaN(pointsVal) ? 0 : pointsVal;
@@ -2079,6 +2086,7 @@ async function saveEditCustomer(e) {
     name,
     phone,
     extra_phones,
+    total_debt,
     installment_plan: plan,
     points_balance,
     city: defaultCity,
