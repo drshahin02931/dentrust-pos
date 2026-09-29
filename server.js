@@ -622,12 +622,20 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
   if (req.query.action === 'fix-samar' || req.body?.action === 'fix-samar') {
     try {
       await posDb.query("UPDATE customer_payments SET amount=30000, cash_amount=30000, note='تصحيح سداد 30,000 ج بدلا من 38,421 ج' WHERE id=102").catch(() => {});
-      await posDb.query("UPDATE customers SET total_debt=42930 WHERE id=22");
-      const { rows: samarSales } = await posDb.query(
-        "SELECT id, total_amount, amount_received, payment_method, payment_split, paid_amount FROM sales WHERE customer_id = 22 ORDER BY date DESC, id DESC"
+      
+      // الفواتير الجديدة (363, 365, 370) غير مدفوعة نهائياً
+      await posDb.query("UPDATE sales SET paid_amount=0, credit_paid=0 WHERE id IN (363, 365, 370) AND customer_id=22");
+      
+      // إجمالي المديونية الحقيقية: 32,755 (رصيد سابق) + 2,375 (فاتورة 363) + 7,800 (فاتورة 365) + 40,063 (فاتورة 370) = 82,993 ج
+      const finalTrueDebt = 82993;
+      await posDb.query("UPDATE customers SET total_debt=$1 WHERE id=22", [finalTrueDebt]);
+
+      // توزيع الرصيد السابق 32,755 ج على الفواتير القديمة السابقة لفاتورة 363
+      const { rows: oldSales } = await posDb.query(
+        "SELECT id, total_amount, amount_received, payment_method, payment_split, paid_amount FROM sales WHERE customer_id = 22 AND id < 363 ORDER BY date DESC, id DESC"
       );
-      let remDebt = 42930;
-      for (const s of samarSales) {
+      let remOldDebt = 32755;
+      for (const s of oldSales) {
         let origDebt = 0;
         if (s.payment_method === 'split') {
           try { origDebt = parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
@@ -635,17 +643,22 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
           origDebt = Math.max(0, parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0));
         }
         if (s.payment_method !== 'credit' && s.payment_method !== 'split') continue;
-        if (remDebt > 0) {
-          const debtOnThis = Math.min(origDebt, remDebt);
+        if (remOldDebt > 0) {
+          const debtOnThis = Math.min(origDebt, remOldDebt);
           const paidOnThis = Math.max(0, origDebt - debtOnThis);
           const isFullyPaid = (debtOnThis <= 0.001);
           await safeUpdateSaleCreditStatus(posDb, s.id, paidOnThis, isFullyPaid);
-          remDebt -= debtOnThis;
+          remOldDebt -= debtOnThis;
         } else {
           await safeUpdateSaleCreditStatus(posDb, s.id, origDebt, true);
         }
       }
-      return res.json({ ok: true, message: 'تم تثبيت مديونية د. سمر عمارة على 42,930 ج وتصحيح الدفعة وتسوية الفواتير بنجاح', total_debt: 42930 });
+
+      return res.json({ 
+        ok: true, 
+        message: 'تم تصحيح وتثبيت مديونية د. سمر عمارة الحقيقية بنجاح إلى 82,993 ج، وتأكيد فواتير 363 و 365 و 370 كفواتير غير مدفوعة', 
+        total_debt: finalTrueDebt 
+      });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err.message });
     }
@@ -2256,15 +2269,6 @@ async function migrateLegacyCustomerCodes() {
 }
 setTimeout(migrateLegacyCustomerCodes, 3000);
 
-// Restore Dr. Samar Amara's original debt balance
-setTimeout(async () => {
-  try {
-    await posDb.query("UPDATE customers SET total_debt = 32755 WHERE id = 22 OR name ILIKE '%سمر عمارة%'");
-    console.log("[Debt Fix] Restored Dr. Samar Amara debt to 32,755 EGP.");
-  } catch (err) {
-    console.error('[Debt Fix] Error:', err.message);
-  }
-}, 3000);
 
 
 
@@ -11224,47 +11228,6 @@ async function main() {
       console.error('[SECURITY STARTUP] Session purge warning:', purgeErr.message);
     }
 
-    // [FIX] تصحيح وتثبيت مديونية د. سمر عمارة على 42,930 ج وتصحيح دفعة 102 لـ 30,000 ج
-    try {
-      await posDb.query(`
-        UPDATE customer_payments 
-        SET amount = 30000, cash_amount = 30000, note = 'تصحيح سداد: 30,000 ج فعلي بدلاً من 38,421 ج'
-        WHERE id = 102
-      `).catch(() => {});
-
-      await posDb.query(`
-        UPDATE customers 
-        SET total_debt = 42930 
-        WHERE id = 22
-      `).catch(() => {});
-
-      // تشغيل تسوية وتوزيع الـ 42,930 ج على فواتير د. سمر
-      const { rows: samarSales } = await posDb.query(
-        "SELECT id, total_amount, amount_received, payment_method, payment_split, paid_amount FROM sales WHERE customer_id = 22 ORDER BY date DESC, id DESC"
-      );
-      let remDebt = 42930;
-      for (const s of samarSales) {
-        let origDebt = 0;
-        if (s.payment_method === 'split') {
-          try { origDebt = parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
-        } else if (s.payment_method === 'credit') {
-          origDebt = Math.max(0, parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0));
-        }
-        if (s.payment_method !== 'credit' && s.payment_method !== 'split') continue;
-        if (remDebt > 0) {
-          const debtOnThis = Math.min(origDebt, remDebt);
-          const paidOnThis = Math.max(0, origDebt - debtOnThis);
-          const isFullyPaid = (debtOnThis <= 0.001);
-          await safeUpdateSaleCreditStatus(posDb, s.id, paidOnThis, isFullyPaid);
-          remDebt -= debtOnThis;
-        } else {
-          await safeUpdateSaleCreditStatus(posDb, s.id, origDebt, true);
-        }
-      }
-      console.log('[AUDIT FIX] Dr. Samar Emara ledger reconciled to 42,930 EGP successfully.');
-    } catch (samarErr) {
-      console.error('[AUDIT FIX ERROR]', samarErr.message);
-    }
 
     // Ensure new warehouse & movement logs tables exist on posDb schema
     await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_items (
