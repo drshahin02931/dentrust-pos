@@ -609,11 +609,11 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
          ORDER BY si.id DESC LIMIT 10`
       );
       const { rows: adsealProducts } = await posDb.query(
-        "SELECT id, product_name, cost_price, sale_price, purchase_price, wholesale_price FROM products WHERE product_name ILIKE '%adseal%'"
+        "SELECT id, product_name, sale_price, purchase_price, wholesale_price FROM products WHERE product_name ILIKE '%adseal%'"
       );
       const { rows: adsealBatches } = await posDb.query(
         "SELECT * FROM product_cost_batches WHERE product_id IN (SELECT id FROM products WHERE product_name ILIKE '%adseal%') ORDER BY id DESC LIMIT 10"
-      );
+      ).catch(e => ({ rows: [{ error: e.message }] }));
       return res.json({ ok: true, adsealItems, adsealProducts, adsealBatches, recentSales });
     } catch (e) {
       return res.status(500).json({ ok: false, error: e.message });
