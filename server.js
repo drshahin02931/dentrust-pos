@@ -110,6 +110,7 @@ const OPEN_API = [
   '/api/website-orders/alerts',
   '/api/warehouse',
   '/api/push/subscribe',
+  '/api/push/logout',
   '/api/customer/register',
   '/api/customer/login',
   '/api/customer/profile',
@@ -8037,13 +8038,43 @@ async function sendPushNotification({
       const cleanPhone = (targetPhone || '').replace(/\D/g, '');
       const cleanCode = (targetCode || '').trim();
       const targetCustId = targetCustomerId ? parseInt(targetCustomerId, 10) : null;
-      query = `SELECT DISTINCT ps.*, c.name as cust_name, c.total_debt, c.points_balance
+
+      // Look up target customer details to ensure exact, isolated targeting
+      let matchedCust = null;
+      if (targetCustId || cleanPhone || cleanCode) {
+        const { rows } = await posDb.query(
+          `SELECT id, name, phone, customer_code, total_debt, points_balance 
+           FROM customers 
+           WHERE ($1::integer IS NOT NULL AND id = $1::integer)
+              OR ($2 <> '' AND (phone = $2 OR phone LIKE '%' || $2))
+              OR ($3 <> '' AND (customer_code = $3 OR barcode = $3))
+           ORDER BY id DESC LIMIT 1`,
+          [targetCustId, cleanPhone, cleanCode]
+        ).catch(() => ({ rows: [] }));
+        if (rows && rows.length > 0) {
+          matchedCust = rows[0];
+        }
+      }
+
+      const finalCustId = matchedCust ? matchedCust.id : targetCustId;
+      const finalPhone = (matchedCust?.phone ? matchedCust.phone.replace(/\D/g, '') : cleanPhone) || '';
+      const finalCode = (matchedCust?.customer_code ? matchedCust.customer_code.trim() : cleanCode) || '';
+      const custName = matchedCust ? matchedCust.name : null;
+      const totalDebt = matchedCust ? matchedCust.total_debt : null;
+      const pointsBalance = matchedCust ? matchedCust.points_balance : null;
+
+      // Strict query on push_subscriptions: only devices currently assigned to this doctor
+      query = `SELECT DISTINCT ps.*, 
+                      COALESCE(ps.customer_name, $4::text) as cust_name, 
+                      $5::numeric as total_debt, 
+                      $6::integer as points_balance
                FROM push_subscriptions ps
-               LEFT JOIN customers c ON (c.id = ps.customer_id OR c.phone = ps.customer_phone OR c.customer_code = ps.customer_code)
-               WHERE ($1 <> '' AND (ps.customer_phone = $1 OR c.phone = $1 OR ps.customer_phone LIKE '%' || $1))
-                  OR ($2 <> '' AND (ps.customer_code = $2 OR c.customer_code = $2))
-                  OR ($3::integer IS NOT NULL AND (ps.customer_id = $3::integer OR c.id = $3::integer))`;
-      params = [cleanPhone, cleanCode, targetCustId];
+               WHERE (
+                 ($1::integer IS NOT NULL AND ps.customer_id = $1::integer)
+                 OR ($2 <> '' AND ps.customer_phone IS NOT NULL AND ps.customer_phone <> '' AND (ps.customer_phone = $2 OR ps.customer_phone LIKE '%' || $2))
+                 OR ($3 <> '' AND ps.customer_code IS NOT NULL AND ps.customer_code <> '' AND ps.customer_code = $3)
+               )`;
+      params = [finalCustId, finalPhone, finalCode, custName, totalDebt, pointsBalance];
     } else if (targetType === 'debtors') {
       query = `SELECT DISTINCT ps.*, c.name as cust_name, c.total_debt, c.points_balance
                FROM push_subscriptions ps
@@ -8215,51 +8246,66 @@ app.all([`${BASE}/api/admin/test-daily-stock-push`, '/api/admin/test-daily-stock
 });
 
 // GET /api/push/vapid-public-key — returns public VAPID key to client (open, no auth needed)
-app.get(`${BASE}/api/push/vapid-public-key`, (req, res) => {
+app.get([`${BASE}/api/push/vapid-public-key`, '/api/push/vapid-public-key'], (req, res) => {
   if (!VAPID_PUBLIC_KEY) return res.status(503).json({ error: 'Push notifications not configured on server' });
   res.json({ publicKey: VAPID_PUBLIC_KEY });
 });
 
 // POST /api/push/subscribe — save device push subscription with customer metadata
-app.post(`${BASE}/api/push/subscribe`, async (req, res) => {
+app.post([`${BASE}/api/push/subscribe`, '/api/push/subscribe'], async (req, res) => {
   const b = req.body || {};
   const endpoint = b.endpoint;
   const keys = b.keys;
-  const customerPhone = b.customerPhone || b.customer_phone || null;
-  const customerCode = b.customerCode || b.customer_code || null;
+  const rawPhone = b.customerPhone || b.customer_phone || null;
+  const rawCode = b.customerCode || b.customer_code || null;
   const customerName = b.customerName || b.customer_name || null;
   const userAgent = b.userAgent || b.device_info || req.headers['user-agent'] || null;
 
   if (!endpoint || !keys?.p256dh || !keys?.auth) {
     return res.status(400).json({ error: 'بيانات الاشتراك ناقصة' });
   }
+
+  const customerPhone = rawPhone ? String(rawPhone).replace(/\D/g, '') : null;
+  const customerCode = rawCode ? String(rawCode).trim() : null;
+
   try {
     const uid = req.session?.user_id || null;
     let custId = null;
     let resolvedName = customerName || null;
+    let resolvedCode = customerCode || null;
+
     if (customerPhone || customerCode) {
       const { rows } = await posDb.query(
-        `SELECT id, name FROM customers WHERE (phone = $1 OR customer_code = $2 OR barcode = $2) LIMIT 1`,
+        `SELECT id, name, customer_code, phone FROM customers 
+         WHERE ($1 <> '' AND (phone = $1 OR phone LIKE '%' || $1))
+            OR ($2 <> '' AND (customer_code = $2 OR barcode = $2))
+         ORDER BY id DESC LIMIT 1`,
         [customerPhone || '', customerCode || '']
       ).catch(() => ({ rows: [] }));
+
       if (rows.length > 0) {
         custId = rows[0].id;
         if (!resolvedName) resolvedName = rows[0].name;
+        if (!resolvedCode) resolvedCode = rows[0].customer_code;
       }
     }
+
+    // Direct overwrite of doctor linkage on this device (no COALESCE on customer fields)
+    // Ensures doctor switch immediately and strictly takes over this endpoint
     await posDb.query(
-      `INSERT INTO push_subscriptions (endpoint, p256dh, auth, user_id, customer_id, customer_phone, customer_code, customer_name, user_agent)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO push_subscriptions (endpoint, p256dh, auth, user_id, customer_id, customer_phone, customer_code, customer_name, user_agent, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
        ON CONFLICT (endpoint) DO UPDATE SET 
-         p256dh=$2, auth=$3, 
-         user_id=COALESCE($4, push_subscriptions.user_id),
-         customer_id=COALESCE($5, push_subscriptions.customer_id),
-         customer_phone=COALESCE($6, push_subscriptions.customer_phone),
-         customer_code=COALESCE($7, push_subscriptions.customer_code),
-         customer_name=COALESCE($8, push_subscriptions.customer_name),
-         user_agent=COALESCE($9, push_subscriptions.user_agent),
-         updated_at=NOW()`,
-      [endpoint, keys.p256dh, keys.auth, uid, custId, customerPhone || null, customerCode || null, resolvedName, userAgent || req.headers['user-agent'] || null]
+         p256dh = $2, 
+         auth = $3, 
+         user_id = $4,
+         customer_id = $5,
+         customer_phone = $6,
+         customer_code = $7,
+         customer_name = $8,
+         user_agent = COALESCE($9, push_subscriptions.user_agent),
+         updated_at = NOW()`,
+      [endpoint, keys.p256dh, keys.auth, uid, custId, customerPhone, resolvedCode, resolvedName, userAgent]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -8268,8 +8314,26 @@ app.post(`${BASE}/api/push/subscribe`, async (req, res) => {
   }
 });
 
-// DELETE /api/push/unsubscribe — remove device subscription
-app.delete(`${BASE}/api/push/unsubscribe`, async (req, res) => {
+// POST /api/push/logout — unlink current customer from device subscription on logout
+app.post([`${BASE}/api/push/logout`, '/api/push/logout'], async (req, res) => {
+  const { endpoint } = req.body || {};
+  if (!endpoint) return res.status(400).json({ error: 'endpoint مطلوب' });
+  try {
+    await posDb.query(
+      `UPDATE push_subscriptions 
+       SET customer_id = NULL, customer_phone = NULL, customer_code = NULL, customer_name = NULL, updated_at = NOW() 
+       WHERE endpoint = $1`,
+      [endpoint]
+    );
+    res.json({ ok: true, message: 'تم إلغاء ربط الحساب بالإشعارات لهذا الجهاز' });
+  } catch (err) {
+    console.error('[Push Logout error]:', err.message);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
+});
+
+// DELETE /api/push/unsubscribe — remove device subscription completely
+app.delete([`${BASE}/api/push/unsubscribe`, '/api/push/unsubscribe'], async (req, res) => {
   const { endpoint } = req.body || {};
   if (!endpoint) return res.status(400).json({ error: 'endpoint مطلوب' });
   try {
