@@ -8548,7 +8548,10 @@ function initPushCronJobs() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 // 1. إنشاء جداول العيادات ذاتياً (Self-Healing Schema)
+let clinicOsTablesEnsured = false;
 async function ensureClinicOsTables() {
+  if (clinicOsTablesEnsured) return;
+  clinicOsTablesEnsured = true;
   try {
     await posDb.query(`
       CREATE TABLE IF NOT EXISTS stock_locations (
@@ -9167,44 +9170,34 @@ app.get([`${BASE}/api/clinic/overview`, '/api/clinic/overview'], async (req, res
       locations = [defLoc];
     }
 
-    // Sync missing expiries and exact catalog categories from DenTrust product catalog for this doctor
-    await posDb.query(`
-      UPDATE clinic_inventory ci
-      SET category = COALESCE(NULLIF(p.category, ''), ci.category),
-          expiry_date = CASE 
-            WHEN ci.expiry_date IS NOT NULL THEN ci.expiry_date
-            WHEN p.expiry_date::text ~ '^\\d{4}-\\d{2}-\\d{2}' THEN (p.expiry_date::text)::date 
-            ELSE NULL 
-          END,
-          product_id = COALESCE(ci.product_id, p.id)
-      FROM products p
-      WHERE ci.customer_id = $1
-        AND (
-          ci.product_id = p.id
-          OR LOWER(TRIM(ci.custom_name)) = LOWER(TRIM(p.product_name))
-          OR ci.custom_name ILIKE '%' || p.product_name || '%'
-          OR p.product_name ILIKE '%' || SPLIT_PART(ci.custom_name, '—', 1) || '%'
-        )
-    `, [doc.id]).catch(() => {});
-
-    await posDb.query(`
-      UPDATE clinic_inventory
-      SET category = 'diamond burs'
-      WHERE customer_id = $1 AND custom_name ILIKE '%diamond bur%' AND (category IS NULL OR category = 'restorative' OR category = '');
-      UPDATE clinic_inventory
-      SET category = 'matrix band'
-      WHERE customer_id = $1 AND custom_name ILIKE '%matrix%' AND (category IS NULL OR category = 'restorative' OR category = '');
-      UPDATE clinic_inventory
-      SET category = 'bond'
-      WHERE customer_id = $1 AND custom_name ILIKE '%bond brush%' AND (category IS NULL OR category = 'restorative' OR category = '');
-    `, [doc.id]).catch(() => {});
+    // Fast non-blocking background sync (fire-and-forget, never block overview response)
+    setImmediate(async () => {
+      try {
+        await posDb.query(`
+          UPDATE clinic_inventory ci
+          SET category = COALESCE(NULLIF(p.category, ''), ci.category),
+              expiry_date = CASE 
+                WHEN ci.expiry_date IS NOT NULL THEN ci.expiry_date
+                WHEN p.expiry_date::text ~ '^\\d{4}-\\d{2}-\\d{2}' THEN (p.expiry_date::text)::date 
+                ELSE NULL 
+              END,
+              product_id = COALESCE(ci.product_id, p.id)
+          FROM products p
+          WHERE ci.customer_id = $1
+            AND (
+              ci.product_id = p.id
+              OR LOWER(TRIM(ci.custom_name)) = LOWER(TRIM(p.product_name))
+            )
+        `, [doc.id]).catch(() => {});
+      } catch (_) {}
+    });
 
     // جلب المخزون المقفول (Backstock)
     const { rows: inventory } = await posDb.query(`
-      SELECT ci.*, sl.name as location_name, sl.type as location_type,
+      SELECT ci.*, COALESCE(sl.name, 'المخزن الرئيسي') as location_name, COALESCE(sl.type, 'Warehouse') as location_type,
              p.product_name as matched_product_name, p.sale_price as store_price, p.image_url as store_photos
       FROM clinic_inventory ci
-      JOIN stock_locations sl ON sl.id = ci.location_id
+      LEFT JOIN stock_locations sl ON sl.id = ci.location_id
       LEFT JOIN products p ON p.id = ci.product_id
       WHERE ci.customer_id = $1
       ORDER BY ci.sealed_count ASC, ci.id DESC
@@ -9468,6 +9461,7 @@ app.delete([`${BASE}/api/clinic/items/:id`, '/api/clinic/items/:id'], async (req
     if (!doc) return res.status(401).json({ error: 'غير مصرح' });
     const itemId = parseInt(req.params.id, 10);
 
+    await posDb.query('DELETE FROM active_work_tray WHERE inventory_id = $1 AND customer_id = $2', [itemId, doc.id]).catch(() => {});
     await posDb.query('DELETE FROM clinic_inventory WHERE id = $1 AND customer_id = $2', [itemId, doc.id]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
