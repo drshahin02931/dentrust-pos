@@ -599,7 +599,7 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
       const cid = customer ? customer.id : 22;
       const { rows: sales } = await posDb.query("SELECT * FROM sales WHERE customer_id = $1 ORDER BY id DESC LIMIT 25", [cid]);
       const { rows: payments } = await posDb.query("SELECT * FROM customer_payments WHERE customer_id = $1 ORDER BY id DESC LIMIT 15", [cid]);
-      const { rows: recentSales } = await posDb.query("SELECT id, date, customer_id, customer_name, total_amount, payment_method, source, dentrust_order_id, created_at FROM sales ORDER BY id DESC LIMIT 15");
+      const { rows: recentSales } = await posDb.query("SELECT id, date, customer_id, customer_name, total_amount, payment_method, source, dentrust_order_id FROM sales ORDER BY id DESC LIMIT 15");
       const { rows: recentOrders } = await dentrustDb.query("SELECT id, created_at, customer_id, customer_name, total, status, payment_method FROM orders ORDER BY id DESC LIMIT 15").catch(() => ({ rows: [] }));
       return res.json({ ok: true, customer, sales, payments, recentSales, recentOrders });
     } catch (e) {
