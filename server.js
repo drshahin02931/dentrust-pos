@@ -604,12 +604,15 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
       const { rows: sale370Items } = await posDb.query("SELECT * FROM sale_items WHERE sale_id = 370");
       const { rows: auditLogs } = await posDb.query("SELECT * FROM customer_audit_logs WHERE customer_id = 22 ORDER BY id DESC LIMIT 15").catch(() => ({ rows: [] }));
       const { rows: samarOrders } = await dentrustDb.query(
-        "SELECT id, created_at, customer_id, customer_name, customer_phone, total, status, payment_method, shipping_address FROM orders WHERE customer_name ILIKE '%سمر%' OR customer_name ILIKE '%عمارة%' OR customer_phone LIKE '%01019072907%' ORDER BY id DESC LIMIT 15"
+        "SELECT id, customer_name, customer_phone, total, status FROM orders WHERE customer_name ILIKE '%سمر%' OR customer_name ILIKE '%عمارة%' OR customer_phone LIKE '%01019072907%' ORDER BY id DESC LIMIT 15"
       ).catch(e => ({ rows: [{ error: e.message }] }));
       const { rows: allRecentOrders } = await dentrustDb.query(
-        "SELECT id, created_at, customer_id, customer_name, customer_phone, total, status, payment_method FROM orders ORDER BY id DESC LIMIT 10"
+        "SELECT id, customer_name, customer_phone, total, status FROM orders ORDER BY id DESC LIMIT 10"
       ).catch(e => ({ rows: [{ error: e.message }] }));
-      return res.json({ ok: true, samarCusts, customer, sales, payments, recentSales, sale370Items, samarOrders, allRecentOrders });
+      const { rows: recentAlerts } = await posDb.query(
+        "SELECT * FROM website_order_alerts ORDER BY id DESC LIMIT 10"
+      ).catch(() => ({ rows: [] }));
+      return res.json({ ok: true, samarCusts, customer, sales, payments, recentSales, sale370Items, samarOrders, allRecentOrders, recentAlerts });
     } catch (e) {
       return res.status(500).json({ ok: false, error: e.message });
     }
