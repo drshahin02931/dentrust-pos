@@ -618,8 +618,8 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
       // الفواتير الجديدة (363, 365, 370) غير مدفوعة نهائياً
       await posDb.query("UPDATE sales SET paid_amount=0, credit_paid=0 WHERE id IN (363, 365, 370) AND customer_id=22");
       
-      // إجمالي المديونية الحقيقية: 32,755 (رصيد سابق) + 2,375 (فاتورة 363) + 7,800 (فاتورة 365) + 40,063 (فاتورة 370) = 82,993 ج
-      const finalTrueDebt = 82993;
+      // إجمالي المديونية الحقيقية: 32,755 (رصيد سابق) + 2,375 (فاتورة 363) + 7,800 (فاتورة 365) + 40,063 (فاتورة 370) - 2,090 (مرتجع فاتورة 370) = 80,903 ج
+      const finalTrueDebt = 80903;
       await posDb.query("UPDATE customers SET total_debt=$1 WHERE id=22", [finalTrueDebt]);
 
       // توزيع الرصيد السابق 32,755 ج على الفواتير القديمة السابقة لفاتورة 363
@@ -648,7 +648,7 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
 
       return res.json({ 
         ok: true, 
-        message: 'تم تصحيح وتثبيت مديونية د. سمر عمارة الحقيقية بنجاح إلى 82,993 ج، وتأكيد فواتير 363 و 365 و 370 كفواتير غير مدفوعة', 
+        message: 'تم تصحيح وتثبيت مديونية د. سمر عمارة الحقيقية بنجاح إلى 80,903 ج (بعد خصم مرتجع 2,090 ج من فاتورة 370)', 
         total_debt: finalTrueDebt 
       });
     } catch (err) {
@@ -3131,11 +3131,18 @@ app.get(`${BASE}/api/customers/:cid/orders`, async (req, res) => {
     const { rows: [customer] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [cid]);
     if (!customer) return res.status(404).json({ error: 'العميل غير موجود' });
 
-    // 1. Fetch all sales by customer_id, customer_name, or website alert phone
+    // 1. Fetch all sales by customer_id, customer_name, or website alert phone, with returns joined
     const { rows: sales } = await posDb.query(
-      `SELECT s.*
+      `SELECT s.*,
+              COALESCE(ret.total_refunded, 0) AS total_refunded,
+              COALESCE(ret.return_count, 0) AS return_count
        FROM sales s
        LEFT JOIN website_order_alerts woa ON s.dentrust_order_id::text = woa.dentrust_order_id::text
+       LEFT JOIN (
+         SELECT sale_id, SUM(total_refund) AS total_refunded, COUNT(*) AS return_count
+         FROM returns
+         GROUP BY sale_id
+       ) ret ON ret.sale_id = s.id
        WHERE s.customer_id = $1
           OR ($2 != '' AND (
                LOWER(TRIM(COALESCE(s.customer_name, ''))) = LOWER(TRIM($2))
@@ -3173,19 +3180,26 @@ app.get(`${BASE}/api/customers/:cid/orders`, async (req, res) => {
       posDb.query('UPDATE sales SET customer_id=$1 WHERE id=ANY($2::int[])', [customer.id, unlinkedIds]).catch(() => {});
     }
 
-    // 2. Intelligent Reverse-Debt Distribution (من الأحدث إلى الأقدم)
+    // 2. Intelligent Reverse-Debt Distribution (من الأحدث إلى الأقدم) مع مراعاة المرتجعات
     // The current customer.total_debt represents the outstanding balance on the most recent invoices.
     let remainingDebtToCover = Math.max(0, parseFloat(customer.total_debt || 0));
 
-    // Calculate orig_debt for every invoice first
+    // Calculate orig_debt for every invoice first after deducting any returns on it
     for (const s of sales) {
+      const totalRefunded = parseFloat(s.total_refunded || 0);
+      const netTotal = Math.max(0, parseFloat(s.total_amount || 0) - totalRefunded);
       let origDebt = 0;
       if (s.payment_method === 'split') {
-        try { origDebt = parseFloat(JSON.parse(s.payment_split || '{}').credit || 0); } catch (_) {}
+        try {
+          const sp = JSON.parse(s.payment_split || '{}');
+          origDebt = Math.max(0, parseFloat(sp.credit || 0) - totalRefunded);
+        } catch (_) {}
       } else if (s.payment_method === 'credit') {
-        origDebt = Math.max(0, parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0));
+        origDebt = Math.max(0, netTotal - parseFloat(s.amount_received || 0));
       }
       s._origDebt = origDebt;
+      s._netTotal = netTotal;
+      s._totalRefunded = totalRefunded;
     }
 
     // Sales are sorted NEWEST first (s.date DESC, s.id DESC).
@@ -3194,7 +3208,7 @@ app.get(`${BASE}/api/customers/:cid/orders`, async (req, res) => {
       const isCreditType = (s.payment_method === 'credit' || s.payment_method === 'split');
       if (!isCreditType || s._origDebt <= 0) {
         s._computedRemainingDebt = 0;
-        s._computedPaidAmount = parseFloat(s.total_amount || 0);
+        s._computedPaidAmount = s._netTotal;
         s._computedIsPaid = true;
         continue;
       }
@@ -3220,6 +3234,8 @@ app.get(`${BASE}/api/customers/:cid/orders`, async (req, res) => {
       const isPartial = !isPaid && (s._computedPaidAmount > 0);
       return {
         ...s,
+        total_refunded: s._totalRefunded || 0,
+        net_total: s._netTotal != null ? s._netTotal : parseFloat(s.total_amount || 0),
         orig_debt: s._origDebt,
         paid_amount: s._computedPaidAmount,
         remaining_debt: s._computedRemainingDebt,

@@ -1214,21 +1214,31 @@ async function switchTab(tab) {
       const hasDebt = isCreditType && !isPaid;
 
       let origDebt = 0;
+      const totalRefunded = parseFloat(o.total_refunded || 0);
+      const isReturned = totalRefunded > 0;
+      const netAmount = o.net_total != null ? parseFloat(o.net_total) : Math.max(0, parseFloat(o.total_amount || 0) - totalRefunded);
+      const fullyReturned = isReturned && (totalRefunded >= parseFloat(o.total_amount || 0));
+
       if (isSplit) {
-        try { origDebt = parseFloat(JSON.parse(o.payment_split || '{}').credit || 0); } catch (_) {}
+        try { 
+          const sp = JSON.parse(o.payment_split || '{}');
+          origDebt = Math.max(0, parseFloat(sp.credit || 0) - totalRefunded); 
+        } catch (_) {}
       } else if (isCredit) {
-        origDebt = Math.max(0, parseFloat(o.total_amount || 0) - parseFloat(o.amount_received || 0));
+        origDebt = Math.max(0, netAmount - parseFloat(o.amount_received || 0));
       }
       const remDebt = o.remaining_debt != null ? parseFloat(o.remaining_debt) : (isPaid ? 0 : Math.max(0, origDebt - paidAmt));
 
       let payLabel = isCredit ? '📋 آجل' : isSplit ? '✂️ مقسّم' : o.payment_method === 'cash' ? '💵 كاش' : '📱 InstaPay';
       const itemsPreview = (o.items || []).slice(0,2).map(i => `${i.product_name} ×${i.quantity}`).join("، ") + ((o.items || []).length > 2 ? ` +${o.items.length-2}` : "");
 
-      const cardClass = isPaid ? 'border-green-200 bg-green-50/60'
+      const cardClass = fullyReturned ? 'border-gray-200 bg-gray-50/60 opacity-80'
+                      : isPaid ? 'border-green-200 bg-green-50/60'
                       : isPartial ? 'border-amber-300 bg-amber-50/70 shadow-xs'
                       : 'border-red-200 bg-red-50/80 shadow-xs';
 
-      const amtClass = isPaid ? 'text-green-700'
+      const amtClass = fullyReturned ? 'text-gray-500'
+                     : isPaid ? 'text-green-700'
                      : isPartial ? 'text-amber-800'
                      : 'text-red-600';
 
@@ -1236,13 +1246,19 @@ async function switchTab(tab) {
                        : isPartial ? 'bg-amber-500 text-white'
                        : 'bg-red-600 text-white';
 
-      const statusBadge = isPaid
+      const returnBadge = isReturned
+        ? `<span class="text-xs font-bold text-orange-800 bg-orange-100 px-2 py-0.5 rounded-md border border-orange-200">↩️ مرتجع: ${totalRefunded.toLocaleString('ar-EG', {minimumFractionDigits:2})} ج</span>`
+        : '';
+
+      const statusBadge = fullyReturned
+        ? '<span class="text-xs font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-md border border-red-200">↩️ مستردّة كلياً</span>'
+        : isPaid
         ? '<span class="text-xs font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-md">🟢 مسددة بالكامل</span>'
         : isPartial
         ? `<span class="text-xs font-bold text-amber-900 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">🟡 مسددة جزئياً (مدفوع: ${paidAmt.toFixed(2)} ج | باقي: ${remDebt.toFixed(2)} ج)</span>`
         : `<span class="text-xs font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-md border border-red-200">🔴 غير مسددة (متبقي: ${remDebt.toFixed(2)} ج)</span>`;
 
-      const payBtn = hasDebt
+      const payBtn = hasDebt && !fullyReturned
         ? `<button onclick="openDebtCollectionModal(${o.id}, ${remDebt}, ${origDebt}, ${paidAmt})" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-bold shadow-xs transition-all flex items-center gap-1">💳 سداد / دفعة (${remDebt.toFixed(2)} ج)</button>`
         : '';
 
@@ -1252,9 +1268,17 @@ async function switchTab(tab) {
           <div class="flex items-center gap-2 flex-wrap">
             <span class="text-xs font-bold px-2.5 py-1 rounded-full ${badgeClass}">${payLabel}</span>
             <span class="text-xs font-mono text-gray-500 font-bold">#${o.id}</span>
+            ${returnBadge}
             ${statusBadge}
           </div>
-          <span class="font-black text-base ${amtClass}">${o.total_amount.toLocaleString('ar-EG', {minimumFractionDigits:2})} ج</span>
+          <div class="text-right">
+            ${isReturned ? `
+              <div class="text-[11px] text-gray-400 line-through">${parseFloat(o.total_amount).toLocaleString('ar-EG', {minimumFractionDigits:2})} ج</div>
+              <div class="font-black text-base ${amtClass}">صافي: ${netAmount.toLocaleString('ar-EG', {minimumFractionDigits:2})} ج</div>
+            ` : `
+              <span class="font-black text-base ${amtClass}">${parseFloat(o.total_amount).toLocaleString('ar-EG', {minimumFractionDigits:2})} ج</span>
+            `}
+          </div>
         </div>
         <div class="text-xs text-gray-600 mb-2">${o.date?.slice(0,16) || ''} — ${itemsPreview}</div>
         <div class="flex gap-2 flex-wrap items-center pt-1 border-t border-gray-200/50">
