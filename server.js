@@ -595,13 +595,14 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
   // فحص وتشخيص مديونية د. سمر عمارة والفواتير الأخيرة
   if (req.query.action === 'inspect-samar' || req.body?.action === 'inspect-samar') {
     try {
-      const { rows: [customer] } = await posDb.query("SELECT * FROM customers WHERE id = 22 OR name ILIKE '%سمر%' LIMIT 1");
-      const cid = customer ? customer.id : 22;
-      const { rows: sales } = await posDb.query("SELECT * FROM sales WHERE customer_id = $1 ORDER BY id DESC LIMIT 25", [cid]);
+      const { rows: samarCusts } = await posDb.query("SELECT id, name, phone, total_debt, customer_code FROM customers WHERE name ILIKE '%عمارة%' OR name ILIKE '%سمر%' OR id = 22");
+      const cid = samarCusts.find(c => c.name.includes('عمارة'))?.id || 22;
+      const { rows: [customer] } = await posDb.query("SELECT * FROM customers WHERE id = $1", [cid]);
+      const { rows: sales } = await posDb.query("SELECT id, date, total_amount, amount_received, payment_method, payment_split, paid_amount, source, dentrust_order_id FROM sales WHERE customer_id = $1 ORDER BY id DESC LIMIT 25", [cid]);
       const { rows: payments } = await posDb.query("SELECT * FROM customer_payments WHERE customer_id = $1 ORDER BY id DESC LIMIT 15", [cid]);
-      const { rows: recentSales } = await posDb.query("SELECT id, date, customer_id, customer_name, total_amount, payment_method, source, dentrust_order_id FROM sales ORDER BY id DESC LIMIT 15");
+      const { rows: recentSales } = await posDb.query("SELECT s.id, s.date, s.customer_id, COALESCE(c.name, s.customer_name) as cust_name, s.total_amount, s.payment_method, s.source, s.dentrust_order_id FROM sales s LEFT JOIN customers c ON c.id = s.customer_id ORDER BY s.id DESC LIMIT 15");
       const { rows: recentOrders } = await dentrustDb.query("SELECT id, created_at, customer_id, customer_name, total, status, payment_method FROM orders ORDER BY id DESC LIMIT 15").catch(() => ({ rows: [] }));
-      return res.json({ ok: true, customer, sales, payments, recentSales, recentOrders });
+      return res.json({ ok: true, samarCusts, customer, sales, payments, recentSales, recentOrders });
     } catch (e) {
       return res.status(500).json({ ok: false, error: e.message });
     }
