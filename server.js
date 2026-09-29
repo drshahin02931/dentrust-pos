@@ -620,6 +620,17 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
     }
   }
 
+  // إذا كان المطلوب تصحيح تكلفة Adseal في فاتورة 383
+  if (req.query.action === 'fix-adseal-invoice' || req.body?.action === 'fix-adseal-invoice') {
+    try {
+      await posDb.query("UPDATE sale_items SET snapshot_purchase_price = 720 WHERE product_id = 200 AND sale_id = 383");
+      await posDb.query("UPDATE product_cost_batches SET cost_price = 720 WHERE product_id = 200 AND cost_price = 825");
+      return res.json({ ok: true, message: 'تم تعديل تكلفة الـ Adseal في فاتورة 383 بنجاح إلى 720 ج، ليصبح الربح +40 ج بدلاً من خسارة 65 ج' });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+
   // إذا كان المطلوب تسوية مديونية دكتور سمر عمارة
   if (req.query.action === 'fix-samar' || req.body?.action === 'fix-samar') {
     try {
@@ -4349,7 +4360,13 @@ app.post(`${BASE}/api/invoices/:sid/return`, async (req, res) => {
       // Restore quantity in product_cost_batches so FIFO stays accurate
       if (validProdId) {
         try {
-          const costPrice = parseFloat(item.snapshot_purchase_price || 0);
+          let costPrice = parseFloat(item.snapshot_purchase_price || 0);
+          try {
+            const { rows: [pRow] } = await client.query('SELECT purchase_price FROM products WHERE id=$1', [validProdId]);
+            if (pRow && pRow.purchase_price != null && parseFloat(pRow.purchase_price) > 0) {
+              costPrice = parseFloat(pRow.purchase_price);
+            }
+          } catch (_) {}
           const { rows: [existBatch] } = await client.query(
             `SELECT id FROM product_cost_batches 
              WHERE product_id=$1 AND (selected_option=$2 OR (selected_option IS NULL AND $2 IS NULL)) 
