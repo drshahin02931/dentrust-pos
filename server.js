@@ -592,6 +592,21 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
     return res.status(403).json({ ok: false, error: 'غير مصرح لك بتنفيذ هذا الإجراء' });
   }
 
+  // فحص وتشخيص مديونية د. سمر عمارة والفواتير الأخيرة
+  if (req.query.action === 'inspect-samar' || req.body?.action === 'inspect-samar') {
+    try {
+      const { rows: [customer] } = await posDb.query("SELECT * FROM customers WHERE id = 22 OR name ILIKE '%سمر%' LIMIT 1");
+      const cid = customer ? customer.id : 22;
+      const { rows: sales } = await posDb.query("SELECT id, date, total_amount, amount_received, payment_method, payment_split, paid_amount, is_credit_paid, return_status, source, dentrust_order_id FROM sales WHERE customer_id = $1 ORDER BY id DESC LIMIT 25", [cid]);
+      const { rows: payments } = await posDb.query("SELECT * FROM customer_payments WHERE customer_id = $1 ORDER BY id DESC LIMIT 15", [cid]);
+      const { rows: recentSales } = await posDb.query("SELECT id, date, customer_id, customer_name, total_amount, payment_method, source, dentrust_order_id, created_at FROM sales ORDER BY id DESC LIMIT 15");
+      const { rows: recentOrders } = await dentrustDb.query("SELECT id, created_at, customer_id, customer_name, total, status, payment_method FROM orders ORDER BY id DESC LIMIT 15").catch(() => ({ rows: [] }));
+      return res.json({ ok: true, customer, sales, payments, recentSales, recentOrders });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+
   // إذا كان المطلوب تسوية مديونية دكتور سمر عمارة
   if (req.query.action === 'fix-samar' || req.body?.action === 'fix-samar') {
     try {
