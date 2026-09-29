@@ -111,6 +111,7 @@ const OPEN_API = [
   '/api/warehouse',
   '/api/push/subscribe',
   '/api/push/logout',
+  '/api/push/unsubscribe',
   '/api/customer/register',
   '/api/customer/login',
   '/api/customer/profile',
