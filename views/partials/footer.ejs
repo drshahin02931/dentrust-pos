@@ -413,7 +413,8 @@
           });
         }
 
-        // Always update subscription on server to ensure device is linked to current user
+        <% if (typeof currentUser !== 'undefined' && currentUser) { %>
+        // Update subscription on server to ensure device is linked to currently logged-in POS user
         const subJson = sub ? sub.toJSON() : null;
         if (subJson && subJson.keys) {
           await fetch('<%= base %>/api/push/subscribe', {
@@ -426,6 +427,17 @@
             })
           }).catch(() => {});
         }
+        <% } else { %>
+        // Not logged in: unlink any leftover user session from this device's push subscription
+        if (sub && sub.endpoint) {
+          await fetch('<%= base %>/api/push/logout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ endpoint: sub.endpoint })
+          }).catch(() => {});
+        }
+        <% } %>
       } catch (err) {
         console.warn('[DenTrust Push]', err);
       }

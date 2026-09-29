@@ -8033,8 +8033,8 @@ async function sendPushNotification({
 
     if (targetType === 'managers') {
       query = `SELECT DISTINCT ps.* FROM push_subscriptions ps
-               LEFT JOIN users u ON u.id = ps.user_id
-               WHERE u.role = 'manager' OR ps.user_id IS NOT NULL`;
+               JOIN users u ON u.id = ps.user_id
+               WHERE (u.role = 'manager' OR u.role = 'admin') AND (u.is_active = 1 OR u.is_active IS NULL)`;
     } else if (targetType === 'customer') {
       const cleanPhone = (targetPhone || '').replace(/\D/g, '');
       const cleanCode = (targetCode || '').trim();
@@ -8270,7 +8270,8 @@ app.post([`${BASE}/api/push/subscribe`, '/api/push/subscribe'], async (req, res)
   const customerCode = rawCode ? String(rawCode).trim() : null;
 
   try {
-    const uid = req.session?.user_id || null;
+    const isCustomerSub = !!(customerPhone || customerCode);
+    const uid = isCustomerSub ? null : (req.session?.user_id || null);
     let custId = null;
     let resolvedName = customerName || null;
     let resolvedCode = customerCode || null;
@@ -8322,7 +8323,7 @@ app.post([`${BASE}/api/push/logout`, '/api/push/logout'], async (req, res) => {
   try {
     await posDb.query(
       `UPDATE push_subscriptions 
-       SET customer_id = NULL, customer_phone = NULL, customer_code = NULL, customer_name = NULL, updated_at = NOW() 
+       SET user_id = NULL, customer_id = NULL, customer_phone = NULL, customer_code = NULL, customer_name = NULL, updated_at = NOW() 
        WHERE endpoint = $1`,
       [endpoint]
     );

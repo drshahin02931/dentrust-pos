@@ -176,10 +176,33 @@
           <% if (typeof isMgr !== 'undefined' && isMgr) { %><span class="text-yellow-300">👑</span><% } else { %><span>👤</span><% } %>
           <span class="font-semibold"><%= currentUser.username %></span>
         </button>
-        <a href="<%= base %>/logout"
+        <a href="<%= base %>/logout" onclick="unlinkPushOnPosLogout(event, this)"
           class="text-xs bg-red-500/20 hover:bg-red-500/40 text-red-100 rounded-xl px-3 py-1.5 font-medium transition-colors">
           خروج
         </a>
+        <script>
+        async function unlinkPushOnPosLogout(e, link) {
+          if (link.dataset.leaving) return;
+          e.preventDefault();
+          link.dataset.leaving = '1';
+          try {
+            if ('serviceWorker' in navigator && 'PushManager' in window) {
+              const reg = await navigator.serviceWorker.ready;
+              const sub = await reg?.pushManager?.getSubscription();
+              if (sub && sub.endpoint) {
+                await fetch('<%= base %>/api/push/logout', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  credentials: 'include',
+                  body: JSON.stringify({ endpoint: sub.endpoint }),
+                  keepalive: true
+                }).catch(function(){});
+              }
+            }
+          } catch (_) {}
+          window.location.href = link.href;
+        }
+        </script>
         <% } %>
       </div>
     </div>
