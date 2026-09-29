@@ -601,8 +601,10 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
       const { rows: sales } = await posDb.query("SELECT id, date, total_amount, amount_received, payment_method, payment_split, paid_amount, source, dentrust_order_id FROM sales WHERE customer_id = $1 ORDER BY id DESC LIMIT 25", [cid]);
       const { rows: payments } = await posDb.query("SELECT * FROM customer_payments WHERE customer_id = $1 ORDER BY id DESC LIMIT 15", [cid]);
       const { rows: recentSales } = await posDb.query("SELECT s.id, s.date, s.customer_id, COALESCE(c.name, s.customer_name) as cust_name, s.total_amount, s.payment_method, s.source, s.dentrust_order_id FROM sales s LEFT JOIN customers c ON c.id = s.customer_id ORDER BY s.id DESC LIMIT 15");
+      const { rows: sale370Items } = await posDb.query("SELECT * FROM sale_items WHERE sale_id = 370");
+      const { rows: auditLogs } = await posDb.query("SELECT * FROM customer_audit_logs WHERE customer_id = 22 ORDER BY id DESC LIMIT 15").catch(() => ({ rows: [] }));
       const { rows: recentOrders } = await dentrustDb.query("SELECT id, created_at, customer_id, customer_name, total, status, payment_method FROM orders ORDER BY id DESC LIMIT 15").catch(() => ({ rows: [] }));
-      return res.json({ ok: true, samarCusts, customer, sales, payments, recentSales, recentOrders });
+      return res.json({ ok: true, samarCusts, customer, sales, payments, recentSales, sale370Items, auditLogs, recentOrders });
     } catch (e) {
       return res.status(500).json({ ok: false, error: e.message });
     }
