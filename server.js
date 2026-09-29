@@ -601,10 +601,20 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
       const { rows: sales } = await posDb.query("SELECT id, date, total_amount, amount_received, payment_method, payment_split, paid_amount, source, dentrust_order_id FROM sales WHERE customer_id = $1 ORDER BY id DESC LIMIT 25", [cid]);
       const { rows: payments } = await posDb.query("SELECT * FROM customer_payments WHERE customer_id = $1 ORDER BY id DESC LIMIT 15", [cid]);
       const { rows: recentSales } = await posDb.query("SELECT s.id, s.date, s.customer_id, COALESCE(c.name, s.customer_name) as cust_name, s.total_amount, s.payment_method, s.source, s.dentrust_order_id FROM sales s LEFT JOIN customers c ON c.id = s.customer_id ORDER BY s.id DESC LIMIT 15");
-      const { rows: allReturns } = await posDb.query("SELECT r.*, s.customer_id, s.customer_name FROM returns r LEFT JOIN sales s ON s.id = r.sale_id ORDER BY r.id DESC LIMIT 15").catch(e => ({ rows: [{ error: e.message }] }));
-      const { rows: allReturnItems } = await posDb.query("SELECT * FROM return_items ORDER BY id DESC LIMIT 20").catch(e => ({ rows: [{ error: e.message }] }));
-      const { rows: returnPayments } = await posDb.query("SELECT * FROM customer_payments WHERE customer_id = 22 OR note ILIKE '%مرتجع%' ORDER BY id DESC LIMIT 15").catch(e => ({ rows: [{ error: e.message }] }));
-      return res.json({ ok: true, samarCusts, customer, sales, payments, recentSales, allReturns, allReturnItems, returnPayments });
+      const { rows: adsealItems } = await posDb.query(
+        `SELECT si.*, s.customer_name, s.date, s.total_amount, s.discount_amount, s.delivery_amount, s.payment_method
+         FROM sale_items si 
+         JOIN sales s ON s.id = si.sale_id
+         WHERE si.product_name ILIKE '%adseal%'
+         ORDER BY si.id DESC LIMIT 10`
+      );
+      const { rows: adsealProducts } = await posDb.query(
+        "SELECT id, product_name, cost_price, sale_price, purchase_price, wholesale_price FROM products WHERE product_name ILIKE '%adseal%'"
+      );
+      const { rows: adsealBatches } = await posDb.query(
+        "SELECT * FROM product_cost_batches WHERE product_id IN (SELECT id FROM products WHERE product_name ILIKE '%adseal%') ORDER BY id DESC LIMIT 10"
+      );
+      return res.json({ ok: true, adsealItems, adsealProducts, adsealBatches, recentSales });
     } catch (e) {
       return res.status(500).json({ ok: false, error: e.message });
     }
