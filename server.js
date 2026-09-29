@@ -601,18 +601,10 @@ app.all(`${BASE}/api/session/kill-all`, async (req, res) => {
       const { rows: sales } = await posDb.query("SELECT id, date, total_amount, amount_received, payment_method, payment_split, paid_amount, source, dentrust_order_id FROM sales WHERE customer_id = $1 ORDER BY id DESC LIMIT 25", [cid]);
       const { rows: payments } = await posDb.query("SELECT * FROM customer_payments WHERE customer_id = $1 ORDER BY id DESC LIMIT 15", [cid]);
       const { rows: recentSales } = await posDb.query("SELECT s.id, s.date, s.customer_id, COALESCE(c.name, s.customer_name) as cust_name, s.total_amount, s.payment_method, s.source, s.dentrust_order_id FROM sales s LEFT JOIN customers c ON c.id = s.customer_id ORDER BY s.id DESC LIMIT 15");
-      const { rows: sale370Items } = await posDb.query("SELECT * FROM sale_items WHERE sale_id = 370");
-      const { rows: auditLogs } = await posDb.query("SELECT * FROM customer_audit_logs WHERE customer_id = 22 ORDER BY id DESC LIMIT 15").catch(() => ({ rows: [] }));
-      const { rows: samarOrders } = await dentrustDb.query(
-        "SELECT id, customer_name, customer_phone, total, status FROM orders WHERE customer_name ILIKE '%سمر%' OR customer_name ILIKE '%عمارة%' OR customer_phone LIKE '%01019072907%' ORDER BY id DESC LIMIT 15"
-      ).catch(e => ({ rows: [{ error: e.message }] }));
-      const { rows: allRecentOrders } = await dentrustDb.query(
-        "SELECT id, customer_name, customer_phone, total, status FROM orders ORDER BY id DESC LIMIT 10"
-      ).catch(e => ({ rows: [{ error: e.message }] }));
-      const { rows: recentAlerts } = await posDb.query(
-        "SELECT * FROM website_order_alerts ORDER BY id DESC LIMIT 10"
-      ).catch(() => ({ rows: [] }));
-      return res.json({ ok: true, samarCusts, customer, sales, payments, recentSales, sale370Items, samarOrders, allRecentOrders, recentAlerts });
+      const { rows: allReturns } = await posDb.query("SELECT r.*, s.customer_id, s.customer_name FROM returns r LEFT JOIN sales s ON s.id = r.sale_id ORDER BY r.id DESC LIMIT 15").catch(e => ({ rows: [{ error: e.message }] }));
+      const { rows: allReturnItems } = await posDb.query("SELECT * FROM return_items ORDER BY id DESC LIMIT 20").catch(e => ({ rows: [{ error: e.message }] }));
+      const { rows: returnPayments } = await posDb.query("SELECT * FROM customer_payments WHERE customer_id = 22 OR note ILIKE '%مرتجع%' ORDER BY id DESC LIMIT 15").catch(e => ({ rows: [{ error: e.message }] }));
+      return res.json({ ok: true, samarCusts, customer, sales, payments, recentSales, allReturns, allReturnItems, returnPayments });
     } catch (e) {
       return res.status(500).json({ ok: false, error: e.message });
     }
