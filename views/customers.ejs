@@ -172,6 +172,9 @@
 
     <!-- Action buttons -->
     <div class="px-4 py-2.5 border-b bg-gray-50 grid grid-cols-2 sm:grid-cols-2 lg:flex lg:flex-wrap gap-1.5 shrink-0 max-h-36 sm:max-h-none overflow-y-auto overscroll-contain">
+      <button onclick="openWhatsAppModalForCurrentDetail()" class="flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold px-4 py-2.5 rounded-xl shadow-sm min-h-[42px] w-full sm:w-auto transition-all">
+        💬 مراسلة واتساب
+      </button>
       <button id="btnToggleVip" onclick="toggleCustomerVip()" class="flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold px-4 py-2.5 rounded-xl shadow-sm min-h-[42px] w-full sm:w-auto">
         👑 تحويل إلى VIP
       </button>
@@ -318,6 +321,88 @@
     <div class="flex gap-2.5 pt-1">
       <button type="button" onclick="submitEditPoints()" id="btnSavePoints" class="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-xl text-sm shadow-sm transition-all">حفظ الرصيد</button>
       <button type="button" onclick="closeEditPointsModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm transition-all">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ WhatsApp Message Modal ══════════════════════ -->
+<div id="waModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-3 sm:p-4" onclick="if(event.target===this)closeWhatsAppModal()">
+  <div class="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[92vh]" onclick="event.stopPropagation()">
+    <!-- Header -->
+    <div class="bg-gradient-to-r from-emerald-600 to-teal-700 px-5 py-4 text-white flex items-center justify-between shrink-0 shadow-sm">
+      <div class="flex items-center gap-2.5">
+        <span class="text-2xl">💬</span>
+        <div>
+          <h3 class="font-black text-base sm:text-lg">مراسلة واتساب ذكية</h3>
+          <p class="text-emerald-100 text-xs">قوالب وتواصل مباشر مع الطبيب عبر واتساب</p>
+        </div>
+      </div>
+      <button onclick="closeWhatsAppModal()" class="text-emerald-100 hover:text-white text-2xl font-bold leading-none p-1 rounded-lg hover:bg-white/10 transition-all">×</button>
+    </div>
+
+    <!-- Doctor Info Strip -->
+    <div class="p-4 bg-emerald-50/60 border-b border-emerald-100 flex flex-wrap items-center justify-between gap-2 shrink-0">
+      <div>
+        <div class="flex items-center gap-2">
+          <span id="waCustName" class="font-black text-gray-900 text-sm sm:text-base"></span>
+          <span id="waCustCode" class="font-mono text-xs font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-md"></span>
+        </div>
+        <div id="waCustDebt" class="text-xs font-bold text-gray-600 mt-0.5"></div>
+      </div>
+      <!-- Phone Selector -->
+      <div class="flex items-center gap-1.5">
+        <label class="text-xs font-bold text-gray-600">📱 الرقم:</label>
+        <select id="waPhoneSelect" class="border border-emerald-300 rounded-xl px-2.5 py-1 text-xs font-mono font-bold bg-white text-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-400">
+        </select>
+      </div>
+    </div>
+
+    <!-- Modal Body -->
+    <div class="p-4 sm:p-5 overflow-y-auto space-y-4">
+      <!-- Templates Selector -->
+      <div>
+        <label class="text-xs font-bold text-gray-700 block mb-2">اختر قالب الرسالة:</label>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <button type="button" onclick="selectWaTemplate('care')" id="btnTpl-care" class="wa-tpl-btn p-2.5 rounded-xl border text-center transition-all bg-emerald-50 border-emerald-400 text-emerald-900 font-bold text-xs shadow-xs">
+            <div class="text-base mb-1">🌟</div>
+            <div>اطمئنان وشكاوى</div>
+          </button>
+          <button type="button" onclick="selectWaTemplate('debt')" id="btnTpl-debt" class="wa-tpl-btn p-2.5 rounded-xl border text-center transition-all bg-gray-50 border-gray-200 text-gray-700 hover:bg-emerald-50 font-bold text-xs">
+            <div class="text-base mb-1">💳</div>
+            <div>كشف حساب</div>
+          </button>
+          <button type="button" onclick="selectWaTemplate('restock')" id="btnTpl-restock" class="wa-tpl-btn p-2.5 rounded-xl border text-center transition-all bg-gray-50 border-gray-200 text-gray-700 hover:bg-emerald-50 font-bold text-xs">
+            <div class="text-base mb-1">📦</div>
+            <div>نواقص العيادة</div>
+          </button>
+          <button type="button" onclick="selectWaTemplate('custom')" id="btnTpl-custom" class="wa-tpl-btn p-2.5 rounded-xl border text-center transition-all bg-gray-50 border-gray-200 text-gray-700 hover:bg-emerald-50 font-bold text-xs">
+            <div class="text-base mb-1">✍️</div>
+            <div>رسالة مخصصة</div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Message Textarea -->
+      <div>
+        <div class="flex items-center justify-between mb-1.5">
+          <label class="text-xs font-bold text-gray-700">نص الرسالة (يمكنك التعديل والإضافة بحرية):</label>
+          <span id="waCharCount" class="text-[11px] text-gray-400 font-mono"></span>
+        </div>
+        <textarea id="waMessageText" rows="9" oninput="updateWaCharCount()" class="w-full border border-gray-300 rounded-2xl p-3.5 text-xs sm:text-sm text-gray-800 leading-relaxed font-sans bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400 transition-all" placeholder="اكتب أو عدل نص الرسالة هنا..."></textarea>
+      </div>
+    </div>
+
+    <!-- Footer Actions -->
+    <div class="p-4 border-t bg-gray-50 flex items-center justify-between gap-2 shrink-0">
+      <button type="button" onclick="copyWaText()" id="btnCopyWa" class="px-3.5 py-2.5 bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all shadow-2xs">
+        <span id="copyWaIcon">📋</span> <span id="copyWaText">نسخ النص</span>
+      </button>
+      <div class="flex items-center gap-2">
+        <button type="button" onclick="closeWhatsAppModal()" class="px-4 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-bold text-xs sm:text-sm transition-all">إلغاء</button>
+        <button type="button" onclick="sendWhatsAppDirect()" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl font-black text-xs sm:text-sm flex items-center gap-2 shadow-md transition-all">
+          <span>🚀</span> فتح في واتساب
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -485,6 +570,11 @@ function renderCustomers(data) {
           : `<div class="text-green-600 font-bold text-sm">✓ مسدّد</div>`
         }
         <div class="flex items-center gap-1 mt-1 justify-end">
+          <button onclick="event.stopPropagation(); openWhatsAppModal(${c.id})"
+            class="text-[11px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-lg transition-all flex items-center gap-1 shadow-2xs"
+            title="مراسلة الطبيب عبر واتساب">
+            <span>💬</span> واتساب
+          </button>
           <button onclick="event.stopPropagation(); quickToggleVip(${c.id}, '${c.name.replace(/'/g, "\\'")}')"
             class="text-[11px] font-bold ${c.is_vip ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300' : 'bg-gray-100 hover:bg-amber-50 text-gray-700 hover:text-amber-700 border border-gray-200'} px-2 py-0.5 rounded-lg transition-all"
             title="${c.is_vip ? 'إلغاء عضوية VIP' : 'ترقية العميل إلى VIP'}">
@@ -2136,6 +2226,156 @@ async function saveEditCustomer(e) {
   const updated = allCustomers.find(x => x.id === currentCustomer.id);
   if (updated) openDetail(updated.id);
   alert('✅ تم حفظ جميع بيانات وعيادات العميل بنجاح');
+}
+
+// ── WhatsApp Messaging Feature ──────────────────────────────────────────────
+let _waCustomer = null;
+let _waCurrentType = 'care';
+
+function normalizeWaPhone(phone) {
+  if (!phone) return '';
+  let clean = phone.replace(/[^0-9]/g, '');
+  if (clean.startsWith('0020')) clean = clean.substring(2);
+  else if (clean.startsWith('020')) clean = clean.substring(1);
+  else if (clean.startsWith('20')) { /* already 20 */ }
+  else if (clean.startsWith('01')) clean = '20' + clean.substring(1);
+  else if (clean.startsWith('1')) clean = '20' + clean;
+  return clean;
+}
+
+function openWhatsAppModal(customerId) {
+  const cust = allCustomers.find(c => c.id === customerId);
+  if (!cust) return;
+  _waCustomer = cust;
+  
+  // Fill doctor details
+  document.getElementById('waCustName').textContent = cust.name;
+  const custCode = cust.customer_code || cust.barcode || String(100000 + cust.id);
+  document.getElementById('waCustCode').textContent = custCode;
+  
+  const debt = parseFloat(cust.total_debt || 0);
+  const debtEl = document.getElementById('waCustDebt');
+  if (debt > 0) {
+    debtEl.innerHTML = `<span class="text-red-600">🔴 المديونية الحالية: ${debt.toLocaleString('ar-EG', {minimumFractionDigits: 2})} ج.م</span>`;
+  } else {
+    debtEl.innerHTML = `<span class="text-emerald-600">🟢 الحساب مسدد بالكامل (0 ج.م)</span>`;
+  }
+
+  // Populate phone select
+  const phoneSelect = document.getElementById('waPhoneSelect');
+  phoneSelect.innerHTML = '';
+  const phones = [];
+  if (cust.phone) phones.push({ label: 'الأساسي: ' + cust.phone, val: cust.phone });
+  if (cust.extra_phones) {
+    cust.extra_phones.split(',').map(p => p.trim()).filter(Boolean).forEach((p, i) => {
+      phones.push({ label: `إضافي ${i+1}: ${p}`, val: p });
+    });
+  }
+  if (!phones.length) {
+    phones.push({ label: 'بدون رقم مسجل', val: '' });
+  }
+  phones.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.val;
+    opt.textContent = p.label;
+    phoneSelect.appendChild(opt);
+  });
+
+  selectWaTemplate('care');
+  document.getElementById('waModal').classList.remove('hidden');
+}
+
+function openWhatsAppModalForCurrentDetail() {
+  if (currentCustomer) {
+    openWhatsAppModal(currentCustomer.id);
+  }
+}
+
+function closeWhatsAppModal() {
+  document.getElementById('waModal').classList.add('hidden');
+}
+
+function selectWaTemplate(type) {
+  _waCurrentType = type;
+  document.querySelectorAll('.wa-tpl-btn').forEach(btn => {
+    btn.className = 'wa-tpl-btn p-2.5 rounded-xl border text-center transition-all bg-gray-50 border-gray-200 text-gray-700 hover:bg-emerald-50 font-bold text-xs';
+  });
+  const activeBtn = document.getElementById(`btnTpl-${type}`);
+  if (activeBtn) {
+    activeBtn.className = 'wa-tpl-btn p-2.5 rounded-xl border text-center transition-all bg-emerald-50 border-emerald-400 text-emerald-900 font-bold text-xs shadow-xs';
+  }
+
+  if (!_waCustomer) return;
+  const name = _waCustomer.name || 'دكتورنا العزيز';
+  const custCode = _waCustomer.customer_code || _waCustomer.barcode || String(100000 + _waCustomer.id);
+  const debt = parseFloat(_waCustomer.total_debt || 0).toLocaleString('ar-EG', {minimumFractionDigits: 2});
+
+  let text = '';
+  if (type === 'care') {
+    text = `أهلاً بحضرتك دكتور ${name}، يا رب تكون بألف خير 🌸\n\n` +
+      `فريق إدارة DenTrust حابب يطمن من حضرتك شخصياً على تجربتك معانا:\n` +
+      `لو واجهت حضرتك أي مشكلة في أي أوردر سابق، أو تأخير في التوصيل، أو عندك أي ملاحظة أو شكوى من أي خامة أو تعامل ضايق حضرتك.. يهمنا جداً نسمعها منك.\n\n` +
+      `لو في أي حاجة مش راضي عنها بنسبة 100%، إحنا مستعدين نصلحها ونعدلها لحضرتك فوراً وبأسرع وقت لأن راحتك وثقتك هي أهم أولوياتنا.\n\n` +
+      `في انتظار رد وملاحظات حضرتك ودايماً تحت أمرك يا دكتور 🌹`;
+  } else if (type === 'debt') {
+    text = `أهلاً بحضرتك دكتور ${name}، نتمنى لحضرتك يوماً طيباً وموفقاً 🦷💐\n\n` +
+      `بناءً على كشف الحساب المالي من نظام DenTrust:\n` +
+      `▫️ كود الحساب: ${custCode}\n` +
+      `▫️ الرصيد المستحق الحالي: ${debt} ج.م\n\n` +
+      `💳 طرق السداد المتاحة لراحتكم:\n` +
+      `1️⃣ فودافون كاش / المحافظ الإلكترونية:\n` +
+      `📱 رقم المحفظة: 01014067776\n` +
+      `👤 باسم: أحلام أنور السيد\n\n` +
+      `2️⃣ تحصيل كاش مع مندوب التوصيل في أقرب زيارة للعيادة.\n\n` +
+      `لو محتاج تفاصيل الفواتير السابقة أو أي استفسار، إحنا معاك وتحت أمرك في أي وقت 🌸`;
+  } else if (type === 'restock') {
+    text = `دكتور ${name}، يا رب حضرتك تكون بألف خير ودايماً في نجاح وتألق 🌟\n\n` +
+      `حابين نطمن على شغل العيادة، ونفكر حضرتك بمراجعة نواقص ومستهلكات الأسبوع (البنج، المستهلكات، الفايلات، الكومبوزيت...).\n\n` +
+      `📋 لو في أي لستة أصناف تحب نجهزها ونبعتها للعيادة فوراً، تقدر تبعتهالنا هنا وإحنا في خدمتك بأسرع توصيل 📦🚀`;
+  } else if (type === 'custom') {
+    text = `أهلاً دكتور ${name}، تحياتنا من فريق DenTrust 🦷✨\n\n`;
+  }
+
+  const ta = document.getElementById('waMessageText');
+  ta.value = text;
+  updateWaCharCount();
+}
+
+function updateWaCharCount() {
+  const ta = document.getElementById('waMessageText');
+  const count = ta.value.length;
+  document.getElementById('waCharCount').textContent = `${count} حرف`;
+}
+
+function copyWaText() {
+  const ta = document.getElementById('waMessageText');
+  if (!ta.value) return;
+  navigator.clipboard.writeText(ta.value).then(() => {
+    const btnText = document.getElementById('copyWaText');
+    const btnIcon = document.getElementById('copyWaIcon');
+    btnText.textContent = 'تم النسخ ✓';
+    btnIcon.textContent = '✅';
+    setTimeout(() => {
+      btnText.textContent = 'نسخ النص';
+      btnIcon.textContent = '📋';
+    }, 2000);
+  });
+}
+
+function sendWhatsAppDirect() {
+  const phone = document.getElementById('waPhoneSelect').value;
+  const rawClean = normalizeWaPhone(phone);
+  if (!rawClean) {
+    alert('يرجى تحديد أو إدخال رقم هاتف صحيح للطبيب أولاً.');
+    return;
+  }
+  const text = document.getElementById('waMessageText').value.trim();
+  if (!text) {
+    alert('يرجى كتابة رسالة لإرسالها.');
+    return;
+  }
+  const url = `https://wa.me/${rawClean}?text=${encodeURIComponent(text)}`;
+  window.open(url, '_blank');
 }
 </script>
 </main>

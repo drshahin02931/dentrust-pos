@@ -287,6 +287,7 @@ function renderTable() {
       <td class="px-4 py-3">${statusBadge(inv)}</td>
       <td class="px-4 py-3" onclick="event.stopPropagation()">
         <div class="flex gap-1.5 flex-wrap">
+          <button onclick="sendInvoiceWhatsApp(${inv.id})" class="text-xs bg-emerald-50 text-emerald-800 border border-emerald-300 px-2.5 py-1.5 rounded-lg hover:bg-emerald-100 font-bold flex items-center gap-1 shadow-2xs" title="إرسال الفاتورة عبر واتساب"><span>💬</span> واتساب</button>
           <button onclick="viewInvoice(${inv.id})" class="text-xs bg-blue-50 text-blue-700 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 font-medium">عرض</button>
           <button onclick="printInv(${inv.id})" class="text-xs bg-gray-50 text-gray-600 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 font-medium">طباعة</button>
           ${canReturnThis ? `<button onclick="openReturn(${inv.id})" class="text-xs bg-orange-50 text-orange-700 px-2.5 py-1.5 rounded-lg hover:bg-orange-100 font-medium">↩️ استرجاع</button>` : ''}
@@ -422,6 +423,7 @@ async function viewInvoice(id) {
 
   const canReturnThis = CAN_RETURN && inv.return_status < 2;
   document.getElementById("modalActions").innerHTML = `
+    <button onclick="sendInvoiceWhatsApp(${inv.id})" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl shadow-sm flex items-center justify-center gap-1.5">💬 إرسال واتساب</button>
     <button onclick="printInv(${inv.id})" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl hover:bg-gray-200">🖨️ طباعة</button>
     <button onclick="openEditCustomer(${inv.id},(inv.customer_name||''),(inv.customer_phone||''),(inv.customer_address||inv.customer_city||''))" class="flex-1 bg-purple-100 text-purple-700 font-semibold py-2.5 rounded-xl hover:bg-purple-200">✏️ تعديل العميل</button>
     ${IS_MGR ? `<button onclick="openEditPrices(${inv.id})" class="flex-1 bg-yellow-100 text-yellow-700 font-semibold py-2.5 rounded-xl hover:bg-yellow-200">💲 تعديل الأسعار</button>` : ''}
@@ -958,6 +960,104 @@ async function saveEditPrices() {
   alert(`✅ تم تحديث الأسعار — الإجمالي الجديد: ${data.new_total.toFixed(2)} جنيه`);
 }
 
+// ── WhatsApp Invoice Sender ─────────────────────────────────────────────────
+async function sendInvoiceWhatsApp(id) {
+  try {
+    const res = await fetch(`${BASE}/api/invoices/${id}`);
+    const data = await res.json();
+    if (!res.ok || !data.invoice) {
+      alert('تعذر جلب بيانات الفاتورة للإرسال');
+      return;
+    }
+    const inv = data.invoice;
+    const items = data.items || [];
+
+    let phone = inv.customer_phone || '';
+    let customerTotalDebt = 0;
+
+    if (inv.customer_id) {
+      try {
+        const cRes = await fetch(`${BASE}/api/customers/${inv.customer_id}`);
+        if (cRes.ok) {
+          const cData = await cRes.json();
+          const cust = cData.customer || cData;
+          if (!phone && cust.phone) phone = cust.phone;
+          if (!phone && cust.extra_phones) phone = cust.extra_phones.split(',')[0].trim();
+          customerTotalDebt = parseFloat(cust.total_debt || 0);
+        }
+      } catch (_) {}
+    }
+
+    if (!phone) {
+      phone = prompt('يرجى إدخال رقم هاتف الطبيب (واتساب):', '');
+      if (!phone) return;
+    }
+
+    let clean = phone.replace(/[^0-9]/g, '');
+    if (clean.startsWith('0020')) clean = clean.substring(2);
+    else if (clean.startsWith('020')) clean = clean.substring(1);
+    else if (clean.startsWith('+20')) clean = clean.substring(1);
+    else if (clean.startsWith('20')) { /* ok */ }
+    else if (clean.startsWith('01')) clean = '20' + clean.substring(1);
+    else if (clean.startsWith('1')) clean = '20' + clean;
+
+    if (!clean) {
+      alert('رقم الهاتف غير صحيح');
+      return;
+    }
+
+    const doctorName = inv.customer_name || 'دكتورنا العزيز';
+    const total = parseFloat(inv.total_amount || 0) - parseFloat(inv.total_refunded || 0);
+    const paid = (inv.payment_method === 'credit') ? 0 : parseFloat(inv.paid_amount || inv.amount_received || total);
+    const remaining = Math.max(0, total - paid);
+
+    const itemsText = items.map(it => {
+      const netQty = it.net_qty != null ? it.net_qty : it.quantity;
+      const qty = parseInt(netQty || 1, 10);
+      const name = it.product_name || 'صنف';
+      const opt = it.selected_option ? ` [${it.selected_option.includes('::') ? it.selected_option.split('::').pop() : it.selected_option}]` : '';
+      const price = parseFloat(it.unit_price || 0);
+      const sub = (qty * price).toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2});
+      return `▪️ ${qty} × ${name}${opt} (${price} ج) = ${sub} ج.م`;
+    }).join('\n');
+
+    let debtSection = '';
+    if (remaining > 0 || customerTotalDebt > 0) {
+      const totalRemaining = remaining + (customerTotalDebt > 0 && customerTotalDebt !== remaining ? customerTotalDebt : 0);
+      debtSection = `⏳ المتبقي على الفاتورة: ${remaining.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م (آجل)\n`;
+      if (customerTotalDebt > 0 && customerTotalDebt !== remaining) {
+        debtSection += `📋 رصيد سابق مستحق: ${customerTotalDebt.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
+        debtSection += `⚠️ إجمالي المديونية الكلية: ${totalRemaining.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
+      }
+    } else {
+      debtSection = `✅ حالة السداد: مسددة بالكامل كاش ✓\n`;
+    }
+
+    const invoiceUrl = `https://dentrust-pos.onrender.com/invoice/${inv.id}`;
+    const dateFormatted = (inv.date || '').replace('T', ' ').slice(0, 16);
+
+    const msg = `مرحباً دكتور ${doctorName} 🦷✨\n` +
+      `تم إصدار فاتورة طلبك بنجاح من DenTrust!\n\n` +
+      `📄 فاتورة رقم: #${inv.id}\n` +
+      `📅 التاريخ: ${dateFormatted}\n\n` +
+      `📦 محتويات الفاتورة (${items.length} أصناف):\n` +
+      `${itemsText}\n\n` +
+      `💵 إجمالي الفاتورة: ${total.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n` +
+      `💰 المدفوع نقداً: ${paid.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n` +
+      `${debtSection}\n` +
+      `🔗 رابط الفاتورة الإلكترونية للطباعة والعرض:\n` +
+      `${invoiceUrl}\n\n` +
+      `💳 طرق السداد المتاحة:\n` +
+      `1️⃣ فودافون كاش: 01014067776 (أحلام أنور السيد)\n` +
+      `2️⃣ مع مندوب التوصيل في أقرب زيارة للعيادة.\n\n` +
+      `سعداء بخدمة عيادتكم ودايماً تحت أمرك يا دكتور 🌹`;
+
+    const waUrl = `https://wa.me/${clean}?text=${encodeURIComponent(msg)}`;
+    window.open(waUrl, '_blank');
+  } catch (e) {
+    alert('حدث خطأ: ' + e.message);
+  }
+}
 </script>
 
 <!-- modal تعديل العميل -->

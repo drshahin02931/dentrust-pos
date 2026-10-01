@@ -542,13 +542,17 @@
 
     <!-- Action buttons -->
     <div class="px-5 pb-6 space-y-2.5">
+      <button onclick="sendInvoiceWhatsAppFromPos()"
+        class="w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold py-3.5 rounded-2xl text-sm transition-all shadow-md">
+        <span style="font-size:1.2rem;">💬</span> إرسال الفاتورة عبر واتساب
+      </button>
       <button onclick="printAndClose()"
-        class="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold py-4 rounded-2xl text-sm transition-all shadow-sm">
+        class="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold py-3.5 rounded-2xl text-sm transition-all shadow-sm">
         <span style="font-size:1.2rem;">🖨️</span> طباعة الفاتورة وإغلاق
       </button>
       <button onclick="closeSuccess()"
-        class="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 active:scale-95 text-gray-700 font-semibold py-3.5 rounded-2xl text-sm transition-all">
-        إغلاق بدون طباعة
+        class="w-full flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 active:scale-95 text-gray-700 font-semibold py-3 rounded-2xl text-sm transition-all">
+        إغلاق
       </button>
     </div>
 
@@ -1796,6 +1800,17 @@ async function checkout() {
   const data = await res.json();
   if (!res.ok) { alert(data.error || "حدث خطأ"); return; }
   lastSaleId = data.sale_id;
+  _lastSaleSnapshot = {
+    saleId: data.sale_id,
+    items: JSON.parse(JSON.stringify(cart)),
+    customerId: customerId ? parseInt(customerId, 10) : null,
+    customerName: customerName,
+    total: total,
+    method: method,
+    amountReceived: (method === 'credit' ? 0 : (amountReceived != null ? amountReceived : total)),
+    delivery: delivery,
+    discount: discAmt
+  };
 
   // ── Update in-memory product list so variant picker shows fresh stock ───────
   // Reduce variant qty and total qty in _posCatProducts after each sale
@@ -1857,9 +1872,83 @@ function printAndClose() {
   closeSuccess();
 }
 
+function sendInvoiceWhatsAppFromPos() {
+  if (!_lastSaleSnapshot) return;
+  const s = _lastSaleSnapshot;
+  const cust = (customers || []).find(c => c.id === s.customerId) || {};
+  let phone = cust.phone;
+  if (!phone && cust.extra_phones) {
+    phone = cust.extra_phones.split(',')[0].trim();
+  }
+  if (!phone) {
+    phone = prompt('لم يتم العثور على رقم هاتف مسجل للطبيب، يرجى كتابة رقم الواتساب:');
+    if (!phone) return;
+  }
+  
+  let rawClean = phone.replace(/[^0-9]/g, '');
+  if (rawClean.startsWith('0020')) rawClean = rawClean.substring(2);
+  else if (rawClean.startsWith('020')) rawClean = rawClean.substring(1);
+  else if (rawClean.startsWith('+20')) rawClean = rawClean.substring(1);
+  else if (rawClean.startsWith('20')) { /* ok */ }
+  else if (rawClean.startsWith('01')) rawClean = '20' + rawClean.substring(1);
+  else if (rawClean.startsWith('1')) rawClean = '20' + rawClean;
+
+  const doctorName = s.customerName || cust.name || 'دكتورنا العزيز';
+  const total = parseFloat(s.total || 0);
+  const paid = parseFloat(s.amountReceived || (s.method === 'credit' ? 0 : total));
+  const remaining = Math.max(0, total - paid);
+  const prevDebt = parseFloat(cust.total_debt || 0);
+
+  // Format items (Style 1)
+  const itemsText = (s.items || []).map(it => {
+    const qty = it.quantity || 1;
+    const name = it.name || it.product_name || 'صنف';
+    const opt = it.selected_option || it.selected_size || it._size ? ` [${it.selected_option || it.selected_size || it._size}]` : '';
+    const price = parseFloat(it.price || it.unit_price || 0);
+    const sub = (qty * price).toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2});
+    return `▪️ ${qty} × ${name}${opt} (${price} ج) = ${sub} ج.م`;
+  }).join('\n');
+
+  let debtSection = '';
+  if (remaining > 0 || prevDebt > 0) {
+    const totalRemaining = remaining + (prevDebt > 0 ? prevDebt : 0);
+    debtSection = `⏳ المتبقي على الفاتورة: ${remaining.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م (آجل)\n`;
+    if (prevDebt > 0) {
+      debtSection += `📋 رصيد سابق مستحق: ${prevDebt.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
+      debtSection += `⚠️ إجمالي المديونية الكلية: ${totalRemaining.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
+    }
+  } else {
+    debtSection = `✅ حالة السداد: مسددة بالكامل كاش ✓\n`;
+  }
+
+  const invoiceUrl = `https://dentrust-pos.onrender.com/invoice/${s.saleId}`;
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('ar-EG') + ' - ' + now.toLocaleTimeString('ar-EG', {hour:'2-digit', minute:'2-digit'});
+
+  const msg = `مرحباً دكتور ${doctorName} 🦷✨\n` +
+    `تم إصدار فاتورة طلبك بنجاح من DenTrust!\n\n` +
+    `📄 فاتورة رقم: #${s.saleId}\n` +
+    `📅 التاريخ: ${dateStr}\n\n` +
+    `📦 محتويات الفاتورة (${(s.items || []).length} أصناف):\n` +
+    `${itemsText}\n\n` +
+    `💵 إجمالي الفاتورة: ${total.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n` +
+    `💰 المدفوع نقداً: ${paid.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n` +
+    `${debtSection}\n` +
+    `🔗 رابط الفاتورة الإلكترونية للطباعة والعرض:\n` +
+    `${invoiceUrl}\n\n` +
+    `💳 طرق السداد المتاحة:\n` +
+    `1️⃣ فودافون كاش: 01014067776 (أحلام أنور السيد)\n` +
+    `2️⃣ مع مندوب التوصيل في أقرب زيارة للعيادة.\n\n` +
+    `سعداء بخدمة عيادتكم ودايماً تحت أمرك يا دكتور 🌹`;
+
+  const waUrl = `https://wa.me/${rawClean}?text=${encodeURIComponent(msg)}`;
+  window.open(waUrl, '_blank');
+}
+
 function closeSuccess() {
   document.getElementById("successModal").classList.add("hidden");
   lastSaleId = null;
+  _lastSaleSnapshot = null;
   scanInput.focus();
 }
 
