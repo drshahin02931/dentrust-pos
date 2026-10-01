@@ -3147,6 +3147,17 @@ app.get([`${BASE}/website-registrations`, '/website-registrations'], (req, res) 
   return renderPage(req, res, 'website_registrations');
 });
 
+app.get([`${BASE}/api/customers/:cid`, '/api/customers/:cid'], async (req, res) => {
+  const cid = parseInt(req.params.cid, 10);
+  try {
+    const { rows: [customer] } = await posDb.query('SELECT * FROM customers WHERE id=$1', [cid]);
+    if (!customer) return res.status(404).json({ error: 'العميل غير موجود' });
+    res.json({ customer });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
+});
+
 app.get(`${BASE}/api/customers/:cid/orders`, async (req, res) => {
   const cid = parseInt(req.params.cid, 10);
   try {

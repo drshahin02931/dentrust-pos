@@ -964,15 +964,21 @@ async function saveEditPrices() {
 async function sendInvoiceWhatsApp(id) {
   try {
     const res = await fetch(`${BASE}/api/invoices/${id}`);
-    const data = await res.json();
+    if (res.status === 401) {
+      alert('انتهت مدة الجلسة، يرجى تسجيل الدخول مجدداً');
+      window.location.href = `${BASE}/login`;
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.invoice) {
-      alert('تعذر جلب بيانات الفاتورة للإرسال');
+      alert('تعذر جلب بيانات الفاتورة للإرسال: ' + (data.error || 'يرجى إعادة المحاولة'));
       return;
     }
     const inv = data.invoice;
     const items = data.items || [];
 
-    let phone = inv.customer_phone || '';
+    const localInv = (typeof filteredInvoices !== 'undefined' ? filteredInvoices : []).find(x => x.id === id) || {};
+    let phone = inv.customer_phone || localInv.customer_phone || '';
     let customerTotalDebt = 0;
 
     if (inv.customer_id) {
