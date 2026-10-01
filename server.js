@@ -132,6 +132,7 @@ function authGuard(req, res, next) {
   if (OPEN_PATHS.has(req.originalUrl.split('?')[0])) return next();
   if (OPEN_API.some(a => p.endsWith(a) || p.includes(a))) return next();
   if (p.startsWith(`${BASE}/static/`) || p.includes('/static/')) return next();
+  if (p.startsWith(`${BASE}/invoice/`) || p.startsWith('/invoice/')) return next();
   // أي طلب لمسار /api يعتبر طلب بيانات (fetch) مش صفحة — لازم يرجع JSON 401
   // وليس ريدايركت لصفحة الـ HTML بتاعة /login. قبل كذا كان بيعتمد على
   // req.xhr / Accept header اللي fetch() العادي مبيبعتهاش، فكان أي انقطاع
