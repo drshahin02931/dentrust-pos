@@ -399,7 +399,7 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
     }
     const st = await getSettings();
     res.render('invoice', { sale, items, customer, previousBalance, totalReturned, netTotal, st, base: BASE,
-      canEditPrices: hasPerm(req, 'edit_prices'), isMgr: isMgr(req), cashierName: sale.cashier_name || req.session?.username || null });
+      canEditPrices: hasPerm(req, 'edit_prices'), isMgr: isMgr(req), isStaff: !!req.session?.user_id, cashierName: sale.cashier_name || req.session?.username || null });
   } catch (err) {
     console.error(err);
     res.status(500).send('خطأ داخلي');
@@ -477,7 +477,7 @@ app.get(`${BASE}/invoice/order/:order_id`, async (req, res) => {
 
     res.render('invoice', {
       sale, items, customer, previousBalance, totalReturned, netTotal, st, base: BASE,
-      canEditPrices: false, isMgr: isMgr(req), cashierName: 'طلب أونلاين'
+      canEditPrices: false, isMgr: isMgr(req), isStaff: !!req.session?.user_id, cashierName: 'طلب أونلاين'
     });
   } catch (err) {
     console.error(err);

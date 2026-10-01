@@ -411,8 +411,9 @@ const _validAddress = cleanAddr(sale.clinic_address) || cleanAddr(customer && cu
     <% if (showEn) { %><%- invoiceFooterEn %><% } %>
   </div>
 
-  <!-- ── Edit Section (screen only, never printed) ── -->
+  <!-- ── Action & Print Buttons (screen only, never printed) ── -->
   <div class="no-print" style="margin-top:14px;border-top:2px dashed #ccc;padding-top:12px;">
+    <% if (locals.isStaff) { %>
     <!-- Edit Customer Info -->
     <div id="editCustomerBox" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px;margin-bottom:8px;">
       <div style="font-size:11px;font-weight:900;margin-bottom:6px;color:#0369a1;">✏️ تعديل بيانات العميل</div>
@@ -474,25 +475,29 @@ const _validAddress = cleanAddr(sale.clinic_address) || cleanAddr(customer && cu
       <div id="editPriceMsg" style="font-size:10px;margin-top:4px;color:green;display:none;"></div>
     </div>
     <% } %>
+    <% } %>
 
-    <!-- Edit Buttons Row -->
+    <!-- Action Buttons Row -->
     <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-bottom:8px;">
+      <button onclick="window.print()"
+        style="display:inline-flex;align-items:center;gap:6px;background:#0a2463;color:#fff;border:none;padding:8px 24px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;box-shadow:0 2px 6px rgba(10,36,99,0.25);">
+        🖨️ طباعة
+      </button>
+      <% if (locals.isStaff) { %>
       <button onclick="toggleBox('editCustomerBox')"
-        style="display:inline-flex;align-items:center;gap:4px;background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:bold;cursor:pointer;">
+        style="display:inline-flex;align-items:center;gap:4px;background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:6px 14px;border-radius:20px;font-size:11px;font-weight:bold;cursor:pointer;">
         👤 تعديل العميل
       </button>
       <% if (canEditPrices) { %>
       <button onclick="toggleBox('editPricesBox')"
-        style="display:inline-flex;align-items:center;gap:4px;background:#fefce8;color:#92400e;border:1px solid #fde68a;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:bold;cursor:pointer;">
+        style="display:inline-flex;align-items:center;gap:4px;background:#fefce8;color:#92400e;border:1px solid #fde68a;padding:6px 14px;border-radius:20px;font-size:11px;font-weight:bold;cursor:pointer;">
         💲 تعديل الأسعار
       </button>
       <% } %>
-      <button onclick="window.print()"
-        style="display:inline-flex;align-items:center;gap:4px;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:bold;cursor:pointer;">
-        🖨️ طباعة
-      </button>
+      <% } %>
     </div>
 
+    <% if (locals.isStaff) { %>
     <script>
     const _BASE_EDIT = "<%- base %>";
     const _SALE_ID   = <%= sale.id %>;
@@ -547,32 +552,8 @@ const _validAddress = cleanAddr(sale.clinic_address) || cleanAddr(customer && cu
       } catch(e) { msg.textContent = '❌ ' + e.message; msg.style.color='red'; msg.style.display='block'; }
     }
     </script>
+    <% } %>
   </div>
-
-  <% if (customer && customer.phone) { %>
-  <div style="margin-top:10px;text-align:center;" class="no-print">
-    <a id="waBtn" href="#" target="_blank"
-       style="display:inline-flex;align-items:center;gap:6px;background:#25d366;color:#fff;text-decoration:none;padding:7px 16px;border-radius:20px;font-size:12px;font-weight:bold;">
-      <svg width="14" height="14" fill="white" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.123 1.532 5.855L.054 23.5l5.819-1.527A11.938 11.938 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.012-1.375l-.36-.213-3.727.977.994-3.63-.235-.374A9.818 9.818 0 1112 21.818z"/></svg>
-      إرسال واتساب
-    </a>
-  </div>
-  <script>
-    (function(){
-      var phone = "<%= customer.phone %>".replace(/[^0-9]/g, "");
-      var intl  = phone.startsWith("0") ? "2" + phone : phone;
-      var store = "<%- (st && st.store_name) || 'المحل' %>";
-      var items = [<% for (let _i=0; _i<items.length; _i++) { const it=items[_i]; const _nq=parseInt(it.net_qty!=null?it.net_qty:it.quantity); if(_nq<=0&&parseInt(it.returned_qty||0)>0) continue; const _opt=it.selected_option ? (' (' + (it.selected_option.includes('::')?it.selected_option.split('::').pop():it.selected_option) + ')') : ''; %>"<%- it.product_name.replace(/"/g,'\\"') %><%- _opt %> ×<%= _nq %>"<%= _i < items.length-1 ? ',' : '' %><% } %>];
-      var total = "<%= fmt(_netTotal) %>";
-      var discLine = <%= _hasDiscount ? `'\\nالمجموع قبل الخصم: ' + '${fmt(_subtotalBeforeDiscount)}' + ' جنيه\\nخصم: -' + '${fmt(sale.discount_amount)}' + ' جنيه'` : "''" %>;
-      var delivLine = <%= _hasDelivery ? `'\\nمصاريف التوصيل: +' + '${fmt(_effectiveDelivery)}' + ' جنيه'` : "''" %>;
-      var msg   = "🧾 فاتورة من " + store + "\n#<%= sale.id %> — <%= saleDateDay %>\n\n" +
-                  items.join("\n") + "\n" +
-                  discLine + delivLine + "\n\nالإجمالي: " + total + " جنيه\nشكراً لتعاملكم معنا 🙏";
-      document.getElementById("waBtn").href = "https://wa.me/" + intl + "?text=" + encodeURIComponent(msg);
-    })();
-  </script>
-  <% } %>
 
   <script>
     window.onload = function() {
