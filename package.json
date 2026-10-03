@@ -10,6 +10,7 @@
     "dev": "node server.js"
   },
   "dependencies": {
+    "basic-ftp": "^6.2.1",
     "bcryptjs": "^2.4.3",
     "bwip-js": "^4.11.1",
     "connect-pg-simple": "^9.0.1",
@@ -30,9 +31,8 @@
     "pg-protocol": "^1.7.0",
     "pg-types": "^2.2.0",
     "pgpass": "^1.0.5",
-    "uuid": "^9.0.1",
-    "web-push": "^3.6.7",
     "sharp": "^0.33.5",
-    "basic-ftp": "^6.2.1"
+    "uuid": "^9.0.1",
+    "web-push": "^3.6.7"
   }
 }

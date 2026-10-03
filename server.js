@@ -13,6 +13,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const bwip = require('bwip-js');
 const webpush = require('web-push');
+const ExcelJS = require('exceljs');
 const { posDb, dentrustDb, sessionDb, initDb, seedManager, verifyPassword, hashPassword, getSettings, ALL_PERMS, EMPLOYEE_DEFAULT_PERMS } = require('./db');
 const { EGYPT_GOVERNORATES, normalizeArabicText, parseEgyptianAddress, normalizeEgyptianAddresses } = require('./address-parser');
 const { processAndUploadProductImage } = require('./image-uploader');
@@ -4823,6 +4824,527 @@ app.get(`${BASE}/api/export/csv`, async (req, res) => {
     const csv = [headers.join(','), ...rows.map(r => headers.map(h => `"${String(r[h] || '').replace(/"/g, '""')}"`).join(','))].join('\n');
     res.set('Content-Type', 'text/csv; charset=utf-8').set('Content-Disposition', `attachment; filename="${type}.csv"`).send('\uFEFF' + csv);
   } catch (err) { res.status(500).send('خطأ'); }
+});
+
+// ── API: Professional Excel (.xlsx) Export ──────────────────────────────────
+app.get(`${BASE}/api/export/excel`, async (req, res) => {
+  const type = req.query.type || 'pricelist'; // 'pricelist' | 'warehouse_full'
+  try {
+    // 1. Fetch products from store
+    const { rows: prods } = await posDb.query(`
+      SELECT 
+        p.id,
+        p.barcode,
+        p.product_name,
+        p.category,
+        COALESCE(p.purchase_price, 0) AS cost_price,
+        COALESCE(p.sale_price, 0) AS sale_price,
+        COALESCE(p.quantity, 0) AS shop_quantity,
+        COALESCE(p.min_stock, 0) AS min_stock,
+        p.variants,
+        p.checkbox_values
+      FROM products p
+      ORDER BY p.category ASC, p.product_name ASC
+    `).catch(() => ({ rows: [] }));
+
+    // 2. Fetch central warehouse items & batches
+    const { rows: whItems } = await posDb.query(`
+      SELECT 
+        w.id,
+        w.product_id,
+        w.barcode,
+        w.product_name,
+        w.category,
+        COALESCE(w.cost_price, 0) AS cost_price,
+        COALESCE(w.sale_price, 0) AS sale_price,
+        COALESCE(w.quantity, 0) AS quantity,
+        w.variants,
+        w.checkbox_values
+      FROM warehouse_items w
+      ORDER BY w.id ASC
+    `).catch(() => ({ rows: [] }));
+
+    const { rows: batches } = await posDb.query(`
+      SELECT 
+        warehouse_item_id, 
+        COALESCE(SUM(quantity), 0) AS total_qty, 
+        MAX(cost_price) AS latest_cost
+      FROM warehouse_batches 
+      WHERE quantity > 0
+      GROUP BY warehouse_item_id
+    `).catch(() => ({ rows: [] }));
+
+    // Map batches to warehouse items
+    const batchMap = {};
+    (batches || []).forEach(b => {
+      batchMap[b.warehouse_item_id] = {
+        qty: parseInt(b.total_qty || 0, 10),
+        cost: parseFloat(b.latest_cost || 0)
+      };
+    });
+
+    const matchedWhIds = new Set();
+    const whByProdId = {};
+    const whByBarcode = {};
+    const whByName = {};
+
+    whItems.forEach(w => {
+      const bInfo = batchMap[w.id];
+      if (bInfo) {
+        w.quantity = bInfo.qty;
+        if (bInfo.cost > 0) w.cost_price = bInfo.cost;
+      }
+      if (w.product_id) whByProdId[w.product_id] = w;
+      if (w.barcode && String(w.barcode).trim()) whByBarcode[String(w.barcode).trim()] = w;
+      if (w.product_name && String(w.product_name).trim()) whByName[String(w.product_name).trim().toLowerCase()] = w;
+    });
+
+    // Helper to format variants / checkbox specs
+    function formatSpecs(variants, checkboxValues) {
+      const parts = [];
+      if (checkboxValues) {
+        let cbv = checkboxValues;
+        if (typeof cbv === 'string') {
+          try { cbv = JSON.parse(cbv); } catch (_) {}
+        }
+        if (typeof cbv === 'object' && cbv !== null) {
+          for (const [k, v] of Object.entries(cbv)) {
+            if (!k) continue;
+            if (typeof v === 'object' && v !== null) {
+              const qty = v.stock != null ? v.stock : (v.quantity != null ? v.quantity : '');
+              parts.push(qty !== '' ? `${k} (${qty})` : k);
+            } else if (typeof v === 'number' || typeof v === 'string') {
+              parts.push(`${k} (${v})`);
+            } else if (v === true) {
+              parts.push(k);
+            }
+          }
+        }
+      }
+      if (parts.length > 0) return parts.join(' | ');
+      if (variants) {
+        if (typeof variants === 'string') return variants.trim();
+        if (Array.isArray(variants)) return variants.join(' | ');
+      }
+      return '—';
+    }
+
+    // Build unified item list
+    const combined = [];
+    prods.forEach(p => {
+      let matchedWh = null;
+      if (whByProdId[p.id]) {
+        matchedWh = whByProdId[p.id];
+      } else if (p.barcode && whByBarcode[String(p.barcode).trim()]) {
+        matchedWh = whByBarcode[String(p.barcode).trim()];
+      } else if (p.product_name && whByName[String(p.product_name).trim().toLowerCase()]) {
+        matchedWh = whByName[String(p.product_name).trim().toLowerCase()];
+      }
+
+      if (matchedWh) matchedWhIds.add(matchedWh.id);
+
+      const whQty = matchedWh ? parseInt(matchedWh.quantity || 0, 10) : 0;
+      const shopQty = parseInt(p.shop_quantity || 0, 10);
+      let costPrice = parseFloat(p.cost_price || 0);
+      if (costPrice === 0 && matchedWh && parseFloat(matchedWh.cost_price || 0) > 0) {
+        costPrice = parseFloat(matchedWh.cost_price);
+      }
+      let salePrice = parseFloat(p.sale_price || 0);
+      if (salePrice === 0 && matchedWh && parseFloat(matchedWh.sale_price || 0) > 0) {
+        salePrice = parseFloat(matchedWh.sale_price);
+      }
+
+      combined.push({
+        id: p.id,
+        barcode: p.barcode || '',
+        name: p.product_name || '',
+        category: p.category || 'عام',
+        specs: formatSpecs(p.variants, p.checkbox_values || (matchedWh ? matchedWh.checkbox_values : null)),
+        shop_qty: shopQty,
+        wh_qty: whQty,
+        total_qty: shopQty + whQty,
+        cost_price: costPrice,
+        sale_price: salePrice,
+        min_stock: parseInt(p.min_stock || 0, 10),
+      });
+    });
+
+    // Add unlinked warehouse items (items in warehouse not in products table)
+    whItems.forEach(w => {
+      if (!matchedWhIds.has(w.id)) {
+        const whQty = parseInt(w.quantity || 0, 10);
+        combined.push({
+          id: `WH-${w.id}`,
+          barcode: w.barcode || '',
+          name: w.product_name || '',
+          category: w.category || 'المستودع الرئيسي',
+          specs: formatSpecs(w.variants, w.checkbox_values),
+          shop_qty: 0,
+          wh_qty: whQty,
+          total_qty: whQty,
+          cost_price: parseFloat(w.cost_price || 0),
+          sale_price: parseFloat(w.sale_price || 0),
+          min_stock: 0,
+        });
+      }
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'DenTrust Dental POS';
+    workbook.created = new Date();
+
+    const nowStr = new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    if (type === 'pricelist') {
+      // ══════════════════════════════════════════════════════════════════════
+      // TYPE: PRICE LIST (قائمة أسعار للعملاء بدون تكاليف)
+      // ══════════════════════════════════════════════════════════════════════
+      const sheet = workbook.addWorksheet('قائمة الأسعار', {
+        views: [{ rightToLeft: true }]
+      });
+
+      // Title rows
+      sheet.mergeCells('A1:H1');
+      const titleCell = sheet.getCell('A1');
+      titleCell.value = '🦷 DenTrust Dental Supplies — قائمة أسعار الخامات والمستلزمات الطبية';
+      titleCell.font = { name: 'Segoe UI', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0A2463' } };
+      titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+      sheet.getRow(1).height = 42;
+
+      sheet.mergeCells('A2:H2');
+      const subCell = sheet.getCell('A2');
+      subCell.value = `تاريخ الإصدار: ${nowStr}  |  إجمالي الأصناف المعروضة: ${combined.length} صنف  |  الأسعار بالجنيه المصري (EGP)`;
+      subCell.font = { name: 'Segoe UI', size: 10, italic: true, color: { argb: 'FF334155' } };
+      subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      subCell.alignment = { vertical: 'middle', horizontal: 'center' };
+      sheet.getRow(2).height = 24;
+
+      sheet.addRow([]); // Blank row 3
+      sheet.getRow(3).height = 10;
+
+      // Table Header row 4
+      const headers = [
+        'م',
+        'كود الصنف',
+        'الباركود',
+        'اسم الخامة / الصنف',
+        'القسم / التصنيف',
+        'المقاسات والمواصفات المتاحة',
+        'سعر البيع',
+        'حالة التوفر'
+      ];
+      const headerRow = sheet.addRow(headers);
+      headerRow.height = 30;
+      headerRow.eachCell((cell) => {
+        cell.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A8A' } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        cell.border = {
+          top: { style: 'medium', color: { argb: 'FF0A2463' } },
+          bottom: { style: 'medium', color: { argb: 'FF0A2463' } },
+          left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+          right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+        };
+      });
+
+      // Data Rows
+      combined.forEach((item, idx) => {
+        let availability = 'متوفر';
+        let availColor = 'FF15803D'; // green
+        if (item.total_qty <= 0) {
+          availability = 'غير متوفر حالياً';
+          availColor = 'FFDC2626'; // red
+        } else if (item.total_qty <= 3) {
+          availability = 'كمية محدودة';
+          availColor = 'FFD97706'; // amber
+        }
+
+        const row = sheet.addRow([
+          idx + 1,
+          item.id,
+          item.barcode || '—',
+          item.name,
+          item.category,
+          item.specs,
+          item.sale_price,
+          availability
+        ]);
+        row.height = 24;
+
+        const isEven = idx % 2 === 0;
+        const rowBg = isEven ? 'FFFFFFFF' : 'FFF8FAFC';
+
+        row.eachCell((cell, colNumber) => {
+          cell.font = { name: 'Segoe UI', size: 10, color: { argb: 'FF1E293B' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+          };
+
+          // Alignment
+          if (colNumber === 4 || colNumber === 5 || colNumber === 6) {
+            cell.alignment = { vertical: 'middle', horizontal: 'right', wrapText: true };
+          } else {
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+          }
+
+          // Price formatting
+          if (colNumber === 7) {
+            cell.numFmt = '#,##0.00 "ج.م"';
+            cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+          }
+
+          // Availability formatting
+          if (colNumber === 8) {
+            cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: availColor } };
+          }
+        });
+      });
+
+      // Column widths
+      sheet.getColumn(1).width = 7;   // م
+      sheet.getColumn(2).width = 13;  // كود الصنف
+      sheet.getColumn(3).width = 18;  // الباركود
+      sheet.getColumn(4).width = 36;  // اسم الخامة
+      sheet.getColumn(5).width = 20;  // القسم
+      sheet.getColumn(6).width = 32;  // المقاسات
+      sheet.getColumn(7).width = 18;  // سعر البيع
+      sheet.getColumn(8).width = 18;  // حالة التوفر
+
+      const filename = `قائمة_أسعار_DenTrust_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+      const buffer = await workbook.xlsx.writeBuffer();
+      return res.send(buffer);
+
+    } else {
+      // ══════════════════════════════════════════════════════════════════════
+      // TYPE: WAREHOUSE FULL (جرد المخزن الشامل مع التكاليف والمحل والأرباح)
+      // ══════════════════════════════════════════════════════════════════════
+      const sheet = workbook.addWorksheet('جرد المخزن الشامل', {
+        views: [{ rightToLeft: true }]
+      });
+
+      // Title Banner
+      sheet.mergeCells('A1:P1');
+      const titleCell = sheet.getCell('A1');
+      titleCell.value = '🏢 DenTrust Dental Supplies — تقرير جرد المخزن والمستودع الشامل';
+      titleCell.font = { name: 'Segoe UI', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+      titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+      sheet.getRow(1).height = 42;
+
+      sheet.mergeCells('A2:P2');
+      const subCell = sheet.getCell('A2');
+      subCell.value = `تاريخ الجرد: ${nowStr}  |  شامل رصيد المحل والمستودع المركزي ورأس المال المستثمر والأرباح المتوقعة`;
+      subCell.font = { name: 'Segoe UI', size: 10, italic: true, color: { argb: 'FF475569' } };
+      subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      subCell.alignment = { vertical: 'middle', horizontal: 'center' };
+      sheet.getRow(2).height = 24;
+
+      sheet.addRow([]); // Blank row 3
+      sheet.getRow(3).height = 10;
+
+      // Table Headers row 4
+      const headers = [
+        'م',
+        'كود الصنف',
+        'الباركود',
+        'اسم الخامة / الصنف',
+        'القسم',
+        'المقاسات والمواصفات',
+        'رصيد المحل',
+        'رصيد المستودع',
+        'إجمالي الكمية',
+        'سعر التكلفة',
+        'سعر البيع',
+        'إجمالي رأس المال',
+        'إجمالي القيمة البيعية',
+        'صافي الربح المتوقع',
+        'حد الطلب',
+        'حالة المخزون'
+      ];
+      const headerRow = sheet.addRow(headers);
+      headerRow.height = 32;
+      headerRow.eachCell((cell) => {
+        cell.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0A2463' } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        cell.border = {
+          top: { style: 'medium', color: { argb: 'FF020617' } },
+          bottom: { style: 'medium', color: { argb: 'FF020617' } },
+          left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+          right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+        };
+      });
+
+      let sumShopQty = 0;
+      let sumWhQty = 0;
+      let sumTotalQty = 0;
+      let sumTotalCost = 0;
+      let sumTotalRevenue = 0;
+      let sumTotalProfit = 0;
+
+      combined.forEach((item, idx) => {
+        const totalQty = item.total_qty;
+        const totalCost = totalQty * item.cost_price;
+        const totalRev = totalQty * item.sale_price;
+        const profit = totalRev - totalCost;
+
+        sumShopQty += item.shop_qty;
+        sumWhQty += item.wh_qty;
+        sumTotalQty += totalQty;
+        sumTotalCost += totalCost;
+        sumTotalRevenue += totalRev;
+        sumTotalProfit += profit;
+
+        let statusText = '✅ متوفر';
+        let statusColor = 'FF15803D';
+        if (totalQty <= 0) {
+          statusText = '❌ نفذ من المخزون';
+          statusColor = 'FFDC2626';
+        } else if (item.min_stock > 0 && totalQty <= item.min_stock) {
+          statusText = '⚠️ بلغ حد الطلب';
+          statusColor = 'FFD97706';
+        }
+
+        const row = sheet.addRow([
+          idx + 1,
+          item.id,
+          item.barcode || '—',
+          item.name,
+          item.category,
+          item.specs,
+          item.shop_qty,
+          item.wh_qty,
+          totalQty,
+          item.cost_price,
+          item.sale_price,
+          totalCost,
+          totalRev,
+          profit,
+          item.min_stock || '—',
+          statusText
+        ]);
+        row.height = 24;
+
+        const isEven = idx % 2 === 0;
+        const rowBg = isEven ? 'FFFFFFFF' : 'FFF8FAFC';
+
+        row.eachCell((cell, colNumber) => {
+          cell.font = { name: 'Segoe UI', size: 10, color: { argb: 'FF1E293B' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+            right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+          };
+
+          // Alignment
+          if (colNumber === 4 || colNumber === 5 || colNumber === 6) {
+            cell.alignment = { vertical: 'middle', horizontal: 'right', wrapText: true };
+          } else {
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+          }
+
+          // Quantities formatting
+          if (colNumber === 7 || colNumber === 8 || colNumber === 9) {
+            cell.numFmt = '#,##0';
+            cell.font = { name: 'Segoe UI', size: 10, bold: colNumber === 9, color: { argb: 'FF0F172A' } };
+          }
+
+          // Financial columns formatting
+          if (colNumber === 10 || colNumber === 11 || colNumber === 12 || colNumber === 13 || colNumber === 14) {
+            cell.numFmt = '#,##0.00 "ج.م"';
+          }
+          if (colNumber === 12) {
+            cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FFB45309' } }; // Amber/Cost
+          }
+          if (colNumber === 13) {
+            cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF1D4ED8' } }; // Blue/Revenue
+          }
+          if (colNumber === 14) {
+            cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: profit >= 0 ? 'FF15803D' : 'FFDC2626' } }; // Profit
+          }
+          if (colNumber === 16) {
+            cell.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: statusColor } };
+          }
+        });
+      });
+
+      // Add Total / Summary Row at the bottom
+      const totalRow = sheet.addRow([
+        'الإجمالي',
+        '',
+        '',
+        `إجمالي أصناف الجرد: ${combined.length}`,
+        '',
+        '',
+        sumShopQty,
+        sumWhQty,
+        sumTotalQty,
+        '',
+        '',
+        sumTotalCost,
+        sumTotalRevenue,
+        sumTotalProfit,
+        '',
+        ''
+      ]);
+      totalRow.height = 32;
+
+      totalRow.eachCell((cell, colNumber) => {
+        cell.font = { name: 'Segoe UI', size: 11, bold: true, color: { argb: 'FF0F172A' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } }; // Soft Amber
+        cell.border = {
+          top: { style: 'medium', color: { argb: 'FFD97706' } },
+          bottom: { style: 'double', color: { argb: 'FFD97706' } },
+          left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+          right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+        };
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+
+        if (colNumber === 7 || colNumber === 8 || colNumber === 9) {
+          cell.numFmt = '#,##0';
+        }
+        if (colNumber === 12 || colNumber === 13 || colNumber === 14) {
+          cell.numFmt = '#,##0.00 "ج.م"';
+        }
+      });
+
+      // Column widths
+      sheet.getColumn(1).width = 7;   // م
+      sheet.getColumn(2).width = 12;  // كود الصنف
+      sheet.getColumn(3).width = 16;  // الباركود
+      sheet.getColumn(4).width = 34;  // اسم الخامة
+      sheet.getColumn(5).width = 18;  // القسم
+      sheet.getColumn(6).width = 30;  // المقاسات
+      sheet.getColumn(7).width = 13;  // رصيد المحل
+      sheet.getColumn(8).width = 14;  // رصيد المستودع
+      sheet.getColumn(9).width = 14;  // إجمالي الكمية
+      sheet.getColumn(10).width = 15; // سعر التكلفة
+      sheet.getColumn(11).width = 15; // سعر البيع
+      sheet.getColumn(12).width = 22; // إجمالي رأس المال
+      sheet.getColumn(13).width = 22; // إجمالي القيمة البيعية
+      sheet.getColumn(14).width = 20; // صافي الربح
+      sheet.getColumn(15).width = 12; // حد الطلب
+      sheet.getColumn(16).width = 18; // حالة المخزون
+
+      const filename = `جرد_المخزن_الشامل_DenTrust_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+      const buffer = await workbook.xlsx.writeBuffer();
+      return res.send(buffer);
+    }
+  } catch (err) {
+    console.error('[Export Excel Error]', err);
+    res.status(500).send('حدث خطأ أثناء تصدير ملف الإكسيل: ' + err.message);
+  }
 });
 
 // ── Supabase Storage Image Upload ─────────────────────────────────────────────

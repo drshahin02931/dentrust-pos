@@ -9,7 +9,31 @@
       </h1>
       <p class="text-xs text-gray-500 mt-1">إدارة بضاعة المخزن الرئيسي، تعدد الشحنات والتكاليف، وتواريخ الصلاحية، وتحويل المقاسات للمحل</p>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
+      <!-- Excel Export Dropdown -->
+      <div class="relative inline-block text-right" id="whExcelDropdownWrapper">
+        <button type="button" onclick="toggleWhExcelDropdown(event)" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl font-bold shadow flex items-center gap-2 text-sm transition-all">
+          <span>📊</span>
+          <span>تصدير إكسيل (Excel)</span>
+          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+        </button>
+        <div id="whExcelExportMenu" class="hidden absolute left-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-gray-100 py-2 z-50">
+          <a href="<%= base %>/api/export/excel?type=pricelist" class="flex items-start gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-800 border-b border-gray-100 transition-colors">
+            <span class="text-xl">📋</span>
+            <div>
+              <div class="font-bold text-gray-900">قائمة أسعار (Price List)</div>
+              <div class="text-xs text-gray-500">للعملاء والعيادات (بدون تكلفة أو أرباح)</div>
+            </div>
+          </a>
+          <a href="<%= base %>/api/export/excel?type=warehouse_full" class="flex items-start gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-800 transition-colors">
+            <span class="text-xl">🏢</span>
+            <div>
+              <div class="font-bold text-gray-900">جرد المخزن الشامل</div>
+              <div class="text-xs text-gray-500">يشمل رصيد المحل والمستودع والتكاليف والأرباح</div>
+            </div>
+          </a>
+        </div>
+      </div>
       <a href="<%= base %>/product-movements" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-4 py-2.5 rounded-xl text-sm border border-indigo-200 transition-all flex items-center gap-1.5">
         <span>📜</span> سجل الحركات
       </a>
@@ -2620,6 +2644,21 @@ function quickTransferSpecificVariant(itemId, optKey, availWh) {
     selectTrVariant(optKey, availWh);
   }, 100);
 }
+
+function toggleWhExcelDropdown(e) {
+  if (e) e.stopPropagation();
+  const menu = document.getElementById('whExcelExportMenu');
+  if (menu) menu.classList.toggle('hidden');
+}
+document.addEventListener('click', function(e) {
+  const menu = document.getElementById('whExcelExportMenu');
+  const wrapper = document.getElementById('whExcelDropdownWrapper');
+  if (menu && !menu.classList.contains('hidden')) {
+    if (!wrapper || !wrapper.contains(e.target)) {
+      menu.classList.add('hidden');
+    }
+  }
+});
 
 document.addEventListener('DOMContentLoaded', loadWarehouseData);
 </script>
