@@ -465,16 +465,16 @@ function renderReport(data) {
   }
 
   // 4. Expiry Tracker Table (Color tiered)
-  const expTbody = document.getElementById('expiriesTableBody');
+  const expiryTbody = document.getElementById('expiriesTableBody');
   const noExpTableMsg = document.getElementById('noExpiriesMsg');
-  const expList = data.expiries || [];
+  const expiryList = data.expiries || [];
 
-  if (expList.length === 0) {
-    expTbody.innerHTML = '';
+  if (expiryList.length === 0) {
+    expiryTbody.innerHTML = '';
     noExpTableMsg.classList.remove('hidden');
   } else {
     noExpTableMsg.classList.add('hidden');
-    expTbody.innerHTML = expList.map((e, idx) => {
+    expiryTbody.innerHTML = expiryList.map((e, idx) => {
       let badgeClass = 'badge-green';
       let rowClass = 'tier-green';
       if (e.tier === 'red') {
