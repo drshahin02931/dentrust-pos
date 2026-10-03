@@ -1892,12 +1892,51 @@ document.addEventListener('click', function(e) {
 
 async function downloadExcelFile(type, btn) {
   const originalHtml = btn ? btn.innerHTML : '';
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const defaultFilename = type === 'pricelist' 
+    ? `قائمة_أسعار_DenTrust_${dateStr}.xlsx`
+    : `جرد_المخزن_الشامل_DenTrust_${dateStr}.xlsx`;
+
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = '<span>⏳</span><span>جارٍ التنزيل...</span>';
+    btn.innerHTML = '<span>⏳</span><span>جارٍ التجهيز...</span>';
   }
 
   try {
+    // 1. Desktop Chrome/Edge Native Windows Save Dialog (for PWA & Windows App)
+    if (window.showSaveFilePicker) {
+      let fileHandle;
+      try {
+        fileHandle = await window.showSaveFilePicker({
+          suggestedName: defaultFilename,
+          types: [{
+            description: 'Excel Spreadsheet (*.xlsx)',
+            accept: {
+              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
+            }
+          }]
+        });
+      } catch (pickerErr) {
+        // User cancelled the file picker dialog
+        return;
+      }
+
+      if (btn) btn.innerHTML = '<span>⏳</span><span>جارٍ حفظ الملف...</span>';
+
+      const res = await fetch(`<%= base %>/api/export/excel?type=${type}`);
+      if (!res.ok) throw new Error('تعذر جلب الملف من السيرفر (كود ' + res.status + ')');
+      const blob = await res.blob();
+
+      const writableStream = await fileHandle.createWritable();
+      await writableStream.write(blob);
+      await writableStream.close();
+
+      alert('✅ تم حفظ ملف الإكسيل بنجاح على جهازك!');
+      return;
+    }
+
+    // 2. Fallback for Mobile / other browsers
+    if (btn) btn.innerHTML = '<span>⏳</span><span>جارٍ التنزيل...</span>';
     const res = await fetch(`<%= base %>/api/export/excel?type=${type}`);
     if (!res.ok) throw new Error('تعذر جلب الملف من السيرفر (كود ' + res.status + ')');
     const blob = await res.blob();
@@ -1905,18 +1944,18 @@ async function downloadExcelFile(type, btn) {
     const a = document.createElement('a');
     a.style.display = 'none';
     a.href = url;
-    const dateStr = new Date().toISOString().slice(0, 10);
-    a.download = type === 'pricelist' 
-      ? `قائمة_أسعار_DenTrust_${dateStr}.xlsx`
-      : `جرد_المخزن_الشامل_DenTrust_${dateStr}.xlsx`;
+    a.download = defaultFilename;
     document.body.appendChild(a);
     a.click();
     setTimeout(() => {
       a.remove();
       window.URL.revokeObjectURL(url);
-    }, 2000);
+    }, 3000);
+
   } catch (err) {
-    alert('حدث خطأ أثناء تحميل الملف: ' + err.message);
+    if (err.name !== 'AbortError') {
+      alert('حدث خطأ أثناء تحميل الملف: ' + err.message);
+    }
   } finally {
     if (btn) {
       btn.disabled = false;
