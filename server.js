@@ -4083,10 +4083,12 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
 
   try {
     // 1. Financial: Sales summary on this date
+    // Note: in sales table, total_amount is already the net amount after discount.
+    // Therefore, gross_sales before discount = total_amount + discount_amount.
     const { rows: [salesSummary] } = await posDb.query(`
       SELECT 
         COUNT(s.id) AS invoices_count,
-        COALESCE(SUM(s.total_amount), 0) AS gross_sales,
+        COALESCE(SUM(s.total_amount + COALESCE(s.discount_amount, 0)), 0) AS gross_sales,
         COALESCE(SUM(s.discount_amount), 0) AS total_discounts,
         COALESCE(SUM(s.delivery_amount), 0) AS total_delivery,
         COALESCE(SUM(s.total_amount - COALESCE(s.delivery_amount, 0)), 0) AS net_sales
@@ -4105,6 +4107,17 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
       LEFT JOIN products p ON p.id = si.product_id
       WHERE s.date::date = $1::date
     `, [targetDate]).catch(() => ({ rows: [{ total_cogs: 0 }] }));
+
+    // Raw sales profit from item unit prices minus purchase costs
+    const { rows: [spRow] } = await posDb.query(`
+      SELECT COALESCE(SUM(
+        si.quantity * (si.unit_price - COALESCE(NULLIF(si.snapshot_purchase_price, 0), p.purchase_price, 0))
+      ), 0) AS raw_sales_profit
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN products p ON p.id = si.product_id
+      WHERE s.date::date = $1::date
+    `, [targetDate]).catch(() => ({ rows: [{ raw_sales_profit: 0 }] }));
 
     // Expenses on this date with full title, amount, and date
     const { rows: expensesList } = await posDb.query(`
@@ -4140,11 +4153,13 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
     const totalDiscounts = parseFloat(salesSummary?.total_discounts || 0);
     const netSales = parseFloat(salesSummary?.net_sales || 0);
     const totalCogs = parseFloat(cogsSummary?.total_cogs || 0);
-    const grossProfit = Math.max(0, netSales - totalCogs);
+    const rawProfit = parseFloat(spRow?.raw_sales_profit || 0);
+    // Gross profit = item margin minus invoice discounts (minimum 0)
+    const grossProfit = Math.max(0, rawProfit - totalDiscounts);
     const netProfit = grossProfit - totalExpenses;
     const refunds = parseFloat(refundsSummary?.total_refunds || 0);
 
-    // 2. Products sold on this date
+    // 2. Products sold on this date (fixed si.quantity * si.unit_price)
     const { rows: productsSold } = await posDb.query(`
       SELECT 
         si.product_id,
@@ -4153,14 +4168,17 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
         COALESCE(p.category, 'عام') AS category,
         COALESCE(SUM(si.quantity), 0) AS quantity_sold,
         COALESCE(AVG(si.unit_price), 0) AS avg_unit_price,
-        COALESCE(SUM(si.total_price), 0) AS total_sales_amount
+        COALESCE(SUM(si.quantity * si.unit_price), 0) AS total_sales_amount
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
       LEFT JOIN products p ON p.id = si.product_id
       WHERE s.date::date = $1::date
       GROUP BY si.product_id, si.product_name, p.barcode, p.category
       ORDER BY quantity_sold DESC, total_sales_amount DESC
-    `, [targetDate]).catch(() => ({ rows: [] }));
+    `, [targetDate]).catch((err) => {
+      console.error('[Error fetching productsSold]:', err);
+      return { rows: [] };
+    });
 
     // 3. Shortages (strictly where min_stock > 0 and quantity <= min_stock, joined with warehouse stock)
     const { rows: shortages } = await posDb.query(`
