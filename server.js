@@ -5132,9 +5132,9 @@ app.get(`${BASE}/api/export/excel`, async (req, res) => {
 
       const filename = `قائمة_أسعار_DenTrust_${new Date().toISOString().slice(0, 10)}.xlsx`;
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+      res.setHeader('Content-Disposition', `attachment; filename="Dentrust_Pricelist.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`);
       const buffer = await workbook.xlsx.writeBuffer();
-      return res.send(buffer);
+      return res.end(Buffer.from(buffer));
 
     } else {
       // ══════════════════════════════════════════════════════════════════════
@@ -5352,9 +5352,9 @@ app.get(`${BASE}/api/export/excel`, async (req, res) => {
 
       const filename = `جرد_المخزن_الشامل_DenTrust_${new Date().toISOString().slice(0, 10)}.xlsx`;
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+      res.setHeader('Content-Disposition', `attachment; filename="Dentrust_Warehouse_Inventory.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`);
       const buffer = await workbook.xlsx.writeBuffer();
-      return res.send(buffer);
+      return res.end(Buffer.from(buffer));
     }
   } catch (err) {
     console.error('[Export Excel Error]', err);
