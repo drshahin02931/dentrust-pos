@@ -125,6 +125,7 @@ const OPEN_API = [
   '/api/cart/validate-stock',
   '/api/clinic',
   '/api/session/kill-all',
+  '/api/export/excel',
 ];
 
 function authGuard(req, res, next) {
