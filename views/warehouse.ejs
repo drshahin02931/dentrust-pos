@@ -18,14 +18,14 @@
           <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
         </button>
         <div id="whExcelExportMenu" class="hidden absolute left-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-gray-100 py-2 z-50">
-          <a href="<%= base %>/api/export/excel?type=pricelist" download onclick="document.getElementById('whExcelExportMenu').classList.add('hidden')" class="flex items-start gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-800 border-b border-gray-100 transition-colors">
+          <a href="<%= base %>/api/export/excel?type=pricelist" onclick="downloadWhExcelExport('pricelist'); return false;" class="flex items-start gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-800 border-b border-gray-100 transition-colors cursor-pointer">
             <span class="text-xl">📋</span>
             <div>
               <div class="font-bold text-gray-900">قائمة أسعار (Price List)</div>
               <div class="text-xs text-gray-500">للعملاء والعيادات (بدون تكلفة أو أرباح)</div>
             </div>
           </a>
-          <a href="<%= base %>/api/export/excel?type=warehouse_full" download onclick="document.getElementById('whExcelExportMenu').classList.add('hidden')" class="flex items-start gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-800 transition-colors">
+          <a href="<%= base %>/api/export/excel?type=warehouse_full" onclick="downloadWhExcelExport('warehouse_full'); return false;" class="flex items-start gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-800 transition-colors cursor-pointer">
             <span class="text-xl">🏢</span>
             <div>
               <div class="font-bold text-gray-900">جرد المخزن الشامل</div>
@@ -2660,7 +2660,7 @@ document.addEventListener('click', function(e) {
   }
 });
 
-async function downloadWhExcelExport(type) {
+function downloadWhExcelExport(type) {
   const menu = document.getElementById('whExcelExportMenu');
   if (menu) menu.classList.add('hidden');
 
@@ -2668,36 +2668,23 @@ async function downloadWhExcelExport(type) {
   const originalHtml = btn ? btn.innerHTML : '';
   if (btn) {
     btn.disabled = true;
-    btn.innerHTML = '<span>⏳</span><span>جارٍ تجهيز الإكسيل...</span>';
+    btn.innerHTML = '<span>⏳</span><span>جارٍ تجهيز وتحميل الإكسيل...</span>';
   }
 
-  try {
-    const res = await fetch(`<%= base %>/api/export/excel?type=${type}`, { credentials: 'include' });
-    if (!res.ok) {
-      const err = await res.text();
-      alert('تعذر تحميل ملف الإكسيل: ' + err);
-      return;
-    }
-    const blob = await res.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const today = new Date().toISOString().slice(0, 10);
-    a.download = type === 'pricelist' 
-      ? `قائمة_أسعار_DenTrust_${today}.xlsx` 
-      : `جرد_المخزن_الشامل_DenTrust_${today}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => window.URL.revokeObjectURL(url), 1000);
-  } catch (err) {
-    alert('حدث خطأ أثناء تحميل الملف: ' + err.message);
-  } finally {
+  // Direct native browser download stream
+  const downloadUrl = `<%= base %>/api/export/excel?type=${type}&_t=${Date.now()}`;
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  iframe.src = downloadUrl;
+  document.body.appendChild(iframe);
+
+  setTimeout(() => {
     if (btn) {
       btn.disabled = false;
       btn.innerHTML = originalHtml;
     }
-  }
+    setTimeout(() => iframe.remove(), 25000);
+  }, 4000);
 }
 
 document.addEventListener('DOMContentLoaded', loadWarehouseData);

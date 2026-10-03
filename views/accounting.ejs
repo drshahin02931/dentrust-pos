@@ -409,9 +409,16 @@ async function deleteExtraProfit(id) {
   loadExtraProfit(); loadSummary();
 }
 
-// ── CSV Export ─────────────────────────────────────────────────────────────
+// ── CSV & Excel Export ─────────────────────────────────────────────────────
 function exportCSV(type) {
-  window.location.href = `${BASE}/api/export/csv?type=${type}&period=${currentPeriod}`;
+  const url = type === 'products'
+    ? `${BASE}/api/export/excel?type=warehouse_full&_t=${Date.now()}`
+    : `${BASE}/api/export/csv?type=${type}&period=${currentPeriod}&_t=${Date.now()}`;
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  iframe.src = url;
+  document.body.appendChild(iframe);
+  setTimeout(() => iframe.remove(), 25000);
 }
 
 document.getElementById("e-date").value  = new Date().toISOString().split("T")[0];
