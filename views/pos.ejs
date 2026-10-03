@@ -1910,15 +1910,18 @@ function sendInvoiceWhatsAppFromPos() {
   }).join('\n');
 
   let debtSection = '';
-  if (remaining > 0 || prevDebt > 0) {
+  if (remaining > 0) {
     const totalRemaining = remaining + (prevDebt > 0 ? prevDebt : 0);
     debtSection = `⏳ المتبقي على الفاتورة: ${remaining.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م (آجل)\n`;
     if (prevDebt > 0) {
       debtSection += `📋 رصيد سابق مستحق: ${prevDebt.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
-      debtSection += `⚠️ إجمالي المديونية الكلية: ${totalRemaining.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
     }
+    debtSection += `⚠️ إجمالي المتبقي المستحق: ${totalRemaining.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
   } else {
     debtSection = `✅ حالة السداد: مسددة بالكامل كاش ✓\n`;
+    if (prevDebt > 0) {
+      debtSection += `📋 تذكير برصيد سابق مستحق على الحساب: ${prevDebt.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
+    }
   }
 
   const invoiceUrl = `https://dentrust-pos.onrender.com/invoice/${s.saleId}`;

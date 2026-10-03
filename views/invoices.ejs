@@ -1013,9 +1013,23 @@ async function sendInvoiceWhatsApp(id) {
     }
 
     const doctorName = inv.customer_name || 'دكتورنا العزيز';
-    const total = parseFloat(inv.total_amount || 0) - parseFloat(inv.total_refunded || 0);
-    const paid = (inv.payment_method === 'credit') ? 0 : parseFloat(inv.paid_amount || inv.amount_received || total);
-    const remaining = Math.max(0, total - paid);
+    const total = parseFloat(inv.net_total != null ? inv.net_total : (parseFloat(inv.total_amount || 0) - parseFloat(inv.total_refunded || 0)));
+    
+    // Calculate credit portion vs paid
+    let remaining = 0;
+    if (inv.payment_method === 'credit') {
+      remaining = total;
+    } else if (inv.payment_method === 'split') {
+      try { remaining = parseFloat(JSON.parse(inv.payment_split || '{}').credit || 0); } catch (_) {}
+    } else {
+      remaining = 0;
+    }
+    const paid = Math.max(0, total - remaining);
+
+    // Exact previous balance and total debt (matching invoice print page)
+    const totalDebtInDb = inv.customer_total_debt != null ? parseFloat(inv.customer_total_debt) : customerTotalDebt;
+    const prevDebt = inv.previous_balance != null ? parseFloat(inv.previous_balance) : Math.max(0, totalDebtInDb - remaining);
+    const finalTotalDue = Math.max(totalDebtInDb, prevDebt + remaining);
 
     const itemsText = items.map(it => {
       const netQty = it.net_qty != null ? it.net_qty : it.quantity;
@@ -1028,15 +1042,17 @@ async function sendInvoiceWhatsApp(id) {
     }).join('\n');
 
     let debtSection = '';
-    if (remaining > 0 || customerTotalDebt > 0) {
-      const totalRemaining = remaining + (customerTotalDebt > 0 && customerTotalDebt !== remaining ? customerTotalDebt : 0);
+    if (remaining > 0) {
       debtSection = `⏳ المتبقي على الفاتورة: ${remaining.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م (آجل)\n`;
-      if (customerTotalDebt > 0 && customerTotalDebt !== remaining) {
-        debtSection += `📋 رصيد سابق مستحق: ${customerTotalDebt.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
-        debtSection += `⚠️ إجمالي المديونية الكلية: ${totalRemaining.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
+      if (prevDebt > 0) {
+        debtSection += `📋 رصيد سابق مستحق: ${prevDebt.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
       }
+      debtSection += `⚠️ إجمالي المتبقي المستحق: ${finalTotalDue.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
     } else {
       debtSection = `✅ حالة السداد: مسددة بالكامل كاش ✓\n`;
+      if (totalDebtInDb > 0) {
+        debtSection += `📋 تذكير برصيد سابق مستحق على الحساب: ${totalDebtInDb.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
+      }
     }
 
     const invoiceUrl = `https://dentrust-pos.onrender.com/invoice/${inv.id}`;

@@ -4202,6 +4202,21 @@ app.get(`${BASE}/api/invoices/:sid`, async (req, res) => {
       inv.delivery_amount = Math.max(0, Math.round((netTotal + parseFloat(inv.discount_amount || 0) - itemsTotal) * 100) / 100);
     }
 
+    let previousBalance = 0;
+    let customerTotalDebt = 0;
+    if (inv.customer_id) {
+      const { rows: [cRow] } = await posDb.query('SELECT total_debt FROM customers WHERE id=$1', [inv.customer_id]);
+      customerTotalDebt = parseFloat(cRow?.total_debt || 0);
+      let saleDebtPortion = (inv.payment_method === 'credit') ? netTotal : 0;
+      if (inv.payment_method === 'split') {
+        try { saleDebtPortion = parseFloat(JSON.parse(inv.payment_split || '{}').credit || 0); } catch (_) {}
+      }
+      previousBalance = Math.max(0, customerTotalDebt - saleDebtPortion);
+    }
+    inv.net_total = netTotal;
+    inv.customer_total_debt = customerTotalDebt;
+    inv.previous_balance = previousBalance;
+
     const { rows: returns } = await posDb.query(
       `SELECT r.*, u.username AS processed_by_name FROM returns r
        LEFT JOIN users u ON u.id = r.processed_by WHERE r.sale_id=$1 ORDER BY r.date`, [sid]
