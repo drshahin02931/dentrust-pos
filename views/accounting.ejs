@@ -2,10 +2,14 @@
 <div class="space-y-6">
   <div class="flex items-center justify-between flex-wrap gap-3">
     <h1 class="text-2xl font-bold text-gray-800">📊 المحاسبة والتقارير</h1>
-    <!-- Export CSV buttons -->
-    <div class="flex gap-2 flex-wrap">
+    <!-- Export CSV & PDF buttons -->
+    <div class="flex gap-2 flex-wrap items-center">
+      <a href="<%= base %>/reports" class="flex items-center gap-1.5 bg-gradient-to-r from-blue-700 to-indigo-800 hover:from-blue-800 hover:to-indigo-900 text-white text-xs sm:text-sm font-bold px-3.5 py-2 rounded-xl shadow transition-all">
+        <span>📑</span>
+        <span>تقرير الإغلاق الشامل و PDF</span>
+      </a>
       <button onclick="exportCSV('sales')" class="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm">⬇️ تصدير المبيعات</button>
-      <button onclick="exportCSV('products')" class="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm">⬇️ تصدير المنتجات</button>
+      <button onclick="exportCSV('products')" class="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm">⬇️ تصدير المنتجات (Excel)</button>
       <button onclick="exportCSV('customers')" class="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm">⬇️ تصدير العملاء</button>
       <button onclick="exportCSV('expenses')" class="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm">⬇️ تصدير المصروفات</button>
     </div>
