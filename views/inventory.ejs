@@ -4,11 +4,11 @@
     <h1 class="text-2xl font-bold text-gray-800" data-ar="📦 إدارة المخزون" data-en="📦 Inventory">📦 إدارة المخزون</h1>
     <div class="flex items-center gap-2">
       <!-- Direct Excel Export Buttons (No dropdown needed) -->
-      <a href="<%= base %>/api/export/excel?type=pricelist" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl font-bold shadow flex items-center gap-1.5 text-xs sm:text-sm transition-all">
+      <a href="<%= base %>/api/export/excel?type=pricelist" target="_blank" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl font-bold shadow flex items-center gap-1.5 text-xs sm:text-sm transition-all">
         <span>📋</span>
         <span>قائمة أسعار (Excel)</span>
       </a>
-      <a href="<%= base %>/api/export/excel?type=warehouse_full" class="bg-indigo-700 hover:bg-indigo-800 text-white px-3.5 py-2 rounded-xl font-bold shadow flex items-center gap-1.5 text-xs sm:text-sm transition-all">
+      <a href="<%= base %>/api/export/excel?type=warehouse_full" target="_blank" class="bg-indigo-700 hover:bg-indigo-800 text-white px-3.5 py-2 rounded-xl font-bold shadow flex items-center gap-1.5 text-xs sm:text-sm transition-all">
         <span>🏢</span>
         <span>جرد المخزن الشامل (Excel)</span>
       </a>
