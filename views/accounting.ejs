@@ -208,7 +208,16 @@ async function loadSummary() {
   const res = await fetch(`${BASE}/api/reports/summary?period=${currentPeriod}`);
   const d = await res.json();
   document.getElementById("c-revenue").textContent  = d.revenue.toFixed(2);
-  document.getElementById("c-gross").textContent    = d.gross_profit.toFixed(2);
+  const grossEl = document.getElementById("c-gross");
+  grossEl.textContent = d.gross_profit.toFixed(2);
+  grossEl.className = `text-2xl font-black ${d.gross_profit >= 0 ? 'text-green-700' : 'text-red-600'}`;
+  const grossCard = grossEl.closest('.rounded-2xl') || grossEl.parentElement;
+  if (d.gross_profit < 0) {
+    grossCard.className = "bg-red-50 border border-red-200 rounded-2xl p-4 text-center transition-colors";
+  } else {
+    grossCard.className = "bg-green-50 border border-green-100 rounded-2xl p-4 text-center transition-colors";
+  }
+
   document.getElementById("c-expenses").textContent = d.expenses.toFixed(2);
   document.getElementById("c-extra").textContent    = (d.extra_profit || 0).toFixed(2);
   const refundsBar  = document.getElementById("c-refunds-bar");

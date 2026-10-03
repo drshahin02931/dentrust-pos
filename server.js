@@ -3951,9 +3951,14 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
 
     const salesProfit = parseFloat(spR.sales_profit || 0);
     const returnProfit = parseFloat(rpR.return_profit || 0);
-    // Gross profit is ONLY reduced by the return's profit margin, NEVER by the full selling price!
-    const gross = Math.max(0, salesProfit - returnProfit);
-    const cost = Math.max(0, netRev - gross);
+    // Total discounts applied on sales in this period
+    const { rows: [discR] } = await posDb.query(
+      `SELECT COALESCE(SUM(s.discount_amount), 0) as total_discounts FROM sales s WHERE ${df}`
+    );
+    const totalDiscounts = parseFloat(discR?.total_discounts || 0);
+    // Gross profit: can be negative if discounts caused selling below cost
+    const gross = salesProfit - returnProfit - totalDiscounts;
+    const cost = netRev - gross;
     const exp = parseFloat(et.t || 0);
     const extraProfit = parseFloat(epR.t || 0);
     const netProfit = gross - exp + extraProfit;
@@ -4154,8 +4159,8 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
     const netSales = parseFloat(salesSummary?.net_sales || 0);
     const totalCogs = parseFloat(cogsSummary?.total_cogs || 0);
     const rawProfit = parseFloat(spRow?.raw_sales_profit || 0);
-    // Gross profit = item margin minus invoice discounts (minimum 0)
-    const grossProfit = Math.max(0, rawProfit - totalDiscounts);
+    // Gross profit = item margin minus invoice discounts (can be negative if sold below cost)
+    const grossProfit = rawProfit - totalDiscounts;
     const netProfit = grossProfit - totalExpenses;
     const refunds = parseFloat(refundsSummary?.total_refunds || 0);
 
@@ -4341,7 +4346,7 @@ app.get(`${BASE}/api/invoices`, async (req, res) => {
       `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone,
               COALESCE(ret.total_refunded,0) AS total_refunded,
               COALESCE(ret.return_count,0) AS return_count,
-              COALESCE(prof.profit,0) AS profit
+              COALESCE(prof.profit,0) - COALESCE(s.discount_amount,0) AS profit
        FROM sales s
        LEFT JOIN customers c ON s.customer_id = c.id
        LEFT JOIN (SELECT sale_id, SUM(total_refund) AS total_refunded, COUNT(*) AS return_count FROM returns GROUP BY sale_id) ret ON ret.sale_id = s.id
@@ -4405,7 +4410,8 @@ app.get(`${BASE}/api/invoices/:sid`, async (req, res) => {
     const totalSold = items.reduce((s, i) => s + i.quantity, 0);
     const returnStatus = (totalRemaining === 0 && totalSold > 0) ? 2 : (totalRemaining < totalSold ? 1 : 0);
     inv.return_status = returnStatus;
-    inv.profit = items.reduce((s, i) => s + (parseFloat(i.unit_price||0) - parseFloat(i.snapshot_purchase_price||0)) * parseInt(i.remaining_qty != null ? i.remaining_qty : (i.quantity || 0), 10), 0);
+    const rawItemsProfit = items.reduce((s, i) => s + (parseFloat(i.unit_price||0) - parseFloat(i.snapshot_purchase_price||0)) * parseInt(i.remaining_qty != null ? i.remaining_qty : (i.quantity || 0), 10), 0);
+    inv.profit = rawItemsProfit - parseFloat(inv.discount_amount || 0);
 
     // Auto-detect delivery fee if missing on online orders
     const itemsTotal = items.reduce((s, i) => s + (parseFloat(i.unit_price || 0) * parseInt(i.remaining_qty != null ? i.remaining_qty : (i.quantity || 0))), 0);

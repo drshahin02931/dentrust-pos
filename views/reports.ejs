@@ -106,17 +106,17 @@
         </div>
 
         <!-- Gross Profit -->
-        <div class="bg-amber-50/70 border border-amber-100 rounded-xl p-4 text-center">
+        <div id="fin-gross-card" class="bg-amber-50/70 border border-amber-100 rounded-xl p-4 text-center transition-colors">
           <div class="text-xs font-bold text-amber-700 mb-1">إجمالي الأرباح (Gross Profit)</div>
           <div id="fin-gross-profit" class="text-xl sm:text-2xl font-black text-amber-800">0.00 ج.م</div>
-          <div class="text-[11px] text-amber-600 mt-1">= المبيعات − التكلفة (COGS)</div>
+          <div id="fin-gross-note" class="text-[11px] text-amber-600 mt-1">= المبيعات − التكلفة (COGS)</div>
         </div>
 
         <!-- Net Profit -->
-        <div class="bg-emerald-50/70 border border-emerald-100 rounded-xl p-4 text-center">
+        <div id="fin-net-card" class="bg-emerald-50/70 border border-emerald-100 rounded-xl p-4 text-center transition-colors">
           <div class="text-xs font-bold text-emerald-700 mb-1">صافي الربح الحقيقي (Net Profit)</div>
           <div id="fin-net-profit" class="text-xl sm:text-2xl font-black text-emerald-800">0.00 ج.م</div>
-          <div class="text-[11px] text-emerald-600 mt-1">= إجمالي الربح − المصروفات</div>
+          <div id="fin-net-note" class="text-[11px] text-emerald-600 mt-1">= إجمالي الربح − المصروفات</div>
         </div>
       </div>
 
@@ -352,14 +352,34 @@ function renderReport(data) {
   document.getElementById('fin-expenses').textContent = (fin.expenses_total || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
   document.getElementById('fin-expenses-count').textContent = `${(fin.expenses_list || []).length} بند مسجل`;
 
-  document.getElementById('fin-gross-profit').textContent = (fin.gross_profit || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+  const grossVal = parseFloat(fin.gross_profit || 0);
+  const grossEl = document.getElementById('fin-gross-profit');
+  const grossCard = document.getElementById('fin-gross-card');
+  const grossNote = document.getElementById('fin-gross-note');
+  grossEl.textContent = grossVal.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+  if (grossVal < 0) {
+    grossEl.className = 'text-xl sm:text-2xl font-black text-red-600';
+    if (grossCard) { grossCard.className = 'bg-red-50/90 border border-red-200 rounded-xl p-4 text-center'; }
+    if (grossNote) { grossNote.innerHTML = '<span class="text-red-700 font-black">⚠️ بيع بخسارة (أقل من التكلفة)</span>'; }
+  } else {
+    grossEl.className = 'text-xl sm:text-2xl font-black text-amber-800';
+    if (grossCard) { grossCard.className = 'bg-amber-50/70 border border-amber-100 rounded-xl p-4 text-center'; }
+    if (grossNote) { grossNote.textContent = '= المبيعات − التكلفة (COGS)'; }
+  }
 
+  const netVal = parseFloat(fin.net_profit || 0);
   const netEl = document.getElementById('fin-net-profit');
-  netEl.textContent = (fin.net_profit || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
-  if (fin.net_profit < 0) {
+  const netCard = document.getElementById('fin-net-card');
+  const netNote = document.getElementById('fin-net-note');
+  netEl.textContent = netVal.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+  if (netVal < 0) {
     netEl.className = 'text-xl sm:text-2xl font-black text-red-700';
+    if (netCard) { netCard.className = 'bg-red-50/90 border border-red-200 rounded-xl p-4 text-center'; }
+    if (netNote) { netNote.innerHTML = '<span class="text-red-700 font-black">⚠️ صافي خسارة لليوم</span>'; }
   } else {
     netEl.className = 'text-xl sm:text-2xl font-black text-emerald-800';
+    if (netCard) { netCard.className = 'bg-emerald-50/70 border border-emerald-100 rounded-xl p-4 text-center'; }
+    if (netNote) { netNote.textContent = '= إجمالي الربح − المصروفات'; }
   }
 
   document.getElementById('invoicesCountBadge').textContent = `${fin.invoices_count || 0} فاتورة`;
