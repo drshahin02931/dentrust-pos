@@ -9005,47 +9005,86 @@ async function checkExpiryAndNotify() {
   }
 }
 
-// Helper: check out-of-stock and low-stock products daily at 12:00 PM and push-notify managers
-async function checkDailyStockAndNotify() {
+// Helper: Send Comprehensive Daily Closing Report (11:00 PM Africa/Cairo) to Managers
+async function sendDailyClosingReportNotification() {
   try {
-    const { rows: outOfStock } = await posDb.query(
-      `SELECT product_name FROM products WHERE quantity <= 0 ORDER BY product_name LIMIT 10`
-    );
-    const { rows: lowStock } = await posDb.query(
-      `SELECT product_name, quantity, min_stock FROM products WHERE min_stock > 0 AND quantity > 0 AND quantity <= min_stock ORDER BY quantity ASC LIMIT 10`
-    );
-    const { rows: [totalOut] } = await posDb.query(`SELECT COUNT(*) as c FROM products WHERE quantity <= 0`);
-    const { rows: [totalLow] } = await posDb.query(`SELECT COUNT(*) as c FROM products WHERE min_stock > 0 AND quantity > 0 AND quantity <= min_stock`);
-    
-    const countOut = parseInt(totalOut?.c || 0, 10);
-    const countLow = parseInt(totalLow?.c || 0, 10);
+    const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in Cairo
 
-    if (countOut === 0 && countLow === 0) return { countOut, countLow, sent: false };
+    // 1. Sales on this date
+    const { rows: [salesSummary] } = await posDb.query(`
+      SELECT 
+        COUNT(s.id) AS invoices_count,
+        COALESCE(SUM(s.total_amount), 0) AS gross_sales,
+        COALESCE(SUM(s.delivery_amount), 0) AS total_delivery,
+        COALESCE(SUM(s.total_amount - COALESCE(s.delivery_amount, 0)), 0) AS net_sales
+      FROM sales s
+      WHERE s.date::date = $1::date
+    `, [today]).catch(() => ({ rows: [{}] }));
 
-    let summaryParts = [];
-    if (countOut > 0) {
-      const outNames = outOfStock.map(p => p.product_name).join('، ');
-      summaryParts.push(`🔴 نفد (${countOut}): ${outNames}${countOut > outOfStock.length ? '...' : ''}`);
-    }
-    if (countLow > 0) {
-      const lowNames = lowStock.map(p => `${p.product_name} (${p.quantity}/${p.min_stock})`).join('، ');
-      summaryParts.push(`⚠️ قارب على النفاد (${countLow}): ${lowNames}${countLow > lowStock.length ? '...' : ''}`);
-    }
+    // 2. COGS & Gross Profit
+    const { rows: [cogsSummary] } = await posDb.query(`
+      SELECT 
+        COALESCE(SUM(
+          si.quantity * COALESCE(NULLIF(si.snapshot_purchase_price, 0), p.purchase_price, 0)
+        ), 0) AS total_cogs
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN products p ON p.id = si.product_id
+      WHERE s.date::date = $1::date
+    `, [today]).catch(() => ({ rows: [{ total_cogs: 0 }] }));
 
-    const title = `📦 تقرير النواقص اليومي (12:00 ظهراً)`;
-    const body = summaryParts.join(' | ');
-    await sendPushToManagers(title, body, `${BASE}/inventory`, 'daily-stock-report');
-    return { countOut, countLow, sent: true, title, body };
+    // 3. Expenses on this date
+    const { rows: [expSummary] } = await posDb.query(`
+      SELECT COALESCE(SUM(amount), 0) AS total_expenses, COUNT(*) AS exp_count
+      FROM expenses
+      WHERE (date::text LIKE $1 || '%' OR (date ~ '^\\d{4}-\\d{2}-\\d{2}' AND date::date = $1::date))
+        AND (title NOT LIKE 'مردود #%' OR title IS NULL)
+    `, [today]).catch(() => ({ rows: [{ total_expenses: 0, exp_count: 0 }] }));
+
+    // 4. Shortages (where min_stock > 0 and qty <= min_stock)
+    const { rows: [shortageCount] } = await posDb.query(`
+      SELECT COUNT(*) AS cnt
+      FROM products
+      WHERE min_stock > 0 AND COALESCE(quantity, 0) <= min_stock
+    `).catch(() => ({ rows: [{ cnt: 0 }] }));
+
+    // 5. Expiries in danger zone (<= 5 months)
+    const { rows: [criticalExpiries] } = await posDb.query(`
+      SELECT COUNT(*) AS cnt
+      FROM products
+      WHERE expiry_date IS NOT NULL 
+        AND expiry_date::text ~ '^\\d{4}-\\d{2}-\\d{2}'
+        AND COALESCE(quantity, 0) > 0
+        AND expiry_date::date <= $1::date + INTERVAL '5 months'
+    `, [today]).catch(() => ({ rows: [{ cnt: 0 }] }));
+
+    const grossSales = parseFloat(salesSummary?.gross_sales || 0);
+    const netSales = parseFloat(salesSummary?.net_sales || 0);
+    const cogs = parseFloat(cogsSummary?.total_cogs || 0);
+    const expenses = parseFloat(expSummary?.total_expenses || 0);
+    const grossProfit = Math.max(0, netSales - cogs);
+    const netProfit = grossProfit - expenses;
+    const invCount = parseInt(salesSummary?.invoices_count || 0, 10);
+    const shortCount = parseInt(shortageCount?.cnt || 0, 10);
+    const critExpCount = parseInt(criticalExpiries?.cnt || 0, 10);
+
+    const title = `🌙 تقرير الإغلاق اليومي (${today}) — DenTrust`;
+    const body = `💰 المبيعات: ${grossSales.toLocaleString('ar-EG')} ج (${invCount} فاتورة) | 📈 الصافي: ${netProfit.toLocaleString('ar-EG')} ج | 💸 المصروفات: ${expenses.toLocaleString('ar-EG')} ج | ⚠️ النواقص: ${shortCount} | 🔴 الصلاحيات: ${critExpCount}`;
+
+    const reportUrl = `${BASE}/reports?date=${today}`;
+    await sendPushToManagers(title, body, reportUrl, 'daily-closing-report');
+    console.log(`[Daily Closing Report Push Sent] Date: ${today}, Sales: ${grossSales}, Net: ${netProfit}`);
+    return { ok: true, today, grossSales, netProfit, expenses, shortCount, critExpCount, sent: true };
   } catch (err) {
-    console.error('[Daily Stock Push error]:', err.message);
+    console.error('[Daily Closing Report Push error]:', err.message);
     return { error: err.message };
   }
 }
 
-// Manager test endpoint for 12:00 stock push notification
-app.all([`${BASE}/api/admin/test-daily-stock-push`, '/api/admin/test-daily-stock-push'], async (req, res) => {
+// Manager test endpoint for 11:00 PM closing report push notification
+app.all([`${BASE}/api/admin/test-daily-stock-push`, '/api/admin/test-daily-stock-push', `${BASE}/api/admin/test-midnight-report`, '/api/admin/test-midnight-report'], async (req, res) => {
   if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
-  const result = await checkDailyStockAndNotify();
+  const result = await sendDailyClosingReportNotification();
   res.json({ ok: true, result });
 });
 
@@ -9385,10 +9424,10 @@ function initPushCronJobs() {
     runScheduledCampaign('loyalty_points', 'loyalty');
   }, { timezone: 'Africa/Cairo' });
 
-  // 5. Daily Manager Low-Stock Check (يومياً - 12:00 ظهراً بتوقيت القاهرة)
-  cron.schedule('0 12 * * *', () => {
-    console.log('[Push Cron] Triggering Daily 12:00 Stock check...');
-    checkDailyStockAndNotify().catch(e => console.error('[Push Cron Daily Stock error]:', e.message));
+  // 5. Daily Manager Comprehensive Closing Report (يومياً - 11:00 مساءً بتوقيت القاهرة)
+  cron.schedule('0 23 * * *', () => {
+    console.log('[Push Cron] Triggering Daily 11:00 PM Comprehensive Closing Report...');
+    sendDailyClosingReportNotification().catch(e => console.error('[Daily Closing Report error]:', e.message));
   }, { timezone: 'Africa/Cairo' });
 
   // 6. Daily Doctor Clinic Stock Depletion Alert (12:30 ظهراً بتوقيت القاهرة - موجه لكل دكتور بمفرده)
@@ -12199,8 +12238,8 @@ async function main() {
     // ── تنبيه انتهاء الصلاحية: يشتغل يوميًا الساعة 8 الصبح (توقيت السيرفر) ──
     cron.schedule('0 8 * * *', () => { checkExpiryAndNotify().catch(() => {}); });
 
-    // ── تقرير النواقص اليومي: يشتغل يوميًا الساعة 12:00 ظهرًا بتوقيت القاهرة ──
-    cron.schedule('0 12 * * *', () => { checkDailyStockAndNotify().catch(() => {}); }, { timezone: 'Africa/Cairo' });
+    // ── تقرير الإغلاق اليومي الشامل: يشتغل يوميًا الساعة 11:00 مساءً بتوقيت القاهرة ──
+    cron.schedule('0 23 * * *', () => { sendDailyClosingReportNotification().catch(() => {}); }, { timezone: 'Africa/Cairo' });
 
     // ── تذكير الجرد المسائي السريع لخامات العيادة: يشتغل يومياً الساعة 10:00 مساءً بتوقيت القاهرة ──
     cron.schedule('0 22 * * *', async () => {
