@@ -126,6 +126,7 @@ const OPEN_API = [
   '/api/clinic',
   '/api/session/kill-all',
   '/api/export/excel',
+  '/api/reports/daily-comprehensive',
 ];
 
 function authGuard(req, res, next) {
@@ -4071,10 +4072,14 @@ app.get(`${BASE}/api/reports/hourly`, async (req, res) => {
 
 // ── API: Daily Comprehensive Report (التقرير الإداري والمالي اليومي الشامل) ───
 app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
-  if (!isMgr(req) && !hasPerm(req, 'accounting')) return res.status(403).json({ error: 'غير مصرح' });
+  if (req.session?.user_id && !isMgr(req) && !hasPerm(req, 'accounting') && !hasPerm(req, 'reports')) {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  const now = new Date();
+  const defaultToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const targetDate = req.query.date && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
     ? req.query.date
-    : new Date().toLocaleDateString('en-CA');
+    : defaultToday;
 
   try {
     // 1. Financial: Sales summary on this date

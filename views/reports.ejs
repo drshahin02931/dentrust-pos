@@ -284,21 +284,35 @@ const PAYMENT_LABELS = {
   online: '🌐 طلب موقع',
 };
 
-// Initialize Date Picker to today
-document.addEventListener('DOMContentLoaded', () => {
-  const todayStr = new Date().toLocaleDateString('en-CA');
+function getIsoDate(dateObj = new Date()) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+// Initialize Date Picker to today reliably
+function initReports() {
+  const todayStr = getIsoDate(new Date());
   const dateInput = document.getElementById('reportDatePicker');
-  dateInput.value = todayStr;
+  if (dateInput) dateInput.value = todayStr;
   fetchReportData(todayStr);
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initReports);
+} else {
+  initReports();
+}
 
 function setQuickDate(type) {
   const now = new Date();
   if (type === 'yesterday') {
     now.setDate(now.getDate() - 1);
   }
-  const dateStr = now.toLocaleDateString('en-CA');
-  document.getElementById('reportDatePicker').value = dateStr;
+  const dateStr = getIsoDate(now);
+  const dateInput = document.getElementById('reportDatePicker');
+  if (dateInput) dateInput.value = dateStr;
   fetchReportData(dateStr);
 }
 
