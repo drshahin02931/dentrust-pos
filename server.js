@@ -224,6 +224,10 @@ app.get([`${BASE}/accounting`, '/accounting'], (req, res) => {
   if (!hasPerm(req, 'accounting')) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'accounting');
 });
+app.get([`${BASE}/reports`, '/reports'], (req, res) => {
+  if (!hasPerm(req, 'accounting')) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'reports');
+});
 app.get([`${BASE}/invoices`, '/invoices'], (req, res) => {
   if (!hasPerm(req, 'invoices') && !hasPerm(req, 'process_returns')) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'invoices');
@@ -4063,6 +4067,190 @@ app.get(`${BASE}/api/reports/hourly`, async (req, res) => {
     );
     res.json(rows);
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── API: Daily Comprehensive Report (التقرير الإداري والمالي اليومي الشامل) ───
+app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
+  if (!isMgr(req) && !hasPerm(req, 'accounting')) return res.status(403).json({ error: 'غير مصرح' });
+  const targetDate = req.query.date && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+    ? req.query.date
+    : new Date().toLocaleDateString('en-CA');
+
+  try {
+    // 1. Financial: Sales summary on this date
+    const { rows: [salesSummary] } = await posDb.query(`
+      SELECT 
+        COUNT(s.id) AS invoices_count,
+        COALESCE(SUM(s.total_amount), 0) AS gross_sales,
+        COALESCE(SUM(s.discount_amount), 0) AS total_discounts,
+        COALESCE(SUM(s.delivery_amount), 0) AS total_delivery,
+        COALESCE(SUM(s.total_amount - COALESCE(s.delivery_amount, 0)), 0) AS net_sales
+      FROM sales s
+      WHERE s.date::date = $1::date
+    `, [targetDate]).catch(() => ({ rows: [{}] }));
+
+    // COGS (Cost of goods sold on this date)
+    const { rows: [cogsSummary] } = await posDb.query(`
+      SELECT 
+        COALESCE(SUM(
+          si.quantity * COALESCE(NULLIF(si.snapshot_purchase_price, 0), p.purchase_price, 0)
+        ), 0) AS total_cogs
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN products p ON p.id = si.product_id
+      WHERE s.date::date = $1::date
+    `, [targetDate]).catch(() => ({ rows: [{ total_cogs: 0 }] }));
+
+    // Expenses on this date with full title, amount, and date
+    const { rows: expensesList } = await posDb.query(`
+      SELECT id, title, amount, date
+      FROM expenses
+      WHERE (date::text LIKE $1 || '%' OR (date ~ '^\\d{4}-\\d{2}-\\d{2}' AND date::date = $1::date))
+        AND (title NOT LIKE 'مردود #%' OR title IS NULL)
+      ORDER BY id ASC
+    `, [targetDate]).catch(() => ({ rows: [] }));
+
+    const totalExpenses = expensesList.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
+
+    // Payment methods breakdown on this date
+    const { rows: paymentBreakdown } = await posDb.query(`
+      SELECT 
+        COALESCE(s.payment_method, 'cash') AS payment_method,
+        COALESCE(SUM(s.total_amount), 0) AS total,
+        COUNT(s.id) AS cnt
+      FROM sales s
+      WHERE s.date::date = $1::date
+      GROUP BY s.payment_method
+      ORDER BY total DESC
+    `, [targetDate]).catch(() => ({ rows: [] }));
+
+    // Refunds / Returns on this date
+    const { rows: [refundsSummary] } = await posDb.query(`
+      SELECT COALESCE(SUM(total_refund), 0) AS total_refunds
+      FROM returns
+      WHERE date::date = $1::date
+    `, [targetDate]).catch(() => ({ rows: [{ total_refunds: 0 }] }));
+
+    const grossSales = parseFloat(salesSummary?.gross_sales || 0);
+    const totalDiscounts = parseFloat(salesSummary?.total_discounts || 0);
+    const netSales = parseFloat(salesSummary?.net_sales || 0);
+    const totalCogs = parseFloat(cogsSummary?.total_cogs || 0);
+    const grossProfit = Math.max(0, netSales - totalCogs);
+    const netProfit = grossProfit - totalExpenses;
+    const refunds = parseFloat(refundsSummary?.total_refunds || 0);
+
+    // 2. Products sold on this date
+    const { rows: productsSold } = await posDb.query(`
+      SELECT 
+        si.product_id,
+        si.product_name,
+        COALESCE(p.barcode, '—') AS barcode,
+        COALESCE(p.category, 'عام') AS category,
+        COALESCE(SUM(si.quantity), 0) AS quantity_sold,
+        COALESCE(AVG(si.unit_price), 0) AS avg_unit_price,
+        COALESCE(SUM(si.total_price), 0) AS total_sales_amount
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN products p ON p.id = si.product_id
+      WHERE s.date::date = $1::date
+      GROUP BY si.product_id, si.product_name, p.barcode, p.category
+      ORDER BY quantity_sold DESC, total_sales_amount DESC
+    `, [targetDate]).catch(() => ({ rows: [] }));
+
+    // 3. Shortages (strictly where min_stock > 0 and quantity <= min_stock, joined with warehouse stock)
+    const { rows: shortages } = await posDb.query(`
+      SELECT 
+        p.id,
+        COALESCE(p.barcode, '—') AS barcode,
+        p.product_name,
+        COALESCE(p.category, 'عام') AS category,
+        COALESCE(p.quantity, 0) AS shop_qty,
+        COALESCE(p.min_stock, 0) AS min_stock,
+        COALESCE(p.purchase_price, 0) AS cost_price,
+        COALESCE(p.sale_price, 0) AS sale_price,
+        COALESCE(wh.wh_qty, 0) AS warehouse_qty
+      FROM products p
+      LEFT JOIN (
+        SELECT 
+          product_id,
+          COALESCE(SUM(quantity), 0) AS wh_qty
+        FROM warehouse_items
+        WHERE product_id IS NOT NULL
+        GROUP BY product_id
+      ) wh ON wh.product_id = p.id
+      WHERE p.min_stock > 0 
+        AND COALESCE(p.quantity, 0) <= p.min_stock
+      ORDER BY (p.min_stock - COALESCE(p.quantity, 0)) DESC, p.product_name ASC
+    `).catch(() => ({ rows: [] }));
+
+    // 4. Expiry Tracker (products expiring within 15 months from targetDate)
+    const { rows: expiryRows } = await posDb.query(`
+      SELECT 
+        p.id,
+        COALESCE(p.barcode, '—') AS barcode,
+        p.product_name,
+        COALESCE(p.category, 'عام') AS category,
+        COALESCE(p.quantity, 0) AS quantity,
+        p.expiry_date,
+        COALESCE(p.sale_price, 0) AS sale_price
+      FROM products p
+      WHERE p.expiry_date IS NOT NULL 
+        AND p.expiry_date::text ~ '^\\d{4}-\\d{2}-\\d{2}'
+        AND COALESCE(p.quantity, 0) > 0
+        AND p.expiry_date::date <= $1::date + INTERVAL '15 months'
+      ORDER BY p.expiry_date ASC
+    `, [targetDate]).catch(() => ({ rows: [] }));
+
+    const refDate = new Date(targetDate);
+    const expiries = expiryRows.map(item => {
+      const expDate = new Date(item.expiry_date);
+      const diffTime = expDate.getTime() - refDate.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      const monthsLeft = (diffDays / 30.4).toFixed(1);
+
+      let tier = 'green';
+      let tierLabel = '🟢 صالح للمتابعة (10 - 15 شهر)';
+      if (diffDays <= 150) {
+        tier = 'red';
+        tierLabel = diffDays <= 0 ? '🔴 منتهي الصلاحية' : '🔴 حرج جداً (أقل من 5 شهور)';
+      } else if (diffDays <= 300) {
+        tier = 'yellow';
+        tierLabel = '🟡 تحذير متوسط (5 - 10 شهور)';
+      }
+
+      return {
+        ...item,
+        diff_days: diffDays,
+        months_left: monthsLeft,
+        tier,
+        tier_label: tierLabel,
+      };
+    });
+
+    return res.json({
+      ok: true,
+      date: targetDate,
+      financial: {
+        invoices_count: parseInt(salesSummary?.invoices_count || 0, 10),
+        gross_sales: grossSales,
+        total_discounts: totalDiscounts,
+        net_sales: netSales,
+        cogs: totalCogs,
+        gross_profit: grossProfit,
+        expenses_total: totalExpenses,
+        net_profit: netProfit,
+        refunds: refunds,
+        expenses_list: expensesList,
+        payment_breakdown: paymentBreakdown,
+      },
+      products_sold: productsSold,
+      shortages: shortages,
+      expiries: expiries,
+    });
+  } catch (err) {
+    console.error('[Daily Comprehensive Report Error]', err);
+    return res.status(500).json({ ok: false, error: 'حدث خطأ أثناء جلب التقرير: ' + err.message });
+  }
 });
 
 app.get(`${BASE}/api/stats`, async (req, res) => {

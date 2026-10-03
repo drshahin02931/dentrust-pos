@@ -1,0 +1,496 @@
+<%- include('partials/header', Object.assign({pageTitle: 'التقارير اليومية والأرشيف'}, locals)) %>
+
+<style>
+  @media print {
+    .no-print { display: none !important; }
+    body { background: #ffffff !important; color: #000000 !important; font-size: 11pt !important; }
+    .print-card { box-shadow: none !important; border: 1px solid #cbd5e1 !important; page-break-inside: avoid; }
+    .print-header { display: block !important; }
+    table { width: 100% !important; border-collapse: collapse !important; font-size: 10pt !important; }
+    th, td { border: 1px solid #94a3b8 !important; padding: 5px 8px !important; }
+    th { background-color: #f1f5f9 !important; color: #0f172a !important; font-weight: bold !important; }
+    .badge-red { background-color: #fee2e2 !important; color: #991b1b !important; border: 1px solid #f87171 !important; }
+    .badge-yellow { background-color: #fef3c7 !important; color: #92400e !important; border: 1px solid #fcd34d !important; }
+    .badge-green { background-color: #dcfce7 !important; color: #166534 !important; border: 1px solid #86efac !important; }
+    @page {
+      size: A4 portrait;
+      margin: 12mm 10mm;
+    }
+  }
+  .tier-red { background-color: #fef2f2; border-right: 4px solid #ef4444; }
+  .tier-yellow { background-color: #fffbeb; border-right: 4px solid #f59e0b; }
+  .tier-green { background-color: #f0fdf4; border-right: 4px solid #22c55e; }
+</style>
+
+<div class="space-y-6 pb-12">
+
+  <!-- Printable Header (Visible only on print or top of page) -->
+  <div class="hidden print-header bg-white p-4 border-b-2 border-blue-900 mb-4">
+    <div class="flex items-center justify-between">
+      <div>
+        <h1 class="text-xl font-black text-blue-900">🦷 DenTrust Dental Supplies</h1>
+        <p class="text-xs text-gray-600 mt-0.5">نظام إدارة نقاط البيع والمستودعات الطبية</p>
+      </div>
+      <div class="text-left text-xs text-gray-700">
+        <div><strong>التقرير اليومي والإداري الشامل</strong></div>
+        <div>تاريخ التقرير: <span id="printDateLabel" class="font-bold"></span></div>
+        <div>تاريخ الطباعة: <span><%= new Date().toLocaleDateString('ar-EG') %></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top Action Bar (No-Print) -->
+  <div class="no-print bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-black text-gray-900 flex items-center gap-2">
+        <span>📑</span>
+        <span>التقارير اليومية وأرشيف الـ PDF</span>
+      </h1>
+      <p class="text-xs text-gray-500 mt-1">استعراض التقرير المالي، المنتجات المباعة، النواقص الحرجة، وتتبع الصلاحيات لأي يوم</p>
+    </div>
+
+    <!-- Date Picker & Quick Actions -->
+    <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+      <div class="flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200">
+        <button type="button" onclick="setQuickDate('today')" class="px-3 py-1.5 text-xs font-bold rounded-lg transition-all text-gray-700 hover:bg-white" id="btn-today">اليوم</button>
+        <button type="button" onclick="setQuickDate('yesterday')" class="px-3 py-1.5 text-xs font-bold rounded-lg transition-all text-gray-700 hover:bg-white" id="btn-yesterday">أمس</button>
+      </div>
+
+      <div class="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-200">
+        <label for="reportDatePicker" class="text-xs font-bold text-gray-600">التاريخ:</label>
+        <input type="date" id="reportDatePicker" onchange="fetchReportData(this.value)" class="text-sm font-bold bg-transparent border-0 focus:ring-0 p-0 text-gray-800 cursor-pointer" />
+      </div>
+
+      <button type="button" onclick="window.print()" class="bg-blue-700 hover:bg-blue-800 text-white font-bold px-4 py-2 rounded-xl shadow flex items-center gap-2 text-sm transition-all">
+        <span>🖨️</span>
+        <span>تحميل / طباعة PDF</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Loading State -->
+  <div id="reportLoading" class="hidden text-center py-16">
+    <div class="inline-block animate-spin text-4xl mb-3">⏳</div>
+    <div class="text-base font-bold text-gray-700">جارٍ إعداد بيانات التقرير والحسابات...</div>
+  </div>
+
+  <!-- Report Content Container -->
+  <div id="reportContent" class="space-y-6">
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         1️⃣ SECTION: FINANCIAL OVERVIEW (التقرير المالي وحركة الخزينة)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 print-card space-y-4">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h2 class="text-lg font-black text-gray-800 flex items-center gap-2">
+          <span class="text-xl">💰</span>
+          <span>1. التقرير المالي والأرباح (عن تاريخ: <span class="currentReportDateText font-mono text-blue-700"></span>)</span>
+        </h2>
+        <span class="text-xs font-bold px-2.5 py-1 bg-blue-50 text-blue-800 rounded-lg" id="invoicesCountBadge">0 فاتورة</span>
+      </div>
+
+      <!-- 4 Core Financial Cards -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <!-- Gross Sales -->
+        <div class="bg-blue-50/70 border border-blue-100 rounded-xl p-4 text-center">
+          <div class="text-xs font-bold text-blue-600 mb-1">إجمالي المبيعات (Gross Sales)</div>
+          <div id="fin-gross-sales" class="text-xl sm:text-2xl font-black text-blue-900">0.00 ج.م</div>
+          <div id="fin-discounts-note" class="text-[11px] text-gray-500 mt-1">خصومات: 0.00 ج.م</div>
+        </div>
+
+        <!-- Total Expenses -->
+        <div class="bg-red-50/70 border border-red-100 rounded-xl p-4 text-center">
+          <div class="text-xs font-bold text-red-600 mb-1">إجمالي المصروفات (Expenses Out)</div>
+          <div id="fin-expenses" class="text-xl sm:text-2xl font-black text-red-700">0.00 ج.م</div>
+          <div id="fin-expenses-count" class="text-[11px] text-red-500 mt-1">0 بنود مسجلة</div>
+        </div>
+
+        <!-- Gross Profit -->
+        <div class="bg-amber-50/70 border border-amber-100 rounded-xl p-4 text-center">
+          <div class="text-xs font-bold text-amber-700 mb-1">إجمالي الأرباح (Gross Profit)</div>
+          <div id="fin-gross-profit" class="text-xl sm:text-2xl font-black text-amber-800">0.00 ج.م</div>
+          <div class="text-[11px] text-amber-600 mt-1">= المبيعات − التكلفة (COGS)</div>
+        </div>
+
+        <!-- Net Profit -->
+        <div class="bg-emerald-50/70 border border-emerald-100 rounded-xl p-4 text-center">
+          <div class="text-xs font-bold text-emerald-700 mb-1">صافي الربح الحقيقي (Net Profit)</div>
+          <div id="fin-net-profit" class="text-xl sm:text-2xl font-black text-emerald-800">0.00 ج.م</div>
+          <div class="text-[11px] text-emerald-600 mt-1">= إجمالي الربح − المصروفات</div>
+        </div>
+      </div>
+
+      <!-- Payment Channels Breakdown -->
+      <div class="bg-gray-50 rounded-xl p-3 sm:p-4 border border-gray-200">
+        <div class="text-xs font-bold text-gray-700 mb-2">توزيع قنوات التحصيل والدفع:</div>
+        <div id="paymentBreakdownGrid" class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+          <!-- Filled dynamically -->
+        </div>
+      </div>
+
+      <!-- Detailed Expenses Table -->
+      <div id="expensesWrapper" class="space-y-2 pt-2">
+        <div class="flex items-center justify-between text-xs font-bold text-gray-700">
+          <span>تفاصيل المصروفات المسجلة لهذا اليوم:</span>
+          <span id="expensesTotalLabel" class="text-red-600 font-bold"></span>
+        </div>
+        <div class="overflow-x-auto rounded-xl border border-gray-200">
+          <table class="w-full text-right text-xs">
+            <thead class="bg-gray-100 text-gray-700 font-bold">
+              <tr>
+                <th class="p-2.5">م</th>
+                <th class="p-2.5">عنوان وبند المصروف</th>
+                <th class="p-2.5 text-center">المبلغ</th>
+                <th class="p-2.5 text-center">التاريخ</th>
+              </tr>
+            </thead>
+            <tbody id="expensesTableBody" class="divide-y divide-gray-100">
+              <!-- Filled dynamically -->
+            </tbody>
+          </table>
+        </div>
+        <div id="noExpensesMsg" class="hidden text-center py-3 text-xs text-gray-400 bg-gray-50 rounded-lg">
+          لا توجد أي مصروفات مسجلة في هذا التاريخ ✨
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         2️⃣ SECTION: PRODUCTS SOLD TODAY (الأصناف والمنتجات المباعة اليوم)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 print-card space-y-4">
+      <div class="flex items-center justify-between border-b pb-3">
+        <h2 class="text-lg font-black text-gray-800 flex items-center gap-2">
+          <span class="text-xl">🛍️</span>
+          <span>2. الأصناف والمنتجات التي بيعت اليوم (<span id="soldItemsCount">0</span> صنف)</span>
+        </h2>
+        <span class="text-xs font-bold text-blue-700" id="soldItemsTotalQty">إجمالي القطع المباعة: 0</span>
+      </div>
+
+      <div class="overflow-x-auto rounded-xl border border-gray-200">
+        <table class="w-full text-right text-xs sm:text-sm">
+          <thead class="bg-gray-100 text-gray-700 font-bold">
+            <tr>
+              <th class="p-2.5 text-center w-12">م</th>
+              <th class="p-2.5">اسم الخامة / الصنف</th>
+              <th class="p-2.5">القسم</th>
+              <th class="p-2.5 text-center">الباركود</th>
+              <th class="p-2.5 text-center">الكمية المباعة</th>
+              <th class="p-2.5 text-center">متوسط السعر</th>
+              <th class="p-2.5 text-center">إجمالي القيمة</th>
+            </tr>
+          </thead>
+          <tbody id="productsSoldTableBody" class="divide-y divide-gray-100">
+            <!-- Filled dynamically -->
+          </tbody>
+        </table>
+      </div>
+      <div id="noProductsSoldMsg" class="hidden text-center py-6 text-sm text-gray-400 bg-gray-50 rounded-xl">
+        لم يتم تسجيل أي مبيعات في هذا التاريخ
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         3️⃣ SECTION: ACTUAL SHORTAGES (النواقص الفعلية المشروطة بحد الطلب)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 print-card space-y-4">
+      <div class="flex items-center justify-between border-b pb-3">
+        <div>
+          <h2 class="text-lg font-black text-gray-800 flex items-center gap-2">
+            <span class="text-xl">⚠️</span>
+            <span>3. النواقص الفعلية المطلوبة للمخزن</span>
+          </h2>
+          <p class="text-xs text-gray-500 mt-0.5">يشمل الأصناف المحددة بحد طلب مسجل (min_stock) وبلغ رصيدها الحد أو نفذت بالكامل</p>
+        </div>
+        <span class="text-xs font-bold px-2.5 py-1 bg-amber-50 text-amber-800 rounded-lg" id="shortagesCountBadge">0 نواقص</span>
+      </div>
+
+      <div class="overflow-x-auto rounded-xl border border-gray-200">
+        <table class="w-full text-right text-xs sm:text-sm">
+          <thead class="bg-amber-50/70 text-amber-900 font-bold border-b border-amber-200">
+            <tr>
+              <th class="p-2.5 text-center w-12">م</th>
+              <th class="p-2.5">اسم الخامة</th>
+              <th class="p-2.5">القسم</th>
+              <th class="p-2.5 text-center">حد الطلب (المنبه)</th>
+              <th class="p-2.5 text-center">رصيد المحل الحالي</th>
+              <th class="p-2.5 text-center bg-blue-50/50">رصيد المستودع الرئيسي</th>
+              <th class="p-2.5 text-center">حالة النقص والإجراء</th>
+            </tr>
+          </thead>
+          <tbody id="shortagesTableBody" class="divide-y divide-gray-100">
+            <!-- Filled dynamically -->
+          </tbody>
+        </table>
+      </div>
+      <div id="noShortagesMsg" class="hidden text-center py-6 text-sm text-emerald-600 bg-emerald-50 rounded-xl font-bold">
+        ✅ ممتاز! لا توجد أي نواقص حالية لجميع الأصناف المفعل لها حد الطلب.
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         4️⃣ SECTION: EXPIRY TRACKER (تتبع تواريخ الصلاحية بنظام الألوان)
+         ══════════════════════════════════════════════════════════════════════ -->
+    <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 print-card space-y-4">
+      <div class="flex items-center justify-between border-b pb-3">
+        <div>
+          <h2 class="text-lg font-black text-gray-800 flex items-center gap-2">
+            <span class="text-xl">⏰</span>
+            <span>4. تتبع الصلاحيات للمنتجات القريبة من الانتهاء</span>
+          </h2>
+          <p class="text-xs text-gray-500 mt-0.5">نظام الإشارات الضوئية الملونة للتنبيه المبكر بحسب المدة المتبقية</p>
+        </div>
+        <div class="flex items-center gap-1.5 text-xs font-bold">
+          <span class="px-2 py-0.5 rounded badge-red">🔴 ≤ 5 شهور</span>
+          <span class="px-2 py-0.5 rounded badge-yellow">🟡 5 - 10 شهور</span>
+          <span class="px-2 py-0.5 rounded badge-green">🟢 10 - 15 شهر</span>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto rounded-xl border border-gray-200">
+        <table class="w-full text-right text-xs sm:text-sm">
+          <thead class="bg-gray-100 text-gray-700 font-bold">
+            <tr>
+              <th class="p-2.5 text-center w-12">م</th>
+              <th class="p-2.5">اسم الخامة / الصنف</th>
+              <th class="p-2.5">القسم</th>
+              <th class="p-2.5 text-center">الرصيد المتاح</th>
+              <th class="p-2.5 text-center">تاريخ الانتهاء</th>
+              <th class="p-2.5 text-center">المدة المتبقية</th>
+              <th class="p-2.5 text-center">درجة الخطورة والإجراء</th>
+            </tr>
+          </thead>
+          <tbody id="expiriesTableBody" class="divide-y divide-gray-100">
+            <!-- Filled dynamically -->
+          </tbody>
+        </table>
+      </div>
+      <div id="noExpiriesMsg" class="hidden text-center py-6 text-sm text-emerald-600 bg-emerald-50 rounded-xl font-bold">
+        ✅ جميع الأصناف ذات تواريخ صالحة لأكثر من 15 شهراً!
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const BASE = '<%= base %>';
+const PAYMENT_LABELS = {
+  cash: '💵 نقداً (الدرج)',
+  vodafone_cash: '📱 فودافون كاش / إنستاباي',
+  instapay: '⚡ إنستاباي',
+  credit: '📋 آجل (حساب عيادة)',
+  card: '💳 فيزا / ماستركارد',
+  online: '🌐 طلب موقع',
+};
+
+// Initialize Date Picker to today
+document.addEventListener('DOMContentLoaded', () => {
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  const dateInput = document.getElementById('reportDatePicker');
+  dateInput.value = todayStr;
+  fetchReportData(todayStr);
+});
+
+function setQuickDate(type) {
+  const now = new Date();
+  if (type === 'yesterday') {
+    now.setDate(now.getDate() - 1);
+  }
+  const dateStr = now.toLocaleDateString('en-CA');
+  document.getElementById('reportDatePicker').value = dateStr;
+  fetchReportData(dateStr);
+}
+
+async function fetchReportData(dateStr) {
+  if (!dateStr) return;
+
+  // Update labels
+  document.querySelectorAll('.currentReportDateText').forEach(el => el.textContent = dateStr);
+  const printLabel = document.getElementById('printDateLabel');
+  if (printLabel) printLabel.textContent = dateStr;
+
+  const loadingEl = document.getElementById('reportLoading');
+  const contentEl = document.getElementById('reportContent');
+  loadingEl.classList.remove('hidden');
+  contentEl.classList.add('opacity-40', 'pointer-events-none');
+
+  try {
+    const res = await fetch(`${BASE}/api/reports/daily-comprehensive?date=${dateStr}`, { credentials: 'include' });
+    if (!res.ok) throw new Error('فشل جلب بيانات التقرير');
+    const data = await res.json();
+    renderReport(data);
+  } catch (err) {
+    alert('حدث خطأ أثناء تحميل التقرير: ' + err.message);
+  } finally {
+    loadingEl.classList.add('hidden');
+    contentEl.classList.remove('opacity-40', 'pointer-events-none');
+  }
+}
+
+function renderReport(data) {
+  const fin = data.financial || {};
+
+  // 1. Financial Cards
+  document.getElementById('fin-gross-sales').textContent = (fin.gross_sales || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+  document.getElementById('fin-discounts-note').textContent = `خصومات: ${(fin.total_discounts || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م | صافي المبيعات: ${(fin.net_sales || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م`;
+
+  document.getElementById('fin-expenses').textContent = (fin.expenses_total || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+  document.getElementById('fin-expenses-count').textContent = `${(fin.expenses_list || []).length} بند مسجل`;
+
+  document.getElementById('fin-gross-profit').textContent = (fin.gross_profit || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+
+  const netEl = document.getElementById('fin-net-profit');
+  netEl.textContent = (fin.net_profit || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+  if (fin.net_profit < 0) {
+    netEl.className = 'text-xl sm:text-2xl font-black text-red-700';
+  } else {
+    netEl.className = 'text-xl sm:text-2xl font-black text-emerald-800';
+  }
+
+  document.getElementById('invoicesCountBadge').textContent = `${fin.invoices_count || 0} فاتورة`;
+
+  // Payment Breakdown
+  const payGrid = document.getElementById('paymentBreakdownGrid');
+  const breakdown = fin.payment_breakdown || [];
+  if (breakdown.length === 0) {
+    payGrid.innerHTML = '<div class="col-span-4 text-center py-2 text-gray-400">لا توجد مبيعات في هذا التاريخ</div>';
+  } else {
+    payGrid.innerHTML = breakdown.map(p => `
+      <div class="bg-white p-2.5 rounded-lg border border-gray-200">
+        <div class="text-gray-500 font-bold">${PAYMENT_LABELS[p.payment_method] || p.payment_method}</div>
+        <div class="text-sm font-black text-blue-900 mt-0.5">${parseFloat(p.total).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م</div>
+        <div class="text-[10px] text-gray-400">${p.cnt} عملية</div>
+      </div>
+    `).join('');
+  }
+
+  // Expenses Table
+  const expTbody = document.getElementById('expensesTableBody');
+  const noExpMsg = document.getElementById('noExpensesMsg');
+  const expList = fin.expenses_list || [];
+  if (expList.length === 0) {
+    expTbody.innerHTML = '';
+    noExpMsg.classList.remove('hidden');
+    document.getElementById('expensesTotalLabel').textContent = '';
+  } else {
+    noExpMsg.classList.add('hidden');
+    document.getElementById('expensesTotalLabel').textContent = `إجمالي: ${(fin.expenses_total || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م`;
+    expTbody.innerHTML = expList.map((e, idx) => `
+      <tr class="hover:bg-gray-50">
+        <td class="p-2.5 text-center text-gray-400 font-mono">${idx + 1}</td>
+        <td class="p-2.5 font-bold text-gray-900">${e.title || '—'}</td>
+        <td class="p-2.5 text-center font-bold text-red-600">${parseFloat(e.amount).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م</td>
+        <td class="p-2.5 text-center text-gray-500">${e.date || '—'}</td>
+      </tr>
+    `).join('');
+  }
+
+  // 2. Products Sold Table
+  const soldTbody = document.getElementById('productsSoldTableBody');
+  const noSoldMsg = document.getElementById('noProductsSoldMsg');
+  const soldList = data.products_sold || [];
+  document.getElementById('soldItemsCount').textContent = soldList.length;
+
+  if (soldList.length === 0) {
+    soldTbody.innerHTML = '';
+    noSoldMsg.classList.remove('hidden');
+    document.getElementById('soldItemsTotalQty').textContent = 'إجمالي القطع المباعة: 0';
+  } else {
+    noSoldMsg.classList.add('hidden');
+    const totalSoldQty = soldList.reduce((sum, p) => sum + parseInt(p.quantity_sold || 0, 10), 0);
+    document.getElementById('soldItemsTotalQty').textContent = `إجمالي القطع المباعة: ${totalSoldQty} قطعة`;
+
+    soldTbody.innerHTML = soldList.map((p, idx) => `
+      <tr class="hover:bg-gray-50">
+        <td class="p-2.5 text-center text-gray-400 font-mono">${idx + 1}</td>
+        <td class="p-2.5 font-bold text-gray-900">${p.product_name}</td>
+        <td class="p-2.5 text-gray-600">${p.category || 'عام'}</td>
+        <td class="p-2.5 text-center font-mono text-xs text-gray-500">${p.barcode || '—'}</td>
+        <td class="p-2.5 text-center font-black text-blue-700">${p.quantity_sold}</td>
+        <td class="p-2.5 text-center text-gray-700">${parseFloat(p.avg_unit_price).toFixed(2)} ج.م</td>
+        <td class="p-2.5 text-center font-bold text-emerald-800">${parseFloat(p.total_sales_amount).toFixed(2)} ج.م</td>
+      </tr>
+    `).join('');
+  }
+
+  // 3. Shortages Table (Strict criteria: min_stock > 0 and shop_qty <= min_stock)
+  const shortTbody = document.getElementById('shortagesTableBody');
+  const noShortMsg = document.getElementById('noShortagesMsg');
+  const shortList = data.shortages || [];
+  document.getElementById('shortagesCountBadge').textContent = `${shortList.length} نواقص مسجلة`;
+
+  if (shortList.length === 0) {
+    shortTbody.innerHTML = '';
+    noShortMsg.classList.remove('hidden');
+  } else {
+    noShortMsg.classList.add('hidden');
+    shortTbody.innerHTML = shortList.map((s, idx) => {
+      const isZero = s.shop_qty <= 0;
+      const whQty = parseInt(s.warehouse_qty || 0, 10);
+      let actionHtml = '';
+
+      if (whQty > 0) {
+        actionHtml = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800">📦 تحويل من المستودع (${whQty} متاح)</span>`;
+      } else {
+        actionHtml = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800">🚨 طلب توريد من المورد</span>`;
+      }
+
+      return `
+        <tr class="hover:bg-amber-50/40">
+          <td class="p-2.5 text-center text-gray-400 font-mono">${idx + 1}</td>
+          <td class="p-2.5 font-bold text-gray-900">${s.product_name}</td>
+          <td class="p-2.5 text-gray-600">${s.category || 'عام'}</td>
+          <td class="p-2.5 text-center font-bold text-amber-800">${s.min_stock}</td>
+          <td class="p-2.5 text-center font-black ${isZero ? 'text-red-600' : 'text-amber-700'}">${s.shop_qty} ${isZero ? '(نفذ)' : ''}</td>
+          <td class="p-2.5 text-center font-bold ${whQty > 0 ? 'text-blue-700 bg-blue-50/30' : 'text-gray-400'}">${whQty}</td>
+          <td class="p-2.5 text-center">${actionHtml}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  // 4. Expiry Tracker Table (Color tiered)
+  const expTbody = document.getElementById('expiriesTableBody');
+  const noExpTableMsg = document.getElementById('noExpiriesMsg');
+  const expList = data.expiries || [];
+
+  if (expList.length === 0) {
+    expTbody.innerHTML = '';
+    noExpTableMsg.classList.remove('hidden');
+  } else {
+    noExpTableMsg.classList.add('hidden');
+    expTbody.innerHTML = expList.map((e, idx) => {
+      let badgeClass = 'badge-green';
+      let rowClass = 'tier-green';
+      if (e.tier === 'red') {
+        badgeClass = 'badge-red';
+        rowClass = 'tier-red';
+      } else if (e.tier === 'yellow') {
+        badgeClass = 'badge-yellow';
+        rowClass = 'tier-yellow';
+      }
+
+      const formattedExpiry = (e.expiry_date || '').toString().slice(0, 10);
+
+      return `
+        <tr class="${rowClass} hover:bg-gray-50/80 transition-colors">
+          <td class="p-2.5 text-center text-gray-400 font-mono">${idx + 1}</td>
+          <td class="p-2.5 font-bold text-gray-900">${e.product_name}</td>
+          <td class="p-2.5 text-gray-600">${e.category || 'عام'}</td>
+          <td class="p-2.5 text-center font-bold text-gray-900">${e.quantity} وحدة</td>
+          <td class="p-2.5 text-center font-mono font-bold text-gray-800">${formattedExpiry}</td>
+          <td class="p-2.5 text-center font-bold text-xs">${e.months_left} شهر (${e.diff_days} يوم)</td>
+          <td class="p-2.5 text-center">
+            <span class="inline-block px-2.5 py-1 rounded-full text-xs font-bold ${badgeClass}">
+              ${e.tier_label}
+            </span>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+}
+</script>
+
+<%- include('partials/footer') %>

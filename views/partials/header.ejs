@@ -95,6 +95,9 @@
       <a href="<%= base %>/accounting" class="nav-link <%= reqPath.includes('/accounting') ? 'active' : '' %>">
         📊 المحاسبة
       </a>
+      <a href="<%= base %>/reports" class="nav-link <%= reqPath.includes('/reports') ? 'active' : '' %>">
+        📑 التقارير
+      </a>
       <% } %>
 
       <% if (!currentUser || (typeof userPerms !== 'undefined' && userPerms.invoices !== false)) { %>
