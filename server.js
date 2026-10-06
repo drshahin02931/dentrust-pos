@@ -4081,27 +4081,58 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
     return res.status(403).json({ error: 'غير مصرح' });
   }
   const now = new Date();
-  const defaultToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const targetDate = req.query.date && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
-    ? req.query.date
-    : defaultToday;
+  const pad = n => String(n).padStart(2, '0');
+  const defaultToday = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+  let startDate = defaultToday;
+  let endDate = defaultToday;
+  let periodLabel = 'اليوم';
+
+  const period = req.query.period;
+  if (period === 'yesterday') {
+    const y = new Date();
+    y.setDate(y.getDate() - 1);
+    startDate = `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}`;
+    endDate = startDate;
+    periodLabel = 'أمس';
+  } else if (period === 'week') {
+    const w = new Date();
+    w.setDate(w.getDate() - 6);
+    startDate = `${w.getFullYear()}-${pad(w.getMonth() + 1)}-${pad(w.getDate())}`;
+    endDate = defaultToday;
+    periodLabel = 'آخر 7 أيام';
+  } else if (period === 'month') {
+    startDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
+    endDate = defaultToday;
+    periodLabel = 'هذا الشهر';
+  } else if (req.query.start_date && req.query.end_date && /^\d{4}-\d{2}-\d{2}$/.test(req.query.start_date) && /^\d{4}-\d{2}-\d{2}$/.test(req.query.end_date)) {
+    startDate = req.query.start_date;
+    endDate = req.query.end_date;
+    periodLabel = startDate === endDate ? startDate : `من ${startDate} إلى ${endDate}`;
+  } else if (req.query.date && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)) {
+    startDate = req.query.date;
+    endDate = req.query.date;
+    periodLabel = startDate;
+  }
 
   try {
-    // 1. Financial: Sales summary on this date
-    // Note: in sales table, total_amount is already the net amount after discount.
-    // Therefore, gross_sales before discount = total_amount + discount_amount.
+    // 1. Sales summary in this date range (Accrual basis)
     const { rows: [salesSummary] } = await posDb.query(`
       SELECT 
         COUNT(s.id) AS invoices_count,
         COALESCE(SUM(s.total_amount + COALESCE(s.discount_amount, 0)), 0) AS gross_sales,
         COALESCE(SUM(s.discount_amount), 0) AS total_discounts,
         COALESCE(SUM(s.delivery_amount), 0) AS total_delivery,
-        COALESCE(SUM(s.total_amount - COALESCE(s.delivery_amount, 0)), 0) AS net_sales
+        COALESCE(SUM(s.total_amount - COALESCE(s.delivery_amount, 0)), 0) AS net_sales,
+        COALESCE(SUM(CASE WHEN s.source = 'online' OR s.dentrust_order_id IS NOT NULL THEN s.total_amount - COALESCE(s.delivery_amount, 0) ELSE 0 END), 0) AS online_sales,
+        COALESCE(SUM(CASE WHEN s.source = 'online' OR s.dentrust_order_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS online_count,
+        COALESCE(SUM(CASE WHEN COALESCE(s.source, 'pos') != 'online' AND s.dentrust_order_id IS NULL THEN s.total_amount - COALESCE(s.delivery_amount, 0) ELSE 0 END), 0) AS pos_sales,
+        COALESCE(SUM(CASE WHEN COALESCE(s.source, 'pos') != 'online' AND s.dentrust_order_id IS NULL THEN 1 ELSE 0 END), 0) AS pos_count
       FROM sales s
-      WHERE s.date::date = $1::date
-    `, [targetDate]).catch(() => ({ rows: [{}] }));
+      WHERE s.date::date >= $1::date AND s.date::date <= $2::date
+    `, [startDate, endDate]).catch(() => ({ rows: [{}] }));
 
-    // COGS (Cost of goods sold on this date)
+    // COGS (Cost of goods sold in this period)
     const { rows: [cogsSummary] } = await posDb.query(`
       SELECT 
         COALESCE(SUM(
@@ -4110,8 +4141,8 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
       LEFT JOIN products p ON p.id = si.product_id
-      WHERE s.date::date = $1::date
-    `, [targetDate]).catch(() => ({ rows: [{ total_cogs: 0 }] }));
+      WHERE s.date::date >= $1::date AND s.date::date <= $2::date
+    `, [startDate, endDate]).catch(() => ({ rows: [{ total_cogs: 0 }] }));
 
     // Raw sales profit from item unit prices minus purchase costs
     const { rows: [spRow] } = await posDb.query(`
@@ -4121,50 +4152,159 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
       LEFT JOIN products p ON p.id = si.product_id
-      WHERE s.date::date = $1::date
-    `, [targetDate]).catch(() => ({ rows: [{ raw_sales_profit: 0 }] }));
+      WHERE s.date::date >= $1::date AND s.date::date <= $2::date
+    `, [startDate, endDate]).catch(() => ({ rows: [{ raw_sales_profit: 0 }] }));
 
-    // Expenses on this date with full title, amount, and date
+    // Expenses in this period
     const { rows: expensesList } = await posDb.query(`
       SELECT id, title, amount, date
       FROM expenses
-      WHERE (date::text LIKE $1 || '%' OR (date ~ '^\\d{4}-\\d{2}-\\d{2}' AND date::date = $1::date))
+      WHERE date::date >= $1::date AND date::date <= $2::date
         AND (title NOT LIKE 'مردود #%' OR title IS NULL)
       ORDER BY id ASC
-    `, [targetDate]).catch(() => ({ rows: [] }));
+    `, [startDate, endDate]).catch(() => ({ rows: [] }));
 
     const totalExpenses = expensesList.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0);
 
-    // Payment methods breakdown on this date
-    const { rows: paymentBreakdown } = await posDb.query(`
+    // Payment methods breakdown (Accrual / invoices issue method)
+    const { rows: accrualPaymentBreakdown } = await posDb.query(`
       SELECT 
         COALESCE(s.payment_method, 'cash') AS payment_method,
         COALESCE(SUM(s.total_amount), 0) AS total,
         COUNT(s.id) AS cnt
       FROM sales s
-      WHERE s.date::date = $1::date
+      WHERE s.date::date >= $1::date AND s.date::date <= $2::date
       GROUP BY s.payment_method
       ORDER BY total DESC
-    `, [targetDate]).catch(() => ({ rows: [] }));
+    `, [startDate, endDate]).catch(() => ({ rows: [] }));
 
-    // Refunds / Returns on this date
+    // Refunds / Returns in this period
     const { rows: [refundsSummary] } = await posDb.query(`
       SELECT COALESCE(SUM(total_refund), 0) AS total_refunds
       FROM returns
-      WHERE date::date = $1::date
-    `, [targetDate]).catch(() => ({ rows: [{ total_refunds: 0 }] }));
+      WHERE date::date >= $1::date AND date::date <= $2::date
+    `, [startDate, endDate]).catch(() => ({ rows: [{ total_refunds: 0 }] }));
 
     const grossSales = parseFloat(salesSummary?.gross_sales || 0);
     const totalDiscounts = parseFloat(salesSummary?.total_discounts || 0);
     const netSales = parseFloat(salesSummary?.net_sales || 0);
     const totalCogs = parseFloat(cogsSummary?.total_cogs || 0);
     const rawProfit = parseFloat(spRow?.raw_sales_profit || 0);
-    // Gross profit = item margin minus invoice discounts (can be negative if sold below cost)
-    const grossProfit = rawProfit - totalDiscounts;
-    const netProfit = grossProfit - totalExpenses;
+    const accrualGrossProfit = rawProfit - totalDiscounts;
+    const accrualNetProfit = accrualGrossProfit - totalExpenses;
     const refunds = parseFloat(refundsSummary?.total_refunds || 0);
 
-    // 2. Products sold on this date (fixed si.quantity * si.unit_price)
+    // ── CASH BASIS CALCULATIONS ──────────────────────────────────────────
+    // Fetch individual sales with profits to compute exact cash collected & realized profit
+    const { rows: salesRows } = await posDb.query(`
+      SELECT 
+        s.id, s.total_amount, s.delivery_amount, s.discount_amount, s.payment_method, s.payment_split, s.amount_received,
+        COALESCE(prof.profit, 0) - COALESCE(s.discount_amount, 0) AS sale_profit
+      FROM sales s
+      LEFT JOIN (
+        SELECT si.sale_id,
+               SUM((si.unit_price - COALESCE(NULLIF(si.snapshot_purchase_price, 0), p.purchase_price, 0)) * si.quantity) AS profit
+        FROM sale_items si
+        LEFT JOIN products p ON p.id = si.product_id
+        GROUP BY si.sale_id
+      ) prof ON prof.sale_id = s.id
+      WHERE s.date::date >= $1::date AND s.date::date <= $2::date
+    `, [startDate, endDate]).catch(() => ({ rows: [] }));
+
+    let cashSalesCollected = 0;
+    let realizedProfitFromSales = 0;
+    let payCash = 0;
+    let payVisa = 0;
+    let payInstapay = 0;
+    let payOnline = 0;
+    let payCreditUncollected = 0;
+
+    for (const s of salesRows) {
+      const tot = parseFloat(s.total_amount || 0);
+      const profit = parseFloat(s.sale_profit || 0);
+      let collected = 0;
+      const method = s.payment_method || 'cash';
+
+      if (method === 'credit') {
+        collected = parseFloat(s.amount_received || 0);
+        payCreditUncollected += Math.max(0, tot - collected);
+        payCash += collected;
+      } else if (method === 'split') {
+        try {
+          const sp = JSON.parse(s.payment_split || '{}');
+          const cr = parseFloat(sp.credit || 0);
+          const cPart = parseFloat(sp.cash || 0);
+          const vPart = parseFloat(sp.visa || 0);
+          const iPart = parseFloat(sp.instapay || 0);
+          payCreditUncollected += cr;
+          payCash += cPart;
+          payVisa += vPart;
+          payInstapay += iPart;
+          collected = cPart + vPart + iPart;
+        } catch (_) {
+          collected = parseFloat(s.amount_received || 0);
+          payCash += collected;
+        }
+      } else {
+        collected = tot;
+        if (method === 'visa') payVisa += tot;
+        else if (method === 'instapay') payInstapay += tot;
+        else if (method === 'online') payOnline += tot;
+        else payCash += tot;
+      }
+
+      cashSalesCollected += collected;
+      if (tot > 0) {
+        const ratio = Math.min(1, Math.max(0, collected / tot));
+        realizedProfitFromSales += profit * ratio;
+      }
+    }
+
+    // Customer payments / Debt settlements in this period
+    const { rows: customerPaymentsList } = await posDb.query(`
+      SELECT 
+        cp.id, cp.customer_id, cp.amount, cp.cash_amount, cp.instapay_amount, cp.note, cp.date,
+        COALESCE(c.name, 'عميل #' || cp.customer_id) AS customer_name,
+        c.phone AS customer_phone
+      FROM customer_payments cp
+      LEFT JOIN customers c ON c.id = cp.customer_id
+      WHERE cp.date::date >= $1::date AND cp.date::date <= $2::date
+      ORDER BY cp.date DESC
+    `, [startDate, endDate]).catch(() => ({ rows: [] }));
+
+    let debtCollectionsTotal = 0;
+    let debtCash = 0;
+    let debtInstapay = 0;
+
+    for (const cp of customerPaymentsList) {
+      const amt = parseFloat(cp.amount || 0);
+      const cAmt = parseFloat(cp.cash_amount || 0);
+      const iAmt = parseFloat(cp.instapay_amount || 0);
+      debtCollectionsTotal += amt;
+      if (cAmt + iAmt > 0) {
+        debtCash += cAmt;
+        debtInstapay += iAmt;
+      } else {
+        debtCash += amt;
+      }
+    }
+
+    // Profit from collected debts using store average profit margin ratio
+    const avgMarginRatio = netSales > 0 ? Math.max(0.05, Math.min(0.40, accrualGrossProfit / netSales)) : 0.20;
+    const debtRealizedProfit = debtCollectionsTotal * avgMarginRatio;
+
+    const totalCashIn = cashSalesCollected + debtCollectionsTotal;
+    const cashGrossProfit = realizedProfitFromSales + debtRealizedProfit;
+    const cashNetProfit = cashGrossProfit - totalExpenses;
+
+    const cashPaymentBreakdown = [
+      { payment_method: 'cash', total: payCash + debtCash, label: '💵 كاش (مبيعات + تحصيل ديون)' },
+      { payment_method: 'instapay', total: payInstapay + debtInstapay, label: '📱 InstaPay (مبيعات + تحصيل)' },
+      { payment_method: 'visa', total: payVisa, label: '💳 فيزا' },
+      { payment_method: 'online', total: payOnline, label: '🌐 أونلاين' },
+    ].filter(p => p.total > 0);
+
+    // 2. Products sold in this date range
     const { rows: productsSold } = await posDb.query(`
       SELECT 
         si.product_id,
@@ -4177,10 +4317,10 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
       FROM sale_items si
       JOIN sales s ON s.id = si.sale_id
       LEFT JOIN products p ON p.id = si.product_id
-      WHERE s.date::date = $1::date
+      WHERE s.date::date >= $1::date AND s.date::date <= $2::date
       GROUP BY si.product_id, si.product_name, p.barcode, p.category
       ORDER BY quantity_sold DESC, total_sales_amount DESC
-    `, [targetDate]).catch((err) => {
+    `, [startDate, endDate]).catch((err) => {
       console.error('[Error fetching productsSold]:', err);
       return { rows: [] };
     });
@@ -4211,7 +4351,7 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
       ORDER BY (p.min_stock - COALESCE(p.quantity, 0)) DESC, p.product_name ASC
     `).catch(() => ({ rows: [] }));
 
-    // 4. Expiry Tracker (products expiring within 15 months from targetDate)
+    // 4. Expiry Tracker (products expiring within 15 months from endDate)
     const { rows: expiryRows } = await posDb.query(`
       SELECT 
         p.id,
@@ -4227,9 +4367,9 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
         AND COALESCE(p.quantity, 0) > 0
         AND p.expiry_date::date <= $1::date + INTERVAL '15 months'
       ORDER BY p.expiry_date ASC
-    `, [targetDate]).catch(() => ({ rows: [] }));
+    `, [endDate]).catch(() => ({ rows: [] }));
 
-    const refDate = new Date(targetDate);
+    const refDate = new Date(endDate);
     const expiries = expiryRows.map(item => {
       const expDate = new Date(item.expiry_date);
       const diffTime = expDate.getTime() - refDate.getTime();
@@ -4257,19 +4397,57 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
 
     return res.json({
       ok: true,
-      date: targetDate,
+      date: startDate === endDate ? startDate : `${startDate} إلى ${endDate}`,
+      start_date: startDate,
+      end_date: endDate,
+      period_label: periodLabel,
       financial: {
+        // Default top-level for backward compatibility
         invoices_count: parseInt(salesSummary?.invoices_count || 0, 10),
         gross_sales: grossSales,
         total_discounts: totalDiscounts,
         net_sales: netSales,
         cogs: totalCogs,
-        gross_profit: grossProfit,
+        gross_profit: accrualGrossProfit,
         expenses_total: totalExpenses,
-        net_profit: netProfit,
+        net_profit: accrualNetProfit,
         refunds: refunds,
         expenses_list: expensesList,
-        payment_breakdown: paymentBreakdown,
+        payment_breakdown: accrualPaymentBreakdown,
+
+        // Dual Basis detailed views
+        accrual: {
+          invoices_count: parseInt(salesSummary?.invoices_count || 0, 10),
+          gross_sales: grossSales,
+          total_discounts: totalDiscounts,
+          net_sales: netSales,
+          cogs: totalCogs,
+          gross_profit: accrualGrossProfit,
+          expenses_total: totalExpenses,
+          net_profit: accrualNetProfit,
+          refunds: refunds,
+          payment_breakdown: accrualPaymentBreakdown,
+          uncollected_credit: payCreditUncollected,
+        },
+        cash: {
+          invoices_count: parseInt(salesSummary?.invoices_count || 0, 10),
+          cash_sales_collected: cashSalesCollected,
+          debt_collected: debtCollectionsTotal,
+          debt_collections_count: customerPaymentsList.length,
+          total_cash_in: totalCashIn,
+          realized_gross_profit: cashGrossProfit,
+          expenses_total: totalExpenses,
+          realized_net_profit: cashNetProfit,
+          payment_breakdown: cashPaymentBreakdown,
+          customer_payments_list: customerPaymentsList,
+        },
+        channels: {
+          pos_sales: parseFloat(salesSummary?.pos_sales || 0),
+          pos_count: parseInt(salesSummary?.pos_count || 0, 10),
+          online_sales: parseFloat(salesSummary?.online_sales || 0),
+          online_count: parseInt(salesSummary?.online_count || 0, 10),
+        },
+        customer_payments_list: customerPaymentsList,
       },
       products_sold: productsSold,
       shortages: shortages,
