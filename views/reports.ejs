@@ -26,7 +26,7 @@
 
   <!-- Printable Header (Visible only on print or top of page) -->
   <div class="hidden print-header bg-white p-4 border-b-2 border-blue-900 mb-4">
-    <div class="flex items-center justify-between">
+    <div class="flex items-center justify-between pb-3 border-b border-gray-200">
       <div>
         <h1 class="text-xl font-black text-blue-900">🦷 DenTrust Dental Supplies</h1>
         <p class="text-xs text-gray-600 mt-0.5">نظام إدارة نقاط البيع والمستودعات الطبية</p>
@@ -35,7 +35,52 @@
         <div><strong>التقرير اليومي والإداري الشامل</strong></div>
         <div>تاريخ التقرير: <span id="printDateLabel" class="font-bold"></span></div>
         <div>تاريخ الطباعة: <span><%= new Date().toLocaleDateString('ar-EG') %></span></div>
+        <div class="mt-0.5 text-blue-900 font-bold">الوضع النشط: <span id="printBasisLabel">💰 التحصيل الفعلي</span></div>
       </div>
+    </div>
+
+    <!-- Executive Comparative Summary Table (Printed on PDF) -->
+    <div class="mt-3">
+      <div class="text-xs font-black text-gray-800 mb-1.5 flex items-center justify-between">
+        <span>⚖️ ملخص المقارنة المحاسبية والتنفيذية (النقدي vs الاستحقاق):</span>
+        <span class="text-[10px] text-gray-500 font-normal">مقارنة حركة الدرج والخزينة الفعلية بإجمالي المبيعات الآجلة</span>
+      </div>
+      <table class="w-full text-right text-xs border border-gray-300">
+        <thead class="bg-gray-100 font-bold text-gray-900">
+          <tr>
+            <th class="p-2 border border-gray-300">المؤشر المالي</th>
+            <th class="p-2 text-center border border-gray-300 bg-blue-50 text-blue-900">💰 التحصيل الفعلي (الدرج والخزينة)</th>
+            <th class="p-2 text-center border border-gray-300 bg-purple-50 text-purple-900">📋 شامل الآجل (الاستحقاق العام)</th>
+            <th class="p-2 text-center border border-gray-300 bg-amber-50 text-amber-900">الفارق المحاسبي</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-200">
+          <tr>
+            <td class="p-2 border border-gray-300 font-bold text-gray-800">إجمالي الإيراد / المقبوضات</td>
+            <td class="p-2 text-center border border-gray-300 text-blue-900 font-black" id="print-comp-cash-rev">0.00 ج.م</td>
+            <td class="p-2 text-center border border-gray-300 text-purple-900 font-black" id="print-comp-acc-rev">0.00 ج.م</td>
+            <td class="p-2 text-center border border-gray-300 text-gray-700 font-bold" id="print-comp-diff-rev">—</td>
+          </tr>
+          <tr>
+            <td class="p-2 border border-gray-300 font-bold text-gray-800">إجمالي المصروفات</td>
+            <td class="p-2 text-center border border-gray-300 text-red-700 font-black" id="print-comp-cash-exp">0.00 ج.م</td>
+            <td class="p-2 text-center border border-gray-300 text-red-700 font-black" id="print-comp-acc-exp">0.00 ج.م</td>
+            <td class="p-2 text-center border border-gray-300 text-gray-400">0.00 ج.م</td>
+          </tr>
+          <tr>
+            <td class="p-2 border border-gray-300 font-bold text-gray-800">إجمالي الأرباح</td>
+            <td class="p-2 text-center border border-gray-300 text-emerald-800 font-black" id="print-comp-cash-gross">0.00 ج.م</td>
+            <td class="p-2 text-center border border-gray-300 text-amber-800 font-black" id="print-comp-acc-gross">0.00 ج.م</td>
+            <td class="p-2 text-center border border-gray-300 text-gray-700 font-bold" id="print-comp-diff-gross">—</td>
+          </tr>
+          <tr class="bg-gray-50 font-bold">
+            <td class="p-2 border border-gray-300 font-black text-gray-900">صافي الربح الحقيقي</td>
+            <td class="p-2 text-center border border-gray-300 text-emerald-900 font-black" id="print-comp-cash-net">0.00 ج.م</td>
+            <td class="p-2 text-center border border-gray-300 text-purple-900 font-black" id="print-comp-acc-net">0.00 ج.م</td>
+            <td class="p-2 text-center border border-gray-300 text-gray-700 font-bold" id="print-comp-diff-net">—</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -624,6 +669,11 @@ function renderFinancialCards(data) {
     renderPaymentBreakdown(finAccrual.payment_breakdown || []);
     document.getElementById('invoicesCountBadge').textContent = `${finAccrual.invoices_count || 0} فاتورة`;
   }
+
+  const printBasis = document.getElementById('printBasisLabel');
+  if (printBasis) {
+    printBasis.textContent = isCash ? '💰 التحصيل الفعلي (الأساس النقدي)' : '📋 شامل الآجل (أساس الاستحقاق)';
+  }
 }
 
 function renderReport(data) {
@@ -632,6 +682,40 @@ function renderReport(data) {
   document.querySelectorAll('.currentReportDateText').forEach(el => el.textContent = labelText);
   const printLabel = document.getElementById('printDateLabel');
   if (printLabel) printLabel.textContent = labelText;
+
+  // Populate Executive Comparative Table in Print Header
+  const cRev = parseFloat(data.financial?.cash?.total_cash_in || 0);
+  const aRev = parseFloat(data.financial?.accrual?.gross_sales || 0);
+  const diffRev = aRev - cRev;
+
+  const cExp = parseFloat(data.financial?.cash?.expenses_total || data.financial?.expenses_total || 0);
+  const aExp = parseFloat(data.financial?.accrual?.expenses_total || data.financial?.expenses_total || 0);
+
+  const cGross = parseFloat(data.financial?.cash?.realized_gross_profit || 0);
+  const aGross = parseFloat(data.financial?.accrual?.gross_profit || 0);
+  const diffGross = aGross - cGross;
+
+  const cNet = parseFloat(data.financial?.cash?.realized_net_profit || 0);
+  const aNet = parseFloat(data.financial?.accrual?.net_profit || 0);
+  const diffNet = aNet - cNet;
+
+  const elCashRev = document.getElementById('print-comp-cash-rev');
+  if (elCashRev) {
+    elCashRev.textContent = cRev.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+    document.getElementById('print-comp-acc-rev').textContent = aRev.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+    document.getElementById('print-comp-diff-rev').textContent = (diffRev >= 0 ? '+' : '') + diffRev.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+
+    document.getElementById('print-comp-cash-exp').textContent = cExp.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+    document.getElementById('print-comp-acc-exp').textContent = aExp.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+
+    document.getElementById('print-comp-cash-gross').textContent = cGross.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+    document.getElementById('print-comp-acc-gross').textContent = aGross.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+    document.getElementById('print-comp-diff-gross').textContent = (diffGross >= 0 ? '+' : '') + diffGross.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+
+    document.getElementById('print-comp-cash-net').textContent = cNet.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+    document.getElementById('print-comp-acc-net').textContent = aNet.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+    document.getElementById('print-comp-diff-net').textContent = (diffNet >= 0 ? '+' : '') + diffNet.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
+  }
 
   // Render Channels Breakdown
   const chan = data.financial?.channels || {};
