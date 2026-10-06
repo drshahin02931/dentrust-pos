@@ -1,4 +1,5 @@
 <%- include('partials/header', Object.assign({pageTitle: 'التقارير اليومية والأرشيف'}, locals)) %>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
 <style>
   @media print {
@@ -24,6 +25,7 @@
 
 <div class="space-y-6 pb-12">
 
+  <div id="printableReportArea" class="space-y-6 bg-white rounded-2xl">
   <!-- Printable Header (Visible only on print or top of page) -->
   <div class="hidden print-header bg-white p-4 border-b-2 border-blue-900 mb-4">
     <div class="flex items-center justify-between pb-3 border-b border-gray-200">
@@ -122,10 +124,17 @@
         </button>
       </div>
 
-      <button type="button" onclick="window.print()" class="bg-blue-700 hover:bg-blue-800 text-white font-bold px-3.5 py-2 rounded-xl shadow flex items-center gap-1.5 text-xs transition-all">
-        <span>🖨️</span>
-        <span>طباعة PDF</span>
-      </button>
+      <!-- PDF Download & Print Buttons -->
+      <div class="flex items-center gap-1.5">
+        <button type="button" onclick="downloadPdfDirect()" id="btnDownloadPdf" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-xl shadow flex items-center gap-1.5 text-xs transition-all cursor-pointer">
+          <span>📥</span>
+          <span>تحميل PDF مباشر</span>
+        </button>
+        <button type="button" onclick="window.print()" class="bg-blue-700 hover:bg-blue-800 text-white font-bold px-3 py-2 rounded-xl shadow flex items-center gap-1.5 text-xs transition-all cursor-pointer">
+          <span>🖨️</span>
+          <span>معاينة / طباعة</span>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -412,6 +421,7 @@
     </div>
 
   </div>
+  </div>
 </div>
 
 <script>
@@ -494,6 +504,54 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initReports);
 } else {
   initReports();
+}
+
+async function downloadPdfDirect() {
+  const btn = document.getElementById('btnDownloadPdf');
+  let originalHtml = '';
+  if (btn) {
+    originalHtml = btn.innerHTML;
+    btn.innerHTML = '<span>⏳</span><span>جارٍ إعداد الـ PDF...</span>';
+    btn.disabled = true;
+  }
+
+  const printHeader = document.querySelector('.print-header');
+  try {
+    if (printHeader) {
+      printHeader.classList.remove('hidden');
+    }
+
+    const area = document.getElementById('printableReportArea') || document.getElementById('reportContent');
+    const dateLabel = (document.getElementById('printDateLabel')?.textContent || 'تقرير').replace(/[\s\/:]+/g, '_');
+    const basisLabel = currentBasis === 'cash' ? 'تحصيل_فعلي' : 'شامل_الآجل';
+    const filename = `تقرير_DenTrust_${basisLabel}_${dateLabel}.pdf`;
+
+    const opt = {
+      margin: [10, 8, 10, 8],
+      filename: filename,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+    };
+
+    if (typeof html2pdf !== 'undefined') {
+      await html2pdf().set(opt).from(area).save();
+    } else {
+      window.print();
+    }
+  } catch (err) {
+    console.error('Direct PDF error, falling back to window.print():', err);
+    window.print();
+  } finally {
+    if (printHeader) {
+      printHeader.classList.add('hidden');
+    }
+    if (btn) {
+      btn.innerHTML = originalHtml;
+      btn.disabled = false;
+    }
+  }
 }
 
 async function fetchReportData(params = { period: 'today' }) {
