@@ -3894,16 +3894,18 @@ app.delete(`${BASE}/api/extra-profits/:id`, async (req, res) => {
 
 app.get(`${BASE}/api/reports/summary`, async (req, res) => {
   const period = req.query.period || 'month';
+  const basis = req.query.basis || 'cash';
   try {
     const df = periodFilter(period, 's.date');
     const ef = periodFilter(period, 'e.date');
     const rf = periodFilter(period, 'r.date');
-    // Revenue = total_amount minus delivery (delivery goes to courier, not net profit)
+    const cpf = periodFilter(period, 'cp.date');
+
+    // 1. Accrual Sales Summary
     const { rows: [sdR] } = await posDb.query(
       `SELECT COALESCE(SUM(s.total_amount - COALESCE(s.delivery_amount,0)),0) as r
        FROM sales s WHERE ${df}`
     );
-    // Sales profit = sum of (unit_price - cost_price) * quantity for sales in this period
     const { rows: [spR] } = await posDb.query(
       `SELECT COALESCE(SUM(
          si.quantity * (si.unit_price - COALESCE(NULLIF(si.snapshot_purchase_price, 0), p.purchase_price, 0))
@@ -3913,14 +3915,12 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
        LEFT JOIN products p ON p.id = si.product_id
        WHERE ${df}`
     );
-    // Return refunds on sales belonging to this period
     const { rows: [rt] } = await posDb.query(
       `SELECT COALESCE(SUM(r.total_refund),0) as t 
        FROM returns r 
        JOIN sales s ON s.id = r.sale_id 
        WHERE ${df}`
     );
-    // Return profit margin on sales belonging to this period
     const { rows: [rpR] } = await posDb.query(
       `SELECT COALESCE(SUM(
          ri.quantity * (ri.unit_price - COALESCE(NULLIF(si.snapshot_purchase_price, 0), p.purchase_price, 0))
@@ -3951,54 +3951,148 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
 
     const salesProfit = parseFloat(spR.sales_profit || 0);
     const returnProfit = parseFloat(rpR.return_profit || 0);
-    // Total discounts applied on sales in this period
     const { rows: [discR] } = await posDb.query(
       `SELECT COALESCE(SUM(s.discount_amount), 0) as total_discounts FROM sales s WHERE ${df}`
     );
     const totalDiscounts = parseFloat(discR?.total_discounts || 0);
-    // Gross profit: can be negative if discounts caused selling below cost
     const gross = salesProfit - returnProfit - totalDiscounts;
     const cost = netRev - gross;
     const exp = parseFloat(et.t || 0);
     const extraProfit = parseFloat(epR.t || 0);
     const netProfit = gross - exp + extraProfit;
+
     const { rows: payRows } = await posDb.query(
       `SELECT payment_method, COUNT(*) as cnt, SUM(total_amount) as total FROM sales s WHERE ${df} GROUP BY payment_method`
     );
-    let cashRev = 0, instaRev = 0;
-    for (const row of payRows) {
-      const m = row.payment_method || '';
-      const t = parseFloat(row.total || 0);
-      if (m === 'cash' || m === 'naqdi') cashRev += t;
-      if (m === 'instapay') instaRev += t;
-    }
-    const { rows: splitRows } = await posDb.query(
-      `SELECT payment_split FROM sales s WHERE payment_method='split' AND ${df}`
-    );
-    for (const row of splitRows) {
-      try { const sp = JSON.parse(row.payment_split || '{}'); cashRev += parseFloat(sp.cash || 0); instaRev += parseFloat(sp.instapay || 0); } catch (_) {}
+
+    // 2. Cash Basis Calculations
+    const { rows: salesRows } = await posDb.query(`
+      SELECT 
+        s.id, s.total_amount, s.delivery_amount, s.discount_amount, s.payment_method, s.payment_split, s.amount_received,
+        COALESCE(prof.profit, 0) - COALESCE(s.discount_amount, 0) AS sale_profit
+      FROM sales s
+      LEFT JOIN (
+        SELECT si.sale_id,
+               SUM((si.unit_price - COALESCE(NULLIF(si.snapshot_purchase_price, 0), p.purchase_price, 0)) * si.quantity) AS profit
+        FROM sale_items si
+        LEFT JOIN products p ON p.id = si.product_id
+        GROUP BY si.sale_id
+      ) prof ON prof.sale_id = s.id
+      WHERE ${df}
+    `).catch(() => ({ rows: [] }));
+
+    let cashSalesCollected = 0;
+    let realizedProfitFromSales = 0;
+    let payCash = 0;
+    let payVisa = 0;
+    let payInstapay = 0;
+    let payOnline = 0;
+
+    for (const s of salesRows) {
+      const tot = parseFloat(s.total_amount || 0);
+      const profit = parseFloat(s.sale_profit || 0);
+      let collected = 0;
+      const method = s.payment_method || 'cash';
+
+      if (method === 'credit') {
+        collected = parseFloat(s.amount_received || 0);
+        payCash += collected;
+      } else if (method === 'split') {
+        try {
+          const sp = JSON.parse(s.payment_split || '{}');
+          const cPart = parseFloat(sp.cash || 0);
+          const vPart = parseFloat(sp.visa || 0);
+          const iPart = parseFloat(sp.instapay || 0);
+          payCash += cPart;
+          payVisa += vPart;
+          payInstapay += iPart;
+          collected = cPart + vPart + iPart;
+        } catch (_) {
+          collected = parseFloat(s.amount_received || 0);
+          payCash += collected;
+        }
+      } else {
+        collected = tot;
+        if (method === 'visa') payVisa += tot;
+        else if (method === 'instapay') payInstapay += tot;
+        else if (method === 'online') payOnline += tot;
+        else payCash += tot;
+      }
+
+      cashSalesCollected += collected;
+      if (tot > 0) {
+        const ratio = Math.min(1, Math.max(0, collected / tot));
+        realizedProfitFromSales += profit * ratio;
+      }
     }
 
-    // Deduct returns from cash & instapay according to original payment method
-    const { rows: returnPayRows } = await posDb.query(
-      `SELECT s.payment_method, SUM(r.total_refund) as total
-       FROM returns r
-       JOIN sales s ON s.id = r.sale_id
-       WHERE ${rf}
-       GROUP BY s.payment_method`
-    );
-    for (const rRow of returnPayRows) {
-      const m = rRow.payment_method || '';
-      const t = parseFloat(rRow.total || 0);
-      if (m === 'cash' || m === 'naqdi') cashRev = Math.max(0, cashRev - t);
-      if (m === 'instapay') instaRev = Math.max(0, instaRev - t);
+    // Customer Debt Payments in this period
+    const { rows: cpRows } = await posDb.query(`
+      SELECT 
+        COALESCE(SUM(amount), 0) AS debt_total,
+        COALESCE(SUM(cash_amount), 0) AS debt_cash_sum,
+        COALESCE(SUM(instapay_amount), 0) AS debt_insta_sum,
+        COUNT(*) AS cnt
+      FROM customer_payments cp
+      WHERE ${cpf}
+    `).catch(() => ({ rows: [{ debt_total: 0, debt_cash_sum: 0, debt_insta_sum: 0, cnt: 0 }] }));
+
+    const debtTotal = parseFloat(cpRows[0]?.debt_total || 0);
+    let debtCash = parseFloat(cpRows[0]?.debt_cash_sum || 0);
+    let debtInsta = parseFloat(cpRows[0]?.debt_insta_sum || 0);
+    if (debtCash + debtInsta === 0 && debtTotal > 0) {
+      debtCash = debtTotal;
     }
+
+    const avgMarginRatio = netRev > 0 ? Math.max(0.05, Math.min(0.40, gross / netRev)) : 0.20;
+    const debtRealizedProfit = debtTotal * avgMarginRatio;
+
+    const totalCashIn = Math.max(0, cashSalesCollected + debtTotal - refunds);
+    const cashGrossProfit = realizedProfitFromSales + debtRealizedProfit - returnProfit;
+    const cashNetProfit = cashGrossProfit - exp + extraProfit;
+
+    const cashDrawerTotal = Math.max(0, payCash + debtCash);
+    const instaDrawerTotal = Math.max(0, payInstapay + debtInsta);
+
+    const cashPaymentBreakdown = [
+      { payment_method: 'cash', total: cashDrawerTotal, label: '💵 كاش (مبيعات + سداد ديون)' },
+      { payment_method: 'instapay', total: instaDrawerTotal, label: '📱 InstaPay (مبيعات + سداد)' },
+      { payment_method: 'visa', total: payVisa, label: '💳 فيزا' },
+      { payment_method: 'online', total: payOnline, label: '🌐 أونلاين' },
+    ].filter(p => p.total > 0);
+
+    // Return response with both bundles and top-level defaults
     res.json({
-      revenue: r2(rev), refunds: r2(refunds), net_revenue: r2(netRev),
-      cost: r2(cost), gross_profit: r2(gross), expenses: r2(exp), extra_profit: r2(extraProfit), net_profit: r2(netProfit),
+      accrual: {
+        revenue: r2(rev), refunds: r2(refunds), net_revenue: r2(netRev),
+        cost: r2(cost), gross_profit: r2(gross), expenses: r2(exp), extra_profit: r2(extraProfit), net_profit: r2(netProfit),
+        sales_count: parseInt(sc.cnt, 10),
+        payment_breakdown: payRows.map(r => ({ ...r, cnt: parseInt(r.cnt, 10), total: parseFloat(r.total || 0) })),
+        cash_revenue: r2(payCash), instapay_revenue: r2(payInstapay),
+      },
+      cash: {
+        revenue: r2(totalCashIn), refunds: r2(refunds), net_revenue: r2(totalCashIn),
+        cost: r2(Math.max(0, totalCashIn - cashGrossProfit)), gross_profit: r2(cashGrossProfit),
+        expenses: r2(exp), extra_profit: r2(extraProfit), net_profit: r2(cashNetProfit),
+        sales_cash_collected: r2(cashSalesCollected),
+        debt_collected: r2(debtTotal),
+        sales_count: parseInt(sc.cnt, 10),
+        payment_breakdown: cashPaymentBreakdown,
+        cash_revenue: r2(cashDrawerTotal), instapay_revenue: r2(instaDrawerTotal),
+      },
+      // Top-level defaults based on req.query.basis (defaults to cash)
+      revenue: basis === 'accrual' ? r2(rev) : r2(totalCashIn),
+      refunds: r2(refunds),
+      net_revenue: basis === 'accrual' ? r2(netRev) : r2(totalCashIn),
+      cost: basis === 'accrual' ? r2(cost) : r2(Math.max(0, totalCashIn - cashGrossProfit)),
+      gross_profit: basis === 'accrual' ? r2(gross) : r2(cashGrossProfit),
+      expenses: r2(exp),
+      extra_profit: r2(extraProfit),
+      net_profit: basis === 'accrual' ? r2(netProfit) : r2(cashNetProfit),
       sales_count: parseInt(sc.cnt, 10),
-      payment_breakdown: payRows.map(r => ({ ...r, cnt: parseInt(r.cnt, 10), total: parseFloat(r.total || 0) })),
-      cash_revenue: r2(cashRev), instapay_revenue: r2(instaRev),
+      payment_breakdown: basis === 'accrual' ? payRows.map(r => ({ ...r, cnt: parseInt(r.cnt, 10), total: parseFloat(r.total || 0) })) : cashPaymentBreakdown,
+      cash_revenue: basis === 'accrual' ? r2(payCash) : r2(cashDrawerTotal),
+      instapay_revenue: basis === 'accrual' ? r2(payInstapay) : r2(instaDrawerTotal),
     });
   } catch (err) { console.error(err); res.status(500).json({ error: 'خطأ داخلي' }); }
 });
