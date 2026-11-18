@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title><%= typeof pageTitle !== 'undefined' ? pageTitle : 'نظام POS' %> — DenTrust</title>
   <link rel="manifest" href="<%= base %>/static/manifest.json"/>
-  <meta name="theme-color" content="#1d4ed8"/>
+  <meta name="theme-color" content="#3b1859"/>
   <meta name="mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
@@ -14,7 +14,26 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      theme: { extend: { fontFamily: { sans: ['Segoe UI', 'Arial', 'sans-serif'] } } }
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Segoe UI', 'Arial', 'sans-serif'] },
+          colors: {
+            blue: {
+              50:  '#f7f4f9',
+              100: '#eee7f4',
+              200: '#dacce8',
+              300: '#bca2d6',
+              400: '#936bbd',
+              500: '#6d399c',
+              600: '#521959',
+              700: '#3b1859',
+              800: '#211c54',
+              900: '#121d4d',
+              950: '#0a1030'
+            }
+          }
+        }
+      }
     };
   </script>
   <style>
@@ -25,16 +44,17 @@
       -webkit-overflow-scrolling: touch;
       margin: 0;
       padding: 0;
+      background-color: #f6f5fa;
     }
     html::-webkit-scrollbar, body::-webkit-scrollbar {
       height: 8px;
     }
     html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb {
-      background: #93c5fd;
+      background: linear-gradient(135deg, #10246b, #521959, #83142c);
       border-radius: 9999px;
     }
     html::-webkit-scrollbar-thumb:hover, body::-webkit-scrollbar-thumb:hover {
-      background: #3b82f6;
+      background: linear-gradient(135deg, #121d4d, #6d399c, #9a1834);
     }
     button, a.button, input[type="button"], input[type="submit"] {
       touch-action: manipulation;
@@ -43,17 +63,20 @@
     button, .btn {
       min-height: 38px;
     }
+    .dt-brand-nav, nav.no-print {
+      background: linear-gradient(135deg, #10246b 0%, #521959 52%, #83142c 100%) !important;
+    }
     .nav-link { display:flex; align-items:center; gap:0.4rem; padding:0.6rem 1rem; border-radius:0.75rem; font-size:0.875rem; font-weight:600; transition:all 0.15s; white-space:nowrap; min-height:40px; }
-    .nav-link.active { background:white; color:#1d4ed8; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
-    .nav-link:not(.active) { color:#bfdbfe; }
-    .nav-link:not(.active):hover { background:rgba(255,255,255,0.15); }
+    .nav-link.active { background:#ffffff; color:#4e1856; font-weight:800; box-shadow:0 2px 8px rgba(16,36,107,0.25); }
+    .nav-link:not(.active) { color:#f3e8ff; }
+    .nav-link:not(.active):hover { background:rgba(255,255,255,0.16); color:#ffffff; }
     input, select, textarea { direction: rtl; }
     [dir="ltr"] input, [dir="ltr"] select, [dir="ltr"] textarea { direction: ltr; }
   </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-[#f6f5fa] min-h-screen">
 
-  <nav class="no-print bg-blue-700 text-white shadow-lg sticky top-0 z-50">
+  <nav class="no-print dt-brand-nav text-white shadow-lg sticky top-0 z-50">
     <div class="max-w-screen-2xl mx-auto px-4 py-2.5 flex items-center gap-2 overflow-x-auto">
 
       <span class="text-base font-bold ml-3 whitespace-nowrap">
