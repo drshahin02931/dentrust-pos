@@ -389,6 +389,8 @@ const MIGRATIONS = [
     purchase_date TEXT DEFAULT (CURRENT_DATE::text),
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`,
+  "ALTER TABLE company_assets ADD COLUMN IF NOT EXISTS annual_growth_pct NUMERIC DEFAULT 0",
+  "ALTER TABLE company_assets ADD COLUMN IF NOT EXISTS manual_current_value_egp NUMERIC DEFAULT 0",
   `CREATE TABLE IF NOT EXISTS capital_snapshots (
     snapshot_date TEXT PRIMARY KEY,
     inventory_cost NUMERIC DEFAULT 0,

@@ -86,7 +86,7 @@
 
         <div class="bg-yellow-500/15 border border-yellow-300/40 rounded-2xl p-3.5">
           <div class="flex items-center justify-between text-xs text-yellow-200 font-semibold">
-            <span>🪙 أصول (دهب + دولار)</span>
+            <span>🪙 أصول (دهب + دولار + عقار)</span>
             <span id="cap-assets-pct" class="bg-yellow-400/25 text-yellow-100 px-2 py-0.5 rounded-full font-bold">0%</span>
           </div>
           <div id="cap-assets-val" class="text-xl font-black text-yellow-200 mt-1">—</div>
@@ -128,15 +128,15 @@
           <div class="bg-amber-50 border border-amber-100 rounded-xl p-2.5">
             <div class="text-[11px] text-amber-800 font-medium">من ارتفاع الأصول</div>
             <div id="scale-assets-gain" class="text-lg font-black text-amber-700 mt-0.5">—</div>
-            <div class="text-[11px] text-amber-700">فرق سعر الدهب/$</div>
+            <div class="text-[11px] text-amber-700">فرق سعر الدهب/$/العقار</div>
           </div>
         </div>
       </div>
 
-      <!-- Gold & USD Assets Tracker (5 cols) -->
+      <!-- Gold, USD & Real Estate Assets Tracker (5 cols) -->
       <div class="lg:col-span-5 bg-white rounded-2xl border shadow-sm p-5 space-y-4">
         <div class="flex items-center justify-between gap-2">
-          <h3 class="font-extrabold text-gray-800 text-base">🪙 محفظة الأصول (دهب بالجرام + دولار)</h3>
+          <h3 class="font-extrabold text-gray-800 text-base">🪙 محفظة الأصول (دهب + دولار + عقار)</h3>
           <button type="button" onclick="refreshCapitalRates()" id="btnRefreshRates"
             class="text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold px-2.5 py-1.5 rounded-xl">
             🔄 تحديث تلقائي
@@ -174,6 +174,7 @@
             <select id="asset-type" onchange="toggleAssetTypeFields()" class="border rounded-xl px-2.5 py-2 text-xs font-bold bg-gray-50">
               <option value="gold">🪙 دهب (جرام + عيار)</option>
               <option value="usd">💵 دولار أمريكي ($)</option>
+              <option value="real_estate">🏢 عقار / مقر الشركة (يزيد مع الوقت)</option>
             </select>
             <input id="asset-date" type="date" class="border rounded-xl px-2.5 py-2 text-xs"/>
           </div>
@@ -198,11 +199,20 @@
               class="w-full border rounded-xl px-2.5 py-2 text-xs font-bold"/>
           </div>
 
+          <div id="asset-realestate-fields" class="hidden space-y-1">
+            <div class="flex items-center gap-2">
+              <label class="text-[11px] font-semibold text-gray-600 shrink-0">الزيادة السنوية المتوقعة %:</label>
+              <input id="asset-growth-pct" type="number" step="0.5" min="0" value="20" placeholder="نسبة الزيادة السنوية % (مثلاً 20%)"
+                class="w-full border rounded-xl px-2.5 py-2 text-xs font-bold"/>
+            </div>
+            <p class="text-[10px] text-gray-500">بيزيد تلقائياً يوم بيوم من تاريخ الشراء حسب النسبة السنوية (وتقدر تعدّل تقييمه يدوياً في أي وقت).</p>
+          </div>
+
           <div class="grid grid-cols-2 gap-2">
             <div class="flex gap-1">
               <input id="asset-cost" type="number" step="0.01" min="0" required placeholder="سعر الشراء الكلي (ج)"
                 class="w-full border rounded-xl px-2.5 py-2 text-xs font-bold"/>
-              <button type="button" onclick="fillAssetCurrentCost()" title="املأ بسعر اليوم"
+              <button type="button" id="asset-fill-today-btn" onclick="fillAssetCurrentCost()" title="املأ بسعر اليوم"
                 class="px-2 bg-gray-100 hover:bg-gray-200 rounded-xl text-[11px] font-bold text-gray-600 shrink-0">اليوم</button>
             </div>
             <input id="asset-notes" type="text" placeholder="ملاحظة (مثلاً سبيكة BTC)"
@@ -843,6 +853,7 @@ function renderCapitalDashboard(d) {
   if (sm.gold_grams_18 > 0) parts.push(`عيار 18: <b>${sm.gold_grams_18} جم</b>`);
   if (sm.gold_grams_pound > 0) parts.push(`جنيه دهب: <b>${sm.gold_grams_pound} جم</b>`);
   if (sm.total_usd > 0) parts.push(`دولار: <b>$${fmtEgp(sm.total_usd)}</b>`);
+  if (sm.real_estate_value > 0) parts.push(`عقارات: <b>${fmtEgp(sm.real_estate_value)} ج</b>`);
   const sumEl = document.getElementById("assets-holdings-summary");
   if (parts.length) {
     sumEl.innerHTML = "الرصيد: " + parts.join(" · ");
@@ -855,28 +866,40 @@ function renderCapitalDashboard(d) {
   const listEl = document.getElementById("assets-list");
   const assets = d.assets || [];
   if (!assets.length) {
-    listEl.innerHTML = '<div class="text-center text-gray-400 py-5">لا توجد أصول مسجلة بعد — أضف دهب أو دولار أعلاه</div>';
+    listEl.innerHTML = '<div class="text-center text-gray-400 py-5">لا توجد أصول مسجلة بعد — أضف دهب أو دولار أو عقار أعلاه</div>';
   } else {
     const karatLabel = k => k === 218 ? "جنيه دهب (عيار 21)" : `دهب عيار ${k}`;
     listEl.innerHTML = assets.map(a => {
-      const title = a.asset_type === "gold"
-        ? `🪙 ${karatLabel(a.karat)} — ${a.weight_grams} جرام`
-        : `💵 $${fmtEgp(a.usd_amount)}`;
+      let title = "";
+      if (a.asset_type === "gold") {
+        title = `🪙 ${karatLabel(a.karat)} — ${a.weight_grams} جرام`;
+      } else if (a.asset_type === "usd") {
+        title = `💵 $${fmtEgp(a.usd_amount)}`;
+      } else {
+        const modeTxt = parseFloat(a.manual_current_value_egp || 0) > 0
+          ? "تقييم يدوي"
+          : `نمو سنوي ${a.annual_growth_pct || 0}%`;
+        title = `🏢 ${escHtml(a.notes || "عقار / مقر الشركة")} (${modeTxt})`;
+      }
       const diff = parseFloat(a.profit_loss_egp || 0);
       const diffCls = diff >= 0 ? "text-emerald-700" : "text-red-600";
+      const revalBtn = a.asset_type === "real_estate"
+        ? `<button type="button" onclick="editRealEstateValuation(${a.id}, ${a.current_value_egp}, ${a.annual_growth_pct || 0}, ${a.manual_current_value_egp || 0})" class="text-blue-600 hover:text-blue-800 px-1.5 py-1 rounded hover:bg-blue-50 text-[11px] font-bold" title="تعديل التقييم">✏️ تقييم</button>`
+        : "";
       return `
         <div class="py-2.5 flex items-center justify-between gap-2">
           <div class="min-w-0">
             <div class="font-bold text-gray-800">${title}</div>
             <div class="text-[11px] text-gray-400">
-              شراء: ${fmtEgp(a.purchase_total_egp)} ج (${escHtml(a.purchase_date)})${a.notes ? " · " + escHtml(a.notes) : ""}
+              شراء: ${fmtEgp(a.purchase_total_egp)} ج (${escHtml(a.purchase_date)})${a.asset_type !== "real_estate" && a.notes ? " · " + escHtml(a.notes) : ""}
             </div>
           </div>
-          <div class="text-left shrink-0 flex items-center gap-2">
+          <div class="text-left shrink-0 flex items-center gap-1.5">
             <div>
               <div class="font-black text-gray-900">${fmtEgp(a.current_value_egp)} ج</div>
               <div class="text-[11px] font-bold ${diffCls}">${diff >= 0 ? "+" : ""}${fmtEgp(diff)} ج (${a.profit_loss_pct >= 0 ? "+" : ""}${a.profit_loss_pct}%)</div>
             </div>
+            ${revalBtn}
             <button type="button" onclick="deleteCompanyAsset(${a.id})" class="text-red-400 hover:text-red-600 px-1.5 py-1 rounded hover:bg-red-50" title="حذف">🗑</button>
           </div>
         </div>`;
@@ -952,9 +975,13 @@ function renderScaleChart() {
 }
 
 function toggleAssetTypeFields() {
-  const isGold = document.getElementById("asset-type").value === "gold";
-  document.getElementById("asset-gold-fields").classList.toggle("hidden", !isGold);
-  document.getElementById("asset-usd-fields").classList.toggle("hidden", isGold);
+  const t = document.getElementById("asset-type").value;
+  document.getElementById("asset-gold-fields").classList.toggle("hidden", t !== "gold");
+  document.getElementById("asset-usd-fields").classList.toggle("hidden", t !== "usd");
+  document.getElementById("asset-realestate-fields").classList.toggle("hidden", t !== "real_estate");
+  document.getElementById("asset-fill-today-btn").classList.toggle("hidden", t === "real_estate");
+  document.getElementById("asset-cost").placeholder = t === "real_estate" ? "سعر شراء المكان (ج)" : "سعر الشراء الكلي (ج)";
+  document.getElementById("asset-notes").placeholder = t === "real_estate" ? "اسم العقار (مثلاً مقر شركة DenTrust)" : "ملاحظة (مثلاً سبيكة BTC)";
 }
 
 function onAssetKaratChange() {
@@ -976,7 +1003,7 @@ function fillAssetCurrentCost() {
     const g = parseFloat(document.getElementById("asset-grams").value) || 0;
     const rate = k === 24 ? r.gold_24 : (k === 18 ? r.gold_18 : r.gold_21);
     document.getElementById("asset-cost").value = (g * rate).toFixed(2);
-  } else {
+  } else if (t === "usd") {
     const u = parseFloat(document.getElementById("asset-usd").value) || 0;
     document.getElementById("asset-cost").value = (u * (r.usd_egp || 0)).toFixed(2);
   }
@@ -1016,6 +1043,7 @@ async function addCompanyAsset(ev) {
     karat: parseInt(document.getElementById("asset-karat").value, 10),
     weight_grams: parseFloat(document.getElementById("asset-grams").value) || 0,
     usd_amount: parseFloat(document.getElementById("asset-usd").value) || 0,
+    annual_growth_pct: parseFloat(document.getElementById("asset-growth-pct").value),
     purchase_total_egp: parseFloat(document.getElementById("asset-cost").value) || 0,
     purchase_date: document.getElementById("asset-date").value,
     notes: document.getElementById("asset-notes").value
@@ -1031,6 +1059,45 @@ async function addCompanyAsset(ev) {
   document.getElementById("asset-cost").value = "";
   document.getElementById("asset-notes").value = "";
   await loadCapitalDashboard(false);
+}
+
+function editRealEstateValuation(id, curVal, curPct, manualVal) {
+  const ov = document.createElement("div");
+  ov.className = "fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4";
+  ov.innerHTML = `
+    <div dir="rtl" class="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+      <h3 class="font-extrabold text-gray-900 text-base">🏢 تحديث تقييم العقار</h3>
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1">القيمة السوقية الحالية يدوياً (ج) — اكتب 0 للرجوع للحساب التلقائي</label>
+        <input id="re-manual" type="number" min="0" step="100" value="${manualVal > 0 ? manualVal : curVal}"
+          class="w-full border rounded-xl px-3 py-2 text-sm font-bold"/>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1">نسبة الزيادة السنوية التلقائية (%)</label>
+        <input id="re-pct" type="number" min="0" step="0.5" value="${curPct}"
+          class="w-full border rounded-xl px-3 py-2 text-sm font-bold"/>
+      </div>
+      <div class="flex gap-2 pt-1">
+        <button id="re-save" class="flex-1 bg-blue-700 hover:bg-blue-800 text-white font-bold py-2.5 rounded-xl text-xs">✅ حفظ</button>
+        <button id="re-auto" class="flex-1 bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold py-2.5 rounded-xl text-xs">🔄 حساب تلقائي</button>
+        <button id="re-cancel" class="px-3 bg-gray-100 text-gray-600 font-semibold py-2.5 rounded-xl text-xs">إلغاء</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector("#re-cancel").onclick = () => ov.remove();
+  const submitVal = async (useAuto) => {
+    const manual = useAuto ? 0 : (parseFloat(ov.querySelector("#re-manual").value) || 0);
+    const pct = parseFloat(ov.querySelector("#re-pct").value);
+    const r = await fetch(`${BASE}/api/accounting/capital/assets/${id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ manual_current_value_egp: manual, annual_growth_pct: isNaN(pct) ? 20 : pct })
+    });
+    if (!r.ok) { alert("تعذر تحديث التقييم"); return; }
+    ov.remove();
+    await loadCapitalDashboard(false);
+  };
+  ov.querySelector("#re-save").onclick = () => submitVal(false);
+  ov.querySelector("#re-auto").onclick = () => submitVal(true);
 }
 
 async function deleteCompanyAsset(id) {

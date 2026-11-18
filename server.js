@@ -4298,8 +4298,12 @@ async function ensureCapitalTables() {
     purchase_total_egp NUMERIC NOT NULL DEFAULT 0,
     notes TEXT,
     purchase_date TEXT DEFAULT (CURRENT_DATE::text),
+    annual_growth_pct NUMERIC DEFAULT 0,
+    manual_current_value_egp NUMERIC DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`).catch(() => {});
+  await posDb.query('ALTER TABLE company_assets ADD COLUMN IF NOT EXISTS annual_growth_pct NUMERIC DEFAULT 0').catch(() => {});
+  await posDb.query('ALTER TABLE company_assets ADD COLUMN IF NOT EXISTS manual_current_value_egp NUMERIC DEFAULT 0').catch(() => {});
   await posDb.query(`CREATE TABLE IF NOT EXISTS capital_snapshots (
     snapshot_date TEXT PRIMARY KEY,
     inventory_cost NUMERIC DEFAULT 0,
@@ -4448,11 +4452,11 @@ async function computeCapitalSummary(forceRefresh = false) {
   const customerDebts = r2(debtRow?.total_debt || 0);
   const debtorsCount = parseInt(debtRow?.debtors_count || 0, 10);
 
-  // 4. Company assets (Gold by gram/karat + USD)
+  // 4. Company assets (Gold by gram/karat + USD + Real Estate)
   const { rows: assetsRaw } = await posDb.query(
     'SELECT * FROM company_assets ORDER BY purchase_date DESC, id DESC'
   ).catch(() => ({ rows: [] }));
-  let assetsValue = 0, assetsCost = 0, totalUsd = 0;
+  let assetsValue = 0, assetsCost = 0, totalUsd = 0, totalRealEstate = 0;
   const goldByKarat = { 24: 0, 21: 0, 18: 0, 218: 0 };
   const assets = assetsRaw.map(a => {
     const cost = r2(a.purchase_total_egp);
@@ -4469,6 +4473,13 @@ async function computeCapitalSummary(forceRefresh = false) {
       unitRate = usdRate;
       curVal = r2(usd * usdRate);
       totalUsd = r2(totalUsd + usd);
+    } else if (a.asset_type === 'real_estate') {
+      const annualPct = Math.max(0, parseFloat(a.annual_growth_pct || 0));
+      const manualBase = parseFloat(a.manual_current_value_egp || 0);
+      const pDateMs = a.purchase_date ? new Date(a.purchase_date).getTime() : Date.now();
+      const daysElapsed = (!isNaN(pDateMs) && pDateMs < Date.now()) ? ((Date.now() - pDateMs) / (1000 * 60 * 60 * 24)) : 0;
+      curVal = manualBase > 0 ? r2(manualBase) : r2(cost * (1 + (annualPct / 100) * (daysElapsed / 365)));
+      totalRealEstate = r2(totalRealEstate + curVal);
     }
     const diff = r2(curVal - cost);
     assetsValue += curVal;
@@ -4478,6 +4489,8 @@ async function computeCapitalSummary(forceRefresh = false) {
       karat: parseInt(a.karat || 21, 10),
       weight_grams: parseFloat(a.weight_grams || 0),
       usd_amount: parseFloat(a.usd_amount || 0),
+      annual_growth_pct: parseFloat(a.annual_growth_pct || 0),
+      manual_current_value_egp: parseFloat(a.manual_current_value_egp || 0),
       purchase_total_egp: cost,
       unit_rate_today: unitRate,
       current_value_egp: curVal,
@@ -4634,6 +4647,7 @@ async function computeCapitalSummary(forceRefresh = false) {
       gold_grams_21: goldByKarat[21],
       gold_grams_18: goldByKarat[18],
       gold_grams_pound: goldByKarat[218],
+      real_estate_value: totalRealEstate,
     },
     assets,
     growth_series: months,
@@ -4722,36 +4736,68 @@ app.post(`${BASE}/api/accounting/capital/assets`, async (req, res) => {
   }
   try {
     await ensureCapitalTables();
-    const { asset_type, karat, weight_grams, usd_amount, purchase_total_egp, purchase_date, notes } = req.body || {};
-    if (!['gold', 'usd'].includes(asset_type)) {
-      return res.status(400).json({ error: 'نوع الأصل لازم يكون دهب أو دولار' });
+    const {
+      asset_type, karat, weight_grams, usd_amount, purchase_total_egp,
+      purchase_date, notes, annual_growth_pct, manual_current_value_egp
+    } = req.body || {};
+    if (!['gold', 'usd', 'real_estate'].includes(asset_type)) {
+      return res.status(400).json({ error: 'نوع الأصل لازم يكون دهب أو دولار أو عقار' });
     }
     const cost = parseFloat(purchase_total_egp);
-    if (isNaN(cost) || cost < 0) {
-      return res.status(400).json({ error: 'أدخل تكلفة شراء صحيحة بالجنيه' });
+    if (isNaN(cost) || cost < 0 || (asset_type === 'real_estate' && cost <= 0)) {
+      return res.status(400).json({ error: 'أدخل سعر شراء صحيح بالجنيه' });
     }
-    let k = 21, grams = 0, usd = 0;
+    let k = 21, grams = 0, usd = 0, growthPct = 0, manualVal = 0;
     if (asset_type === 'gold') {
       k = parseInt(karat || 21, 10);
       if (![24, 21, 18, 218].includes(k)) k = 21;
       grams = parseFloat(weight_grams || 0);
       if (isNaN(grams) || grams <= 0) return res.status(400).json({ error: 'أدخل وزن الدهب بالجرام أكبر من صفر' });
-    } else {
+    } else if (asset_type === 'usd') {
       usd = parseFloat(usd_amount || 0);
       if (isNaN(usd) || usd <= 0) return res.status(400).json({ error: 'أدخل المبلغ بالدولار أكبر من صفر' });
+    } else if (asset_type === 'real_estate') {
+      const gp = parseFloat(annual_growth_pct);
+      growthPct = (!isNaN(gp) && gp >= 0) ? gp : 20;
+      const mv = parseFloat(manual_current_value_egp || 0);
+      manualVal = (!isNaN(mv) && mv > 0) ? r2(mv) : 0;
     }
     const pDate = (purchase_date && /^\d{4}-\d{2}-\d{2}$/.test(purchase_date))
       ? purchase_date
       : new Date().toISOString().slice(0, 10);
     const { rows: [inserted] } = await posDb.query(
-      `INSERT INTO company_assets (asset_type, karat, weight_grams, usd_amount, purchase_total_egp, notes, purchase_date)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [asset_type, k, grams, usd, r2(cost), (notes || '').trim(), pDate]
+      `INSERT INTO company_assets (asset_type, karat, weight_grams, usd_amount, purchase_total_egp, annual_growth_pct, manual_current_value_egp, notes, purchase_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [asset_type, k, grams, usd, r2(cost), growthPct, manualVal, (notes || '').trim(), pDate]
     );
     res.status(201).json({ ok: true, asset: inserted });
   } catch (err) {
     console.error('[POST /api/accounting/capital/assets Error]:', err);
     res.status(500).json({ error: 'خطأ داخلي في حفظ الأصل' });
+  }
+});
+
+app.put(`${BASE}/api/accounting/capital/assets/:id`, async (req, res) => {
+  if (req.session?.user_id && !hasPerm(req, 'accounting')) {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  try {
+    await ensureCapitalTables();
+    const id = parseInt(req.params.id, 10);
+    const { annual_growth_pct, manual_current_value_egp } = req.body || {};
+    const gp = parseFloat(annual_growth_pct);
+    const mv = parseFloat(manual_current_value_egp);
+    await posDb.query(
+      `UPDATE company_assets
+       SET annual_growth_pct = COALESCE($1, annual_growth_pct),
+           manual_current_value_egp = COALESCE($2, manual_current_value_egp)
+       WHERE id=$3`,
+      [!isNaN(gp) && gp >= 0 ? gp : null, !isNaN(mv) && mv >= 0 ? r2(mv) : null, id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[PUT /api/accounting/capital/assets Error]:', err);
+    res.status(500).json({ error: 'خطأ داخلي في تحديث الأصل' });
   }
 });
 
