@@ -81,59 +81,40 @@
     <div class="bg-white rounded-2xl shadow-sm border p-4 space-y-4">
       <h3 class="font-bold text-gray-700 text-lg" data-ar="💳 الدفع" data-en="💳 Payment">💳 الدفع</h3>
 
-      <!-- Level 1: كاش / آجل / مقسّم -->
+      <!-- Level 1: كاش / آجل فقط -->
       <div>
         <label class="text-xs font-semibold text-gray-500 block mb-2">نوع الدفع</label>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div class="grid grid-cols-2 gap-2">
           <button onclick="setPaymentType('cash')" id="ptype-cash"
-            class="ptype-btn border-2 border-green-500 bg-green-50 text-green-700 rounded-xl py-3 text-sm font-bold shadow-xs min-h-[46px] flex items-center justify-center gap-1">
+            class="ptype-btn border-2 border-green-500 bg-green-50 text-green-700 rounded-xl py-3 text-sm font-bold shadow-xs min-h-[46px] flex items-center justify-center gap-1.5">
             💵 كاش
           </button>
           <button onclick="setPaymentType('credit')" id="ptype-credit"
-            class="ptype-btn border-2 border-gray-200 text-gray-500 rounded-xl py-3 text-sm font-bold hover:border-orange-400 shadow-xs min-h-[46px] flex items-center justify-center gap-1">
+            class="ptype-btn border-2 border-gray-200 text-gray-500 rounded-xl py-3 text-sm font-bold hover:border-orange-400 shadow-xs min-h-[46px] flex items-center justify-center gap-1.5">
             📋 آجل
           </button>
-          <button onclick="setPaymentType('split')" id="ptype-split"
-            class="ptype-btn border-2 border-gray-200 text-gray-500 rounded-xl py-3 text-sm font-bold hover:border-pink-400 shadow-xs min-h-[46px] flex items-center justify-center gap-1">
-            ✂️ مقسّم
-          </button>
         </div>
       </div>
 
-      <!-- Level 2: نقدي / انستا باي (cash only) -->
+      <!-- Level 2: نقدي / انستا باي / فودافون كاش (cash only) -->
       <div id="subMethodSection">
-        <label class="text-xs font-semibold text-gray-500 block mb-2">طريقة الاستلام</label>
-        <div class="grid grid-cols-2 gap-2">
-          <button onclick="setPaymentSub('naqdi')" id="psub-naqdi"
-            class="psub-btn border-2 border-blue-500 bg-blue-50 text-blue-700 rounded-xl py-3 text-sm font-bold shadow-xs min-h-[46px] flex items-center justify-center gap-1">
-            🪙 نقدي
+        <label class="text-xs font-semibold text-gray-500 block mb-2">طريقة الاستلام الافتراضية</label>
+        <div class="grid grid-cols-3 gap-2">
+          <button type="button" onclick="setPaymentSub('naqdi')" id="psub-naqdi"
+            class="psub-btn border-2 border-blue-500 bg-blue-50 text-blue-700 rounded-xl py-2.5 px-1 text-xs font-bold shadow-xs min-h-[48px] flex flex-col items-center justify-center gap-1">
+            <span class="text-base leading-none">🪙</span>
+            <span>نقدي</span>
           </button>
-          <button onclick="setPaymentSub('instapay')" id="psub-instapay"
-            class="psub-btn border-2 border-gray-200 text-gray-500 rounded-xl py-3 text-sm font-bold hover:border-purple-400 shadow-xs min-h-[46px] flex items-center justify-center gap-1">
-            📱 انستا باي
+          <button type="button" onclick="setPaymentSub('instapay')" id="psub-instapay"
+            class="psub-btn border-2 border-gray-200 text-gray-600 rounded-xl py-2.5 px-1 text-xs font-bold hover:border-purple-400 shadow-xs min-h-[48px] flex flex-col items-center justify-center gap-1">
+            <svg class="w-5 h-5" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#5B21B6"/><path d="M9 17.5L15.5 8L14 14.5H23L16.5 24L18 17.5H9Z" fill="#2DD4BF"/></svg>
+            <span>InstaPay</span>
           </button>
-        </div>
-      </div>
-
-      <!-- Split Payment Amounts -->
-      <div id="splitSection" class="hidden space-y-2">
-        <label class="text-xs font-medium text-gray-500 block">توزيع المبلغ</label>
-        <div class="bg-pink-50 border border-pink-200 rounded-xl p-3 space-y-2">
-          <div class="flex items-center gap-2">
-            <span class="text-xs font-semibold text-gray-600 w-20">🪙 نقدي</span>
-            <input id="split-cash" type="number" min="0" step="0.01" value="0"
-              oninput="onSplitInput('cash')"
-              class="flex-1 border rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-pink-200"/>
-            <span class="text-xs text-gray-400">ج</span>
-          </div>
-          <div class="flex items-center gap-2">
-            <span class="text-xs font-semibold text-gray-600 w-20">📋 آجل</span>
-            <input id="split-credit" type="number" min="0" step="0.01" value="0"
-              oninput="onSplitInput('credit')"
-              class="flex-1 border rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-200"/>
-            <span class="text-xs text-gray-400">ج</span>
-          </div>
-          <div id="splitRemaining" class="text-xs text-center font-semibold text-pink-600"></div>
+          <button type="button" onclick="setPaymentSub('vodafone')" id="psub-vodafone"
+            class="psub-btn border-2 border-gray-200 text-gray-600 rounded-xl py-2.5 px-1 text-xs font-bold hover:border-red-400 shadow-xs min-h-[48px] flex flex-col items-center justify-center gap-1">
+            <svg class="w-5 h-5" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="15" fill="#E60000"/><path d="M17.2 7.5C12.8 7.8 9.2 11.4 9.2 16.3C9.2 21.1 12.7 24.5 17 24.5C20.5 24.5 23 22 23 18.8C23 15.8 20.8 13.7 18 13.7C16.9 13.7 16 14 15.4 14.5C15.5 11.8 17.2 9.6 19.6 9.1C18.8 8 18 7.5 17.2 7.5Z" fill="#FFFFFF"/></svg>
+            <span>Vodafone <span class="text-[9px] text-red-600 font-black">+1%</span></span>
+          </button>
         </div>
       </div>
 
@@ -261,47 +242,68 @@
         <div class="text-xs text-blue-500" id="currencyLabel">جنيه مصري</div>
       </div>
 
-      <!-- Cash Received (cash/instapay only — hidden for credit) -->
-      <div id="cashReceivedBox" class="space-y-2">
-        <div>
-          <label id="cashReceivedLabel" class="text-xs font-medium text-gray-500 block mb-1.5">💵 مبلغ مستلم من العميل</label>
-          <input id="amountReceived" type="number" min="0" step="0.01" value=""
-            oninput="updateChange()"
-            placeholder="اكتب المبلغ المستلم..."
-            class="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-200"/>
+      <!-- 3-Channel Received Breakdown (نقدي + InstaPay + Vodafone Cash 1%) -->
+      <div id="cashReceivedBox" class="space-y-2.5">
+        <div class="flex items-center justify-between">
+          <label id="cashReceivedLabel" class="text-xs font-bold text-gray-600">💵 الزبون دفع كام؟ (وزّع براحتك)</label>
+          <span id="vodaSubBanner" class="hidden text-[11px] font-black text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-lg">المطلوب فودافون كاش (+1%): <span id="vodaFullReqAmt">0</span> ج</span>
         </div>
+
+        <div class="bg-gray-50 border border-gray-200 rounded-2xl p-3 space-y-2">
+          <!-- Cash -->
+          <div class="flex items-center gap-2">
+            <div class="flex items-center gap-1.5 w-28 shrink-0">
+              <span class="w-6 h-6 rounded-lg bg-emerald-100 flex items-center justify-center text-sm">🪙</span>
+              <span class="text-xs font-bold text-gray-700">نقدي</span>
+            </div>
+            <input id="rcv-cash" type="number" min="0" step="0.01" value=""
+              oninput="updatePaymentCalculations()" placeholder="0"
+              class="flex-1 bg-white border border-gray-200 rounded-xl px-2.5 py-1.5 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-emerald-300"/>
+            <span class="text-xs text-gray-400">ج</span>
+          </div>
+
+          <!-- InstaPay -->
+          <div class="flex items-center gap-2">
+            <div class="flex items-center gap-1.5 w-28 shrink-0">
+              <svg class="w-6 h-6 shrink-0" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#5B21B6"/><path d="M9 17.5L15.5 8L14 14.5H23L16.5 24L18 17.5H9Z" fill="#2DD4BF"/></svg>
+              <span class="text-xs font-bold text-purple-900">InstaPay</span>
+            </div>
+            <input id="rcv-instapay" type="number" min="0" step="0.01" value=""
+              oninput="updatePaymentCalculations()" placeholder="0"
+              class="flex-1 bg-white border border-gray-200 rounded-xl px-2.5 py-1.5 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-purple-300"/>
+            <span class="text-xs text-gray-400">ج</span>
+          </div>
+
+          <!-- Vodafone Cash (+1%) -->
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <div class="flex items-center gap-1.5 w-28 shrink-0">
+                <svg class="w-6 h-6 shrink-0" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="15" fill="#E60000"/><path d="M17.2 7.5C12.8 7.8 9.2 11.4 9.2 16.3C9.2 21.1 12.7 24.5 17 24.5C20.5 24.5 23 22 23 18.8C23 15.8 20.8 13.7 18 13.7C16.9 13.7 16 14 15.4 14.5C15.5 11.8 17.2 9.6 19.6 9.1C18.8 8 18 7.5 17.2 7.5Z" fill="#FFFFFF"/></svg>
+                <span class="text-xs font-bold text-red-700">Vodafone</span>
+              </div>
+              <input id="rcv-vodafone" type="number" min="0" step="0.01" value=""
+                oninput="updatePaymentCalculations()" placeholder="المبلغ المرسل"
+                class="flex-1 bg-white border border-red-200 rounded-xl px-2.5 py-1.5 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-red-300"/>
+              <button type="button" onclick="fillVodafoneRemaining()" class="px-2 py-1.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 rounded-xl text-[10px] font-black shrink-0" title="املأ المتبقي + 1%">+1%</button>
+            </div>
+            <div id="vodaFeePreview" class="hidden text-[11px] bg-red-50 text-red-800 border border-red-200 rounded-lg px-2.5 py-1 flex items-center justify-between">
+              <span>صافي محسوب من الفاتورة: <strong id="vodaNetText">0</strong> ج</span>
+              <span>رسوم 1%: <strong id="vodaFeeText">0</strong> ج</span>
+            </div>
+            <div id="vodaNeedHint" class="text-[10px] text-gray-500 px-1"></div>
+          </div>
+        </div>
+
         <div id="changeBox" class="hidden bg-green-50 border border-green-200 rounded-xl p-3 flex items-center justify-between">
           <span class="text-sm font-semibold text-green-700">🪙 الباقي للعميل</span>
           <span id="changeDue" class="text-xl font-black text-green-700">0.00</span>
         </div>
-        <div id="shortBox" class="hidden bg-red-50 border border-red-200 rounded-xl p-3 flex items-center justify-between">
-          <span class="text-sm font-semibold text-red-600">⚠️ ناقص</span>
-          <span id="shortAmount" class="text-xl font-black text-red-600">0.00</span>
-        </div>
-      </div>
-
-      <!-- Credit Split: cash + instapay received upfront (shown only for آجل) -->
-      <div id="creditSplitSection" class="hidden space-y-2">
-        <label class="text-xs font-medium text-gray-500 block">💰 المبلغ المستلم مقدماً (اختياري)</label>
-        <div class="bg-orange-50 border border-orange-200 rounded-xl p-3 space-y-2">
-          <div class="flex items-center gap-2">
-            <span class="text-xs font-semibold text-gray-600 w-24">🪙 كاش ورق</span>
-            <input id="credit-cash" type="number" min="0" step="0.01" value="0"
-              oninput="updateCreditSplit()"
-              class="flex-1 border rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-200"/>
-            <span class="text-xs text-gray-400">ج</span>
+        <div id="shortBox" class="hidden bg-orange-50 border border-orange-200 rounded-xl p-3 space-y-1">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-orange-800">📋 الباقي هيروح آجل على الدكتور:</span>
+            <span id="shortAmount" class="text-lg font-black text-orange-700">0.00 ج</span>
           </div>
-          <div class="flex items-center gap-2">
-            <span class="text-xs font-semibold text-gray-600 w-24">📱 انستا باي</span>
-            <input id="credit-instapay" type="number" min="0" step="0.01" value="0"
-              oninput="updateCreditSplit()"
-              class="flex-1 border rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-200"/>
-            <span class="text-xs text-gray-400">ج</span>
-          </div>
-        </div>
-        <div id="creditDebtBox" class="bg-orange-50 border border-orange-200 rounded-xl p-3 flex items-center justify-between">
-          <span class="text-sm font-semibold text-orange-700">💸 سيُضاف للدَين</span>
-          <span id="creditDebtAmount" class="text-xl font-black text-orange-700">0.00</span>
+          <div id="shortVodaNote" class="text-[11px] text-red-700 font-semibold"></div>
         </div>
       </div>
 
@@ -1565,32 +1567,110 @@ function renderCart() {
   refreshAllCardUIs();
 }
 
-function updateCreditSplit() {
-  const total = parseFloat(document.getElementById("finalTotal").textContent) || 0;
-  const cash  = parseFloat(document.getElementById("credit-cash").value) || 0;
-  const insta = parseFloat(document.getElementById("credit-instapay").value) || 0;
-  const debt  = Math.max(0, total - cash - insta);
-  document.getElementById("creditDebtAmount").textContent = debt.toFixed(2);
+function computePosPaymentState() {
+  const r2p = n => Math.round((parseFloat(n) || 0) * 100) / 100;
+  const total = parseFloat(document.getElementById("finalTotal")?.textContent) || 0;
+  const cash  = Math.max(0, parseFloat(document.getElementById("rcv-cash")?.value) || 0);
+  const insta = Math.max(0, parseFloat(document.getElementById("rcv-instapay")?.value) || 0);
+  const vodaGross = Math.max(0, parseFloat(document.getElementById("rcv-vodafone")?.value) || 0);
+
+  const anyEntered = (document.getElementById("rcv-cash")?.value !== "" && cash > 0)
+    || (document.getElementById("rcv-instapay")?.value !== "" && insta > 0)
+    || (document.getElementById("rcv-vodafone")?.value !== "" && vodaGross > 0);
+
+  const neededBeforeVoda = Math.max(0, r2p(total - cash - insta));
+  let vodaNet = 0, vodaFee = 0;
+  if (vodaGross > 0) {
+    // If customer paid the exact +1% Vodafone total (within 0.50 rounding tolerance), settle remaining cleanly
+    if (neededBeforeVoda > 0 && Math.abs(vodaGross - neededBeforeVoda * 1.01) <= 0.50) {
+      vodaNet = neededBeforeVoda;
+      vodaFee = r2p(vodaGross - neededBeforeVoda);
+    } else {
+      vodaFee = r2p(vodaGross * 0.01);
+      vodaNet = r2p(vodaGross - vodaFee);
+    }
+  }
+
+  let effectivePaid = r2p(cash + insta + vodaNet);
+  let remDebt = 0;
+  let change = 0;
+  if (paymentType === "credit" || anyEntered) {
+    if (effectivePaid < total - 0.01) remDebt = r2p(total - effectivePaid);
+    else if (effectivePaid > total + 0.01) change = r2p(effectivePaid - total);
+  }
+  return { total, cash, insta, vodaGross, vodaNet, vodaFee, effectivePaid, remDebt, change, anyEntered, neededBeforeVoda };
 }
 
-function updateChange() {
-  if (paymentType === "credit") { updateCreditSplit(); return; }
+function updatePaymentCalculations() {
+  const st = computePosPaymentState();
+  const subBanner = document.getElementById("vodaSubBanner");
+  const fullReqEl = document.getElementById("vodaFullReqAmt");
+  if (subBanner && fullReqEl) {
+    const reqAll = Math.round(st.total * 1.01 * 100) / 100;
+    fullReqEl.textContent = reqAll;
+    subBanner.classList.toggle("hidden", !(paymentType === "cash" && paymentSub === "vodafone" && st.total > 0));
+  }
 
-  const total    = parseFloat(document.getElementById("finalTotal").textContent) || 0;
-  const received = parseFloat(document.getElementById("amountReceived").value) || 0;
+  const feeBox = document.getElementById("vodaFeePreview");
+  if (feeBox) {
+    if (st.vodaGross > 0) {
+      document.getElementById("vodaNetText").textContent = st.vodaNet.toFixed(2);
+      document.getElementById("vodaFeeText").textContent = st.vodaFee.toFixed(2);
+      feeBox.classList.remove("hidden");
+    } else {
+      feeBox.classList.add("hidden");
+    }
+  }
+
+  const needHint = document.getElementById("vodaNeedHint");
+  if (needHint) {
+    const remBeforeVoda = Math.max(0, st.total - st.cash - st.insta);
+    if (remBeforeVoda > 0 && st.vodaGross === 0) {
+      const wFee = (Math.round(remBeforeVoda * 1.01 * 100) / 100).toFixed(2).replace(/\.00$/, "");
+      needHint.textContent = `لتقفيل ${remBeforeVoda.toFixed(0)} ج بفودافون كاش (+1%): المطلوب ${wFee} ج`;
+    } else {
+      needHint.textContent = "";
+    }
+  }
+
   const changeBox = document.getElementById("changeBox");
   const shortBox  = document.getElementById("shortBox");
-
-  if (!received) { changeBox.classList.add("hidden"); shortBox.classList.add("hidden"); return; }
-  const diff = received - total;
-  if (diff >= 0) {
-    changeBox.classList.remove("hidden"); shortBox.classList.add("hidden");
-    document.getElementById("changeDue").textContent = diff.toFixed(2);
+  if (st.remDebt > 0.01) {
+    changeBox.classList.add("hidden");
+    shortBox.classList.remove("hidden");
+    document.getElementById("shortAmount").textContent = st.remDebt.toFixed(2) + " ج";
+    const vodaDebtPay = Math.round(st.remDebt * 1.01 * 100) / 100;
+    document.getElementById("shortVodaNote").textContent = `ولو هيدفع المتبقي فودافون كاش (+1%): المطلوب ${vodaDebtPay} ج`;
+  } else if (st.change > 0.01) {
+    shortBox.classList.add("hidden");
+    changeBox.classList.remove("hidden");
+    document.getElementById("changeDue").textContent = st.change.toFixed(2);
   } else {
-    shortBox.classList.remove("hidden"); changeBox.classList.add("hidden");
-    document.getElementById("shortAmount").textContent = Math.abs(diff).toFixed(2);
+    changeBox.classList.add("hidden");
+    shortBox.classList.add("hidden");
   }
+
+  // Require customer automatically if any remainder goes to credit
+  const needsCust = paymentType === "credit" || st.remDebt > 0.01;
+  document.getElementById("customerRequired").classList.toggle("hidden", !needsCust);
+  document.getElementById("customerOptional").classList.toggle("hidden", needsCust);
+  const firstOpt = document.getElementById("customerSelect").options[0];
+  if (firstOpt) firstOpt.textContent = needsCust ? "-- اختر عميل --" : "-- اختر عميل (اختياري) --";
+
+  if (typeof updateExpectedPointsInPos === "function") updateExpectedPointsInPos();
 }
+
+function fillVodafoneRemaining() {
+  const st = computePosPaymentState();
+  const rem = Math.max(0, st.total - st.cash - st.insta);
+  if (rem <= 0) return;
+  const amt = Math.round(rem * 1.01 * 100) / 100;
+  document.getElementById("rcv-vodafone").value = amt.toFixed(2).replace(/\.00$/, "");
+  updatePaymentCalculations();
+}
+
+function updateChange() { updatePaymentCalculations(); }
+function updateCreditSplit() { updatePaymentCalculations(); }
 
 function editPrice(idx, val) {
   const v = parseFloat(val);
@@ -1702,136 +1782,120 @@ function updateTotal() {
   } else {
     document.getElementById("profitRow").classList.add("hidden");
   }
-  updateChange();
+  updatePaymentCalculations();
 }
 
 // ── Payment Selection ─────────────────────────────────────────────────────────
 function setPaymentType(type) {
+  if (type === "split") type = "cash";
   paymentType = type;
-  document.getElementById("ptype-cash").className   = `ptype-btn border-2 rounded-xl py-2.5 text-xs font-bold transition-all ` +
+  document.getElementById("ptype-cash").className   = `ptype-btn border-2 rounded-xl py-3 text-sm font-bold transition-all min-h-[46px] flex items-center justify-center gap-1.5 ` +
     (type==="cash"   ? "border-green-500 bg-green-50 text-green-700" : "border-gray-200 text-gray-500 hover:border-green-400");
-  document.getElementById("ptype-credit").className = `ptype-btn border-2 rounded-xl py-2.5 text-xs font-bold transition-all ` +
+  document.getElementById("ptype-credit").className = `ptype-btn border-2 rounded-xl py-3 text-sm font-bold transition-all min-h-[46px] flex items-center justify-center gap-1.5 ` +
     (type==="credit" ? "border-orange-500 bg-orange-50 text-orange-700" : "border-gray-200 text-gray-500 hover:border-orange-400");
-  document.getElementById("ptype-split").className  = `ptype-btn border-2 rounded-xl py-2.5 text-xs font-bold transition-all ` +
-    (type==="split"  ? "border-pink-500 bg-pink-50 text-pink-700" : "border-gray-200 text-gray-500 hover:border-pink-400");
 
   const isCredit = type === "credit";
-  const isSplit  = type === "split";
-  document.getElementById("subMethodSection").classList.toggle("hidden", isCredit || isSplit);
-  document.getElementById("splitSection").classList.toggle("hidden", !isSplit);
-  document.getElementById("customerRequired").classList.toggle("hidden", !isCredit && !isSplit);
-  document.getElementById("customerOptional").classList.toggle("hidden", isCredit || isSplit);
-  document.getElementById("cashReceivedBox").classList.toggle("hidden", isSplit || isCredit);
-  document.getElementById("creditSplitSection").classList.toggle("hidden", !isCredit);
-  document.getElementById("amountReceived").value = "";
-  document.getElementById("changeBox").classList.add("hidden");
-  document.getElementById("shortBox").classList.add("hidden");
-  if (isCredit) {
-    document.getElementById("credit-cash").value = "0";
-    document.getElementById("credit-instapay").value = "0";
-    updateCreditSplit();
-  }
-  if (isSplit) {
-    const total = parseFloat(document.getElementById("finalTotal").textContent) || 0;
-    document.getElementById("split-cash").value = total.toFixed(2);
-    document.getElementById("split-credit").value = "0.00";
-    updateSplitRemaining();
-  }
-  const firstOpt = document.getElementById("customerSelect").options[0];
-  if (isCredit || isSplit) {
-    firstOpt.textContent = "-- اختر عميل --";
-  } else {
-    firstOpt.textContent = "-- اختر عميل (اختياري) --";
-  }
-  updateExpectedPointsInPos();
+  document.getElementById("subMethodSection").classList.toggle("hidden", isCredit);
+  const lbl = document.getElementById("cashReceivedLabel");
+  if (lbl) lbl.textContent = isCredit ? "💰 مقدم مستلم (الباقي آجل تلقائياً)" : "💵 الزبون دفع كام؟ (وزّع براحتك)";
+  updatePaymentCalculations();
 }
 
 function setPaymentSub(sub) {
   paymentSub = sub;
-  document.getElementById("psub-naqdi").className   = `psub-btn border-2 rounded-xl py-2.5 text-sm font-bold transition-all ` +
-    (sub==="naqdi"   ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-200 text-gray-500 hover:border-purple-400");
-  document.getElementById("psub-instapay").className= `psub-btn border-2 rounded-xl py-2.5 text-sm font-bold transition-all ` +
-    (sub==="instapay"? "border-purple-500 bg-purple-50 text-purple-700" : "border-gray-200 text-gray-500 hover:border-purple-400");
-}
-
-// Split payment helpers
-function onSplitInput(changed) {
-  const total = parseFloat(document.getElementById("finalTotal").textContent) || 0;
-  if (changed === 'cash') {
-    const cash = parseFloat(document.getElementById("split-cash").value) || 0;
-    document.getElementById("split-credit").value = Math.max(0, total - cash).toFixed(2);
-  } else {
-    const credit = parseFloat(document.getElementById("split-credit").value) || 0;
-    document.getElementById("split-cash").value = Math.max(0, total - credit).toFixed(2);
-  }
-  updateSplitRemaining();
-}
-
-function updateSplitRemaining() {
-  const total  = parseFloat(document.getElementById("finalTotal").textContent) || 0;
-  const cash   = parseFloat(document.getElementById("split-cash").value) || 0;
-  const credit = parseFloat(document.getElementById("split-credit").value) || 0;
-  const diff = total - cash - credit;
-  const el = document.getElementById("splitRemaining");
-  if (Math.abs(diff) < 0.01) {
-    el.textContent = "✅ المبلغ مكتمل";
-    el.className = "text-xs text-center font-semibold text-green-600";
-  } else if (diff > 0) {
-    el.textContent = `⚠️ ناقص ${diff.toFixed(2)} ج`;
-    el.className = "text-xs text-center font-semibold text-orange-600";
-  } else {
-    el.textContent = `زيادة ${Math.abs(diff).toFixed(2)} ج`;
-    el.className = "text-xs text-center font-semibold text-red-500";
-  }
-  updateExpectedPointsInPos();
-}
-
-// Final method: cash+naqdi→'cash', cash+instapay→'instapay', split→'split', credit→'credit'
-function getFinalPaymentMethod() {
-  if (paymentType === "credit") return "credit";
-  if (paymentType === "split")  return "split";
-  return paymentSub === "instapay" ? "instapay" : "cash";
+  document.getElementById("psub-naqdi").className   = `psub-btn border-2 rounded-xl py-2.5 px-1 text-xs font-bold transition-all min-h-[48px] flex flex-col items-center justify-center gap-1 ` +
+    (sub==="naqdi"   ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-200 text-gray-600 hover:border-blue-400");
+  document.getElementById("psub-instapay").className= `psub-btn border-2 rounded-xl py-2.5 px-1 text-xs font-bold transition-all min-h-[48px] flex flex-col items-center justify-center gap-1 ` +
+    (sub==="instapay"? "border-purple-500 bg-purple-50 text-purple-700" : "border-gray-200 text-gray-600 hover:border-purple-400");
+  document.getElementById("psub-vodafone").className= `psub-btn border-2 rounded-xl py-2.5 px-1 text-xs font-bold transition-all min-h-[48px] flex flex-col items-center justify-center gap-1 ` +
+    (sub==="vodafone"? "border-red-500 bg-red-50 text-red-700" : "border-gray-200 text-gray-600 hover:border-red-400");
+  updatePaymentCalculations();
 }
 
 // ── Checkout ──────────────────────────────────────────────────────────────────
 async function checkout() {
   if (cart.length === 0) { alert("الفاتورة فارغة!"); return; }
-  if ((paymentType === "credit" || paymentType === "split") && !document.getElementById("customerSelect").value) {
-    alert("يرجى اختيار عميل للبيع الآجل / المقسّم"); return;
-  }
 
   const subtotal   = cart.reduce((s,i) => s + i.unit_price * i.quantity, 0);
   const rawDisc    = parseFloat(document.getElementById("discountInput").value) || 0;
   const discType   = document.getElementById("discountType").value;
-  const discAmt    = discType === "percent" ? subtotal * rawDisc / 100 : rawDisc;
-  const delivery   = parseFloat(document.getElementById("deliveryInput").value) || 0;
+  let discAmt      = discType === "percent" ? subtotal * rawDisc / 100 : rawDisc;
+  if (_appliedPromo) {
+    discAmt += (_appliedPromo.discount_type === 'percentage')
+      ? (subtotal * _appliedPromo.discount_value) / 100
+      : _appliedPromo.discount_amount;
+  }
+  const delivery   = (_currentDeliveryMode === 'delivery') ? (parseFloat(document.getElementById("deliveryInput").value) || 0) : 0;
   const total      = Math.max(0, subtotal - discAmt) + delivery;
   const customerId = document.getElementById("customerSelect").value || null;
-  const method     = getFinalPaymentMethod();
   const customerName = null;
 
+  const st = computePosPaymentState();
+  let method = "cash";
   let amountReceived = null;
-  let changeDue      = null;
+  let changeDue = null;
   let paymentSplitData = null;
+  let vodafoneFee = 0;
 
-  if (method === "credit") {
-    const creditCash  = parseFloat(document.getElementById("credit-cash").value) || 0;
-    const creditInsta = parseFloat(document.getElementById("credit-instapay").value) || 0;
-    const upfront = creditCash + creditInsta;
-    amountReceived = upfront > 0 ? upfront : null;
-    paymentSplitData = { cash: creditCash, instapay: creditInsta };
-  } else if (method === "split") {
-    const splitCash   = parseFloat(document.getElementById("split-cash").value) || 0;
-    const splitCredit = parseFloat(document.getElementById("split-credit").value) || 0;
-    if (Math.abs(splitCash + splitCredit - total) > 0.05) {
-      alert(`مجموع الدفع المقسّم (${(splitCash+splitCredit).toFixed(2)}) لا يساوي إجمالي الفاتورة (${total.toFixed(2)})`);
+  if (paymentType === "credit" || st.remDebt > 0.01) {
+    if (!customerId) {
+      alert(st.remDebt > 0.01
+        ? `المتبقي (${st.remDebt.toFixed(2)} ج) هيروح آجل — اختار اسم الدكتور أولاً`
+        : "يرجى اختيار عميل للبيع الآجل");
       return;
     }
-    paymentSplitData = { cash: splitCash, credit: splitCredit };
+    method = "credit";
+    amountReceived = st.effectivePaid > 0 ? st.effectivePaid : 0;
+    vodafoneFee = st.vodaFee;
+    paymentSplitData = {
+      cash: st.cash,
+      instapay: st.insta,
+      vodafone: st.vodaNet,
+      vodafone_gross: st.vodaGross,
+      vodafone_fee: st.vodaFee,
+      credit: st.remDebt
+    };
+  } else if (st.anyEntered) {
+    // Paid in full via bottom 3-channel breakdown
+    const channels = [st.cash > 0, st.insta > 0, st.vodaNet > 0].filter(Boolean).length;
+    if (channels > 1) {
+      method = "split";
+    } else if (st.vodaNet > 0) {
+      method = "vodafone";
+    } else if (st.insta > 0) {
+      method = "instapay";
+    } else {
+      method = "cash";
+    }
+    amountReceived = st.effectivePaid;
+    changeDue = st.change > 0 ? st.change : null;
+    vodafoneFee = st.vodaFee;
+    if (method === "split" || st.vodaFee > 0) {
+      paymentSplitData = {
+        cash: st.cash,
+        instapay: st.insta,
+        vodafone: st.vodaNet,
+        vodafone_gross: st.vodaGross,
+        vodafone_fee: st.vodaFee,
+        credit: 0
+      };
+    }
   } else {
-    const receivedRaw = parseFloat(document.getElementById("amountReceived").value) || null;
-    amountReceived = receivedRaw;
-    changeDue = (amountReceived && amountReceived >= total) ? +(amountReceived - total).toFixed(2) : null;
+    // No bottom numbers entered in Cash mode → full total on selected Level 2 method
+    if (!customerId) {
+      alert("لازم تختار العميل قبل إتمام الفاتورة");
+      return;
+    }
+    if (paymentSub === "instapay") method = "instapay";
+    else if (paymentSub === "vodafone") {
+      method = "vodafone";
+      const gross = Math.round(total * 1.01 * 100) / 100;
+      vodafoneFee = Math.round((gross - total) * 100) / 100;
+      paymentSplitData = { cash: 0, instapay: 0, vodafone: total, vodafone_gross: gross, vodafone_fee: vodafoneFee, credit: 0 };
+    } else {
+      method = "cash";
+    }
+    amountReceived = total;
   }
 
   const selectedAddress = (_currentDeliveryMode === 'delivery')
@@ -1849,6 +1913,7 @@ async function checkout() {
       amount_received: amountReceived,
       change_due: changeDue,
       payment_split: paymentSplitData,
+      vodafone_fee: vodafoneFee,
       discount_amount:  discAmt    > 0 ? discAmt    : undefined,
       delivery_amount:  delivery   > 0 ? delivery   : undefined,
       delivery_type:    _currentDeliveryMode,
@@ -1867,7 +1932,7 @@ async function checkout() {
     customerName: customerName,
     total: total,
     method: method,
-    amountReceived: (method === 'credit' ? 0 : (amountReceived != null ? amountReceived : total)),
+    amountReceived: (amountReceived != null ? amountReceived : (method === 'credit' ? 0 : total)),
     delivery: delivery,
     discount: discAmt
   };
@@ -1903,7 +1968,7 @@ async function checkout() {
     }
   });
 
-  const payLabel = method==="credit" ? "📋 آجل" : method==="instapay" ? "📱 انستا باي" : method==="split" ? "✂️ مقسّم" : "💵 نقدي";
+  const payLabel = method==="credit" ? "📋 آجل" : method==="instapay" ? "⚡ InstaPay" : method==="vodafone" ? "📲 Vodafone Cash" : method==="split" ? "✂️ دفع متعدد" : "💵 نقدي";
   document.getElementById("successInvoiceNum").textContent = `فاتورة رقم #${lastSaleId}`;
   document.getElementById("successTotal").textContent = total.toFixed(2) + " جنيه";
   document.getElementById("successPayMethod").textContent = payLabel;
@@ -1917,11 +1982,12 @@ async function checkout() {
   document.getElementById("discountInput").value  = "0";
   document.getElementById("deliveryInput").value   = "0";
   document.getElementById("customerSelect").value  = "";
-  document.getElementById("amountReceived").value  = "";
+  document.getElementById("rcv-cash").value        = "";
+  document.getElementById("rcv-instapay").value    = "";
+  document.getElementById("rcv-vodafone").value    = "";
   document.getElementById("changeBox").classList.add("hidden");
   document.getElementById("shortBox").classList.add("hidden");
-  document.getElementById("credit-cash").value    = "0";
-  document.getElementById("credit-instapay").value = "0";
+  document.getElementById("vodaFeePreview").classList.add("hidden");
   renderCart();
   loadStats();
 }
@@ -2288,9 +2354,8 @@ function updateExpectedPointsInPos() {
 
   const finalTotalEl = document.getElementById("finalTotal");
   const total = parseFloat(finalTotalEl ? finalTotalEl.textContent : 0) || 0;
-  const method = paymentType || "naqdi";
-  const splitCredit = method === "split" ? (parseFloat(document.getElementById("split-credit")?.value) || 0) : 0;
-  if (method === "credit" || splitCredit > 0) {
+  const st = typeof computePosPaymentState === "function" ? computePosPaymentState() : { remDebt: 0 };
+  if (paymentType === "credit" || st.remDebt > 0.01) {
     el.textContent = "الآجل لا يحسب نقاطاً (0 نقطة)";
     el.className = "text-gray-400 font-medium text-[11px]";
     return;

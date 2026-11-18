@@ -378,6 +378,10 @@ const MIGRATIONS = [
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_type TEXT DEFAULT 'pickup'",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS clinic_address TEXT",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS points_earned INTEGER",
+  "ALTER TABLE sales ADD COLUMN IF NOT EXISTS vodafone_fee NUMERIC DEFAULT 0",
+  "ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS vodafone_amount NUMERIC DEFAULT 0",
+  "ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS vodafone_fee NUMERIC DEFAULT 0",
+  "ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS realized_profit NUMERIC",
   `CREATE TABLE IF NOT EXISTS company_assets (
     id SERIAL PRIMARY KEY,
     asset_type TEXT NOT NULL,

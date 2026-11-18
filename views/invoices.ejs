@@ -25,6 +25,7 @@
         <option value="cash">💵 كاش</option>
         <option value="visa">💳 فيزا</option>
         <option value="instapay">📱 InstaPay</option>
+        <option value="vodafone">📲 Vodafone Cash</option>
         <option value="credit">📋 آجل</option>
         <option value="online">🌐 أونلاين</option>
       </select>
@@ -205,8 +206,8 @@
 const BASE = "<%- base %>";
 const CAN_RETURN = <%= canReturn ? true : false %>;
 const IS_MGR = <%= isMgr ? true : false %>;
-const PAY_LABELS = { cash:"💵 كاش", visa:"💳 فيزا", instapay:"📱 InstaPay", credit:"📋 آجل", online:"🌐 أونلاين" };
-const PAY_COLORS = { cash:"bg-green-100 text-green-700", visa:"bg-blue-100 text-blue-700", instapay:"bg-purple-100 text-purple-700", credit:"bg-orange-100 text-orange-700", online:"bg-teal-100 text-teal-700" };
+const PAY_LABELS = { cash:"💵 كاش", visa:"💳 فيزا", instapay:"📱 InstaPay", vodafone:"📲 Vodafone Cash", split:"↔️ دفع متعدد", credit:"📋 آجل", online:"🌐 أونلاين" };
+const PAY_COLORS = { cash:"bg-green-100 text-green-700", visa:"bg-blue-100 text-blue-700", instapay:"bg-purple-100 text-purple-700", vodafone:"bg-red-100 text-red-700", split:"bg-pink-100 text-pink-700", credit:"bg-orange-100 text-orange-700", online:"bg-teal-100 text-teal-700" };
 
 let allInvoices = [];
 let filteredInvoices = [];
@@ -434,7 +435,7 @@ async function viewInvoice(id) {
     <button onclick="printInv(${inv.id})" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl hover:bg-gray-200">🖨️ طباعة</button>
     <button onclick="openEditCustomer(${inv.id},(inv.customer_name||''),(inv.customer_phone||''),(inv.customer_address||inv.customer_city||''))" class="flex-1 bg-purple-100 text-purple-700 font-semibold py-2.5 rounded-xl hover:bg-purple-200">✏️ تعديل العميل</button>
     ${IS_MGR ? `<button onclick="openEditPrices(${inv.id})" class="flex-1 bg-yellow-100 text-yellow-700 font-semibold py-2.5 rounded-xl hover:bg-yellow-200">💲 تعديل الأسعار</button>` : ''}
-    ${(IS_MGR && ['cash','naqdi','instapay'].includes(inv.payment_method) && !(parseFloat(inv.total_refunded||0) > 0)) ? `<button onclick="openConvertToCredit(${inv.id})" class="flex-1 bg-amber-500 text-white font-semibold py-2.5 rounded-xl hover:bg-amber-600">💳 تحويل لآجل</button>` : ''}
+    ${(IS_MGR && ['cash','naqdi','instapay','vodafone'].includes(inv.payment_method) && !(parseFloat(inv.total_refunded||0) > 0)) ? `<button onclick="openConvertToCredit(${inv.id})" class="flex-1 bg-amber-500 text-white font-semibold py-2.5 rounded-xl hover:bg-amber-600">💳 تحويل لآجل</button>` : ''}
     <button onclick="closeDetail(); openAddItems(${inv.id})" class="flex-1 bg-green-600 text-white font-semibold py-2.5 rounded-xl hover:bg-green-700">➕ إضافة أصناف</button>
     ${canReturnThis ? `<button onclick="closeDetail(); openReturn(${inv.id})" class="flex-1 bg-orange-500 text-white font-semibold py-2.5 rounded-xl hover:bg-orange-600">↩️ استرجاع</button>` : ''}
     ${IS_MGR ? `<button onclick="closeDetail(); voidInvoice(${inv.id})" class="flex-1 bg-red-600 text-white font-semibold py-2.5 rounded-xl hover:bg-red-700">🗑 حذف نهائي</button>` : ''}

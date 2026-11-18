@@ -218,20 +218,36 @@
   <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
     <h3 class="font-bold text-gray-800 text-lg flex items-center gap-2"><span>💸</span> تسجيل دفعة من العميل</h3>
     <p id="payCustomerLabel" class="text-sm text-gray-600 bg-gray-50 rounded-xl p-3 font-medium"></p>
-    <div class="bg-green-50 border border-green-200 rounded-xl p-3 space-y-2">
+    <div class="bg-green-50 border border-green-200 rounded-xl p-3 space-y-2.5">
       <div class="flex items-center gap-2">
-        <span class="text-xs font-semibold text-gray-600 w-24">🪙 كاش ورق</span>
+        <span class="flex items-center gap-1.5 text-xs font-semibold text-gray-700 w-28 shrink-0"><span>🪙</span> نقدي</span>
         <input id="payCash" type="number" min="0" step="0.01" value="0" oninput="updatePayTotalInfo()"
-          class="flex-1 border rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-300"/>
+          class="flex-1 bg-white border rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-green-300"/>
         <span class="text-xs text-gray-400">ج</span>
       </div>
       <div class="flex items-center gap-2">
-        <span class="text-xs font-semibold text-gray-600 w-24">📱 انستا باي</span>
+        <span class="flex items-center gap-1.5 text-xs font-semibold text-purple-900 w-28 shrink-0">
+          <svg class="w-4 h-4 shrink-0" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#5B21B6"/><path d="M9 17.5L15.5 8L14 14.5H23L16.5 24L18 17.5H9Z" fill="#2DD4BF"/></svg>
+          InstaPay
+        </span>
         <input id="payInsta" type="number" min="0" step="0.01" value="0" oninput="updatePayTotalInfo()"
-          class="flex-1 border rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"/>
+          class="flex-1 bg-white border rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"/>
         <span class="text-xs text-gray-400">ج</span>
       </div>
-      <div id="payTotalSummary" class="text-xs font-bold text-emerald-800 pt-1 border-t border-green-200">إجمالي المبلغ: 0.00 ج</div>
+      <div class="space-y-1">
+        <div class="flex items-center gap-2">
+          <span class="flex items-center gap-1.5 text-xs font-semibold text-red-700 w-28 shrink-0">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="15" fill="#E60000"/><path d="M17.2 7.5C12.8 7.8 9.2 11.4 9.2 16.3C9.2 21.1 12.7 24.5 17 24.5C20.5 24.5 23 22 23 18.8C23 15.8 20.8 13.7 18 13.7C16.9 13.7 16 14 15.4 14.5C15.5 11.8 17.2 9.6 19.6 9.1C18.8 8 18 7.5 17.2 7.5Z" fill="#FFFFFF"/></svg>
+            Vodafone <span class="text-[9px] font-black">-1%</span>
+          </span>
+          <input id="payVodafone" type="number" min="0" step="0.01" value="0" oninput="updatePayTotalInfo()"
+            class="flex-1 bg-white border border-red-200 rounded-lg px-2 py-1.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-300"/>
+          <span class="text-xs text-gray-400">ج</span>
+        </div>
+        <div id="payVodaFeeHint" class="hidden text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1 font-semibold"></div>
+        <div id="payVodaFullHint" class="text-[10px] text-gray-500 px-1"></div>
+      </div>
+      <div id="payTotalSummary" class="text-xs font-bold text-emerald-800 pt-1.5 border-t border-green-200">إجمالي المخصوم من الدين: 0.00 ج</div>
     </div>
 
     <!-- Invoice Allocation Section -->
@@ -278,18 +294,34 @@
     <div class="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
       <p class="text-xs font-semibold text-blue-700 mb-1">كيف تم استلام المبلغ؟</p>
       <div class="flex items-center gap-2">
-        <span class="text-xs font-semibold text-gray-600 w-24">🪙 كاش ورق</span>
+        <span class="flex items-center gap-1.5 text-xs font-semibold text-gray-700 w-28 shrink-0"><span>🪙</span> نقدي</span>
         <input id="debtCash" type="number" min="0" step="0.01" value="0"
           oninput="updateDebtSplitInfo()"
-          class="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-400"/>
+          class="flex-1 bg-white border-2 border-gray-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-400"/>
         <span class="text-xs text-gray-400">ج</span>
       </div>
       <div class="flex items-center gap-2">
-        <span class="text-xs font-semibold text-gray-600 w-24">📱 انستا باي</span>
+        <span class="flex items-center gap-1.5 text-xs font-semibold text-purple-900 w-28 shrink-0">
+          <svg class="w-4 h-4 shrink-0" viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="#5B21B6"/><path d="M9 17.5L15.5 8L14 14.5H23L16.5 24L18 17.5H9Z" fill="#2DD4BF"/></svg>
+          InstaPay
+        </span>
         <input id="debtInsta" type="number" min="0" step="0.01" value="0"
           oninput="updateDebtSplitInfo()"
-          class="flex-1 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-purple-400"/>
+          class="flex-1 bg-white border-2 border-gray-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-purple-400"/>
         <span class="text-xs text-gray-400">ج</span>
+      </div>
+      <div class="space-y-1">
+        <div class="flex items-center gap-2">
+          <span class="flex items-center gap-1.5 text-xs font-semibold text-red-700 w-28 shrink-0">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="15" fill="#E60000"/><path d="M17.2 7.5C12.8 7.8 9.2 11.4 9.2 16.3C9.2 21.1 12.7 24.5 17 24.5C20.5 24.5 23 22 23 18.8C23 15.8 20.8 13.7 18 13.7C16.9 13.7 16 14 15.4 14.5C15.5 11.8 17.2 9.6 19.6 9.1C18.8 8 18 7.5 17.2 7.5Z" fill="#FFFFFF"/></svg>
+            Vodafone <span class="text-[9px] font-black">-1%</span>
+          </span>
+          <input id="debtVodafone" type="number" min="0" step="0.01" value="0"
+            oninput="updateDebtSplitInfo()"
+            class="flex-1 bg-white border-2 border-red-200 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-red-400"/>
+          <span class="text-xs text-gray-400">ج</span>
+        </div>
+        <div id="debtVodaFeeHint" class="hidden text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1 font-semibold"></div>
       </div>
       <div id="debtSplitInfo" class="text-xs text-center font-semibold text-gray-500 pt-1"></div>
     </div>
@@ -1449,6 +1481,7 @@ function openDebtCollectionModal(saleId, remDebt, origDebt, paidAmt) {
   document.getElementById("debtPayAmount").max = _debtRemTotal.toFixed(2);
   document.getElementById("debtCash").value = _debtRemTotal > 0 ? _debtRemTotal.toFixed(2) : "0";
   document.getElementById("debtInsta").value = "0";
+  document.getElementById("debtVodafone").value = "0";
 
   updateDebtSplitInfo();
   syncDebtInputsFromTotal();
@@ -1461,21 +1494,47 @@ function syncDebtInputsFromTotal() {
   const payAmt = parseFloat(document.getElementById("debtPayAmount").value) || 0;
   document.getElementById("debtCash").value = payAmt > 0 ? payAmt.toFixed(2) : "0";
   document.getElementById("debtInsta").value = "0";
+  document.getElementById("debtVodafone").value = "0";
   updateDebtSplitInfo();
+}
+
+function _calcVodaNetFromGross(gross, remTarget = 0) {
+  const r2v = n => Math.round((parseFloat(n) || 0) * 100) / 100;
+  if (gross <= 0) return { net: 0, fee: 0 };
+  if (remTarget > 0 && Math.abs(gross - remTarget * 1.01) <= 0.50) {
+    return { net: r2v(remTarget), fee: r2v(gross - remTarget) };
+  }
+  const fee = r2v(gross * 0.01);
+  return { net: r2v(gross - fee), fee };
 }
 
 function updateDebtSplitInfo() {
   const cash  = parseFloat(document.getElementById("debtCash").value) || 0;
   const insta = parseFloat(document.getElementById("debtInsta").value) || 0;
-  const total = cash + insta;
+  const vodaGross = parseFloat(document.getElementById("debtVodafone").value) || 0;
+  const remBeforeVoda = Math.max(0, _debtRemTotal - cash - insta);
+  const { net: vodaNet, fee: vodaFee } = _calcVodaNetFromGross(vodaGross, remBeforeVoda);
+
+  const feeEl = document.getElementById("debtVodaFeeHint");
+  if (feeEl) {
+    if (vodaGross > 0) {
+      feeEl.textContent = `مرسل: ${vodaGross.toFixed(2)} ج − رسوم 1% (${vodaFee.toFixed(2)} ج) = صافي مخصوم: ${vodaNet.toFixed(2)} ج`;
+      feeEl.classList.remove("hidden");
+    } else {
+      feeEl.classList.add("hidden");
+    }
+  }
+
+  const total = Math.round((cash + insta + vodaNet) * 100) / 100;
   const el = document.getElementById("debtSplitInfo");
   const remPreview = document.getElementById("debtRemainingPreview");
 
   if (total > 0) {
     const parts = [];
-    if (cash  > 0) parts.push(`كاش: ${cash.toFixed(2)} ج`);
-    if (insta > 0) parts.push(`انستا باي: ${insta.toFixed(2)} ج`);
-    el.textContent = `المسدد الآن: ${total.toFixed(2)} ج (${parts.join(" + ")})`;
+    if (cash  > 0) parts.push(`نقدي: ${cash.toFixed(2)} ج`);
+    if (insta > 0) parts.push(`InstaPay: ${insta.toFixed(2)} ج`);
+    if (vodaNet > 0) parts.push(`Vodafone صافي: ${vodaNet.toFixed(2)} ج`);
+    el.textContent = `المخصوم من الفاتورة: ${total.toFixed(2)} ج (${parts.join(" + ")})`;
   } else {
     el.textContent = "";
   }
@@ -1493,8 +1552,10 @@ function updateDebtSplitInfo() {
 async function submitDebtCollection() {
   const cash  = parseFloat(document.getElementById("debtCash").value) || 0;
   const insta = parseFloat(document.getElementById("debtInsta").value) || 0;
-  const total = cash + insta;
-  if (total <= 0) { alert("أدخل مبلغاً كاش أو إنستا باي أكبر من صفر"); return; }
+  const vodaGross = parseFloat(document.getElementById("debtVodafone").value) || 0;
+  const { net: vodaNet, fee: vodaFee } = _calcVodaNetFromGross(vodaGross, Math.max(0, _debtRemTotal - cash - insta));
+  const total = Math.round((cash + insta + vodaNet) * 100) / 100;
+  if (total <= 0) { alert("أدخل مبلغاً كاش أو إنستا باي أو فودافون كاش أكبر من صفر"); return; }
 
   try {
     const res = await fetch(`${BASE}/api/sales/${_debtSaleId}/mark-credit-paid`, {
@@ -1503,7 +1564,9 @@ async function submitDebtCollection() {
       body: JSON.stringify({
         amount: total,
         cash_amount: cash,
-        instapay_amount: insta
+        instapay_amount: insta,
+        vodafone_amount: vodaNet,
+        vodafone_fee: vodaFee
       })
     });
     const data = await res.json();
@@ -1534,9 +1597,16 @@ async function openPayModal() {
     `${currentCustomer.name} — إجمالي الآجل: ${currentCustomer.total_debt.toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه`;
   document.getElementById("payCash").value  = "0";
   document.getElementById("payInsta").value = "0";
+  document.getElementById("payVodafone").value = "0";
   document.getElementById("payNote").value  = "";
   document.getElementById("payAutoFifo").checked = true;
-  document.getElementById("payTotalSummary").textContent = "إجمالي المبلغ: 0.00 ج";
+  document.getElementById("payVodaFeeHint").classList.add("hidden");
+  const debtRem = Math.max(0, parseFloat(currentCustomer.total_debt || 0));
+  const fullHintEl = document.getElementById("payVodaFullHint");
+  if (fullHintEl) {
+    fullHintEl.textContent = debtRem > 0 ? `لتصفية الدين بالكامل فودافون كاش (+1%): ${(Math.round(debtRem * 1.01 * 100) / 100)} ج` : "";
+  }
+  document.getElementById("payTotalSummary").textContent = "إجمالي المخصوم من الدين: 0.00 ج";
 
   const listEl = document.getElementById("payInvoicesList");
   listEl.classList.add("hidden");
@@ -1603,19 +1673,36 @@ function togglePayFifoMode() {
 function updatePayTotalInfo() {
   const cash  = parseFloat(document.getElementById("payCash").value) || 0;
   const insta = parseFloat(document.getElementById("payInsta").value) || 0;
-  const total = cash + insta;
+  const vodaGross = parseFloat(document.getElementById("payVodafone").value) || 0;
+  const custDebt = parseFloat(currentCustomer?.total_debt || 0);
+  const { net: vodaNet, fee: vodaFee } = _calcVodaNetFromGross(vodaGross, Math.max(0, custDebt - cash - insta));
+
+  const feeEl = document.getElementById("payVodaFeeHint");
+  if (feeEl) {
+    if (vodaGross > 0) {
+      feeEl.textContent = `فودافون كاش المرسل: ${vodaGross.toFixed(2)} ج − رسوم 1% (${vodaFee.toFixed(2)} ج) = يتشال من الدين: ${vodaNet.toFixed(2)} ج`;
+      feeEl.classList.remove("hidden");
+    } else {
+      feeEl.classList.add("hidden");
+    }
+  }
+
+  const total = Math.round((cash + insta + vodaNet) * 100) / 100;
   const sumEl = document.getElementById("payTotalSummary");
-  if (sumEl) sumEl.textContent = `إجمالي المبلغ: ${total.toFixed(2)} ج (كاش: ${cash.toFixed(2)} + انستا: ${insta.toFixed(2)})`;
+  if (sumEl) sumEl.textContent = `إجمالي المخصوم من الدين: ${total.toFixed(2)} ج (نقدي: ${cash.toFixed(2)} + InstaPay: ${insta.toFixed(2)} + Vodafone صافي: ${vodaNet.toFixed(2)})`;
 }
 
 async function submitPayment() {
   const cash  = parseFloat(document.getElementById("payCash").value) || 0;
   const insta = parseFloat(document.getElementById("payInsta").value) || 0;
-  const amount = cash + insta;
+  const vodaGross = parseFloat(document.getElementById("payVodafone").value) || 0;
+  const custDebt = parseFloat(currentCustomer?.total_debt || 0);
+  const { net: vodaNet, fee: vodaFee } = _calcVodaNetFromGross(vodaGross, Math.max(0, custDebt - cash - insta));
+  const amount = Math.round((cash + insta + vodaNet) * 100) / 100;
   const note = document.getElementById("payNote").value.trim();
   const autoFifo = document.getElementById("payAutoFifo").checked;
 
-  if (amount <= 0) { alert("أدخل مبلغاً كاش أو إنستا باي أكبر من صفر"); return; }
+  if (amount <= 0) { alert("أدخل مبلغاً نقدي أو InstaPay أو Vodafone Cash أكبر من صفر"); return; }
 
   let allocations = [];
   if (!autoFifo) {
@@ -1631,7 +1718,7 @@ async function submitPayment() {
     });
 
     if (allocSum > amount + 0.01) {
-      alert(`مجموع المبالغ الموزعة على الفواتير (${allocSum.toFixed(2)} ج) أكبر من المبلغ المدفوع (${amount.toFixed(2)} ج)!`);
+      alert(`مجموع المبالغ الموزعة على الفواتير (${allocSum.toFixed(2)} ج) أكبر من الصافي المخصوم من الدين (${amount.toFixed(2)} ج)!`);
       return;
     }
   }
@@ -1644,6 +1731,8 @@ async function submitPayment() {
         amount,
         cash_amount: cash,
         instapay_amount: insta,
+        vodafone_amount: vodaNet,
+        vodafone_fee: vodaFee,
         note,
         allocations: allocations.length > 0 ? allocations : undefined
       })

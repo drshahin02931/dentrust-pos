@@ -428,8 +428,10 @@
 const BASE = '<%= base %>';
 const PAYMENT_LABELS = {
   cash: '💵 نقداً (الدرج)',
-  vodafone_cash: '📱 فودافون كاش / إنستاباي',
+  vodafone: '📲 Vodafone Cash',
+  vodafone_cash: '📲 Vodafone Cash',
   instapay: '⚡ إنستاباي',
+  split: '↔️ دفع متعدد',
   credit: '📋 آجل (حساب عيادة)',
   card: '💳 فيزا / ماستركارد',
   online: '🌐 طلب موقع',
@@ -810,9 +812,16 @@ function renderReport(data) {
     debtTbody.innerHTML = debtList.map((cp, idx) => {
       const cAmt = parseFloat(cp.cash_amount || 0);
       const iAmt = parseFloat(cp.instapay_amount || 0);
+      const vAmt = parseFloat(cp.vodafone_amount || 0);
+      const parts = [];
+      if (cAmt > 0) parts.push(`كاش: ${cAmt}`);
+      if (iAmt > 0) parts.push(`InstaPay: ${iAmt}`);
+      if (vAmt > 0) parts.push(`Vodafone: ${vAmt}`);
       let methodBadge = '<span class="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold text-[11px]">💵 كاش</span>';
-      if (cAmt > 0 && iAmt > 0) {
-        methodBadge = `<span class="bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-bold text-[11px]">مقسم (كاش: ${cAmt} | Insta: ${iAmt})</span>`;
+      if (parts.length > 1) {
+        methodBadge = `<span class="bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-bold text-[11px]">متعدد (${parts.join(' | ')})</span>`;
+      } else if (vAmt > 0) {
+        methodBadge = '<span class="bg-red-100 text-red-700 px-2 py-0.5 rounded font-bold text-[11px]">📲 Vodafone Cash</span>';
       } else if (iAmt > 0) {
         methodBadge = '<span class="bg-teal-100 text-teal-800 px-2 py-0.5 rounded font-bold text-[11px]">📱 InstaPay</span>';
       }
