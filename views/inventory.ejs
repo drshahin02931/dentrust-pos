@@ -1276,6 +1276,119 @@ async function returnCostBatchToWh(pid, bid, qty, opt, cost) {
 
 function closeModal() { document.getElementById("modal").classList.add("hidden"); }
 
+// ── تحويل من المستودع عند زيادة كمية منتج ───────────────────────────────
+function _whFlattenStocks(cbv) {
+  const m = {};
+  if (!cbv) return m;
+  try { if (typeof cbv === 'string') cbv = JSON.parse(cbv); } catch (_) { return m; }
+  for (const [k, v] of Object.entries(cbv)) {
+    if (v && typeof v === 'object') {
+      if (v.stock != null) m[k] = parseInt(v.stock || 0, 10);
+      else for (const [sk, sv] of Object.entries(v)) {
+        if (sv && typeof sv === 'object' && sv.stock != null) m[sk] = parseInt(sv.stock || 0, 10);
+      }
+    }
+  }
+  return m;
+}
+
+// يرجّع خطة التحويل لو الكمية زادت والمنتج له رصيد في المستودع، وإلا null
+function buildWhIncreasePlan(body) {
+  if (!_currentEditProd || !_whItemForEdit) return null;
+  const whAvail = parseInt(_whItemForEdit.quantity || 0, 10);
+  if (whAvail <= 0) return null;
+  const oldQty = parseInt(_currentEditProd.quantity || 0, 10);
+  const newQty = parseInt(body.quantity || 0, 10);
+  const delta = newQty - oldQty;
+  if (delta <= 0) return null;
+
+  const newMap = _whFlattenStocks(body.checkbox_values);
+  const oldMap = _whFlattenStocks(_currentEditProd.checkbox_values);
+  const whMap = _whFlattenStocks(_whItemForEdit.checkbox_values);
+  const items = [];
+  let totalIncrease = delta;
+
+  if (Object.keys(newMap).length > 0) {
+    totalIncrease = 0;
+    for (const k of Object.keys(newMap)) {
+      const d = newMap[k] - (oldMap[k] || 0);
+      if (d <= 0) continue;
+      totalIncrease += d;
+      const avail = whMap[k] || 0;
+      const t = Math.min(d, avail);
+      if (t > 0) items.push({ opt: k, delta: d, transfer: t, avail });
+    }
+  } else {
+    items.push({ opt: null, delta, transfer: Math.min(delta, whAvail), avail: whAvail });
+  }
+  if (items.length === 0) return null;
+  const totalTransfer = items.reduce((s, i) => s + i.transfer, 0);
+  return { items, totalTransfer, totalIncrease, whAvail, name: _currentEditProd.product_name };
+}
+
+// مودال التأكيد — بيرجّع 'transfer' | 'receive' | 'cancel'
+function showWhIncreaseModal(plan) {
+  return new Promise(resolve => {
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const rows = plan.items.map(i => {
+      const label = i.opt ? esc(i.opt.includes('::') ? i.opt.split('::').pop() : i.opt) : 'الكمية الكلية';
+      const partial = i.transfer < i.delta
+        ? `<span class="text-amber-600 text-[11px]"> (المطلوب ${i.delta} والمتاح ${i.avail} فقط)</span>` : '';
+      return `<div class="flex items-center justify-between bg-white border border-blue-100 rounded-xl px-3 py-2 text-sm">
+        <span class="font-medium text-gray-700">${label}${partial}</span>
+        <span class="font-bold text-blue-700">${i.transfer} قطعة</span></div>`;
+    }).join('');
+    const remainder = plan.totalIncrease - plan.totalTransfer;
+    const remNote = remainder > 0
+      ? `<p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">باقي ${remainder} قطعة هتتسجل كشحنة جديدة دخلت المخزون.</p>` : '';
+
+    const ov = document.createElement('div');
+    ov.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4';
+    ov.innerHTML = `
+      <div dir="rtl" class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-4">
+        <div class="flex items-center gap-3">
+          <div class="w-12 h-12 rounded-2xl bg-blue-100 flex items-center justify-center text-2xl">🏢</div>
+          <div>
+            <h3 class="font-extrabold text-gray-900 text-base">المنتج ده موجود في المستودع</h3>
+            <p class="text-xs text-gray-500">${esc(plan.name)} — رصيد المستودع: <strong class="text-blue-700">${plan.whAvail}</strong></p>
+          </div>
+        </div>
+        <p class="text-sm text-gray-700">زوّدت الكمية في المخزون. تحوّل <strong class="text-blue-700">${plan.totalTransfer}</strong> قطعة من المستودع؟</p>
+        <div class="space-y-2">${rows}</div>
+        ${remNote}
+        <div class="space-y-2 pt-1">
+          <button data-act="transfer" class="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-3 rounded-2xl text-sm">✅ نعم، تحويل ${plan.totalTransfer} من المستودع</button>
+          <button data-act="receive" class="w-full bg-white border-2 border-gray-200 hover:bg-gray-50 text-gray-800 font-bold py-3 rounded-2xl text-sm">📦 لا، شحنة دخلت للمخزون علطول</button>
+          <button data-act="cancel" class="w-full text-gray-400 hover:text-gray-600 text-xs py-1">إلغاء والرجوع للتعديل</button>
+        </div>
+      </div>`;
+    ov.addEventListener('click', ev => {
+      const act = ev.target.closest('[data-act]')?.dataset.act;
+      if (!act) return;
+      ov.remove();
+      resolve(act);
+    });
+    document.body.appendChild(ov);
+  });
+}
+
+async function runWhIncreaseTransfers(plan) {
+  for (const it of plan.items) {
+    const res = await fetch(`${BASE}/api/warehouse/transfer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        warehouse_item_id: _whItemForEdit.id,
+        quantity: it.transfer,
+        selected_option: it.opt,
+        note: 'تحويل من المستودع أثناء تعديل كمية المنتج'
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) throw new Error(data.error || 'فشل التحويل من المستودع');
+  }
+}
+
 async function saveProduct(e) {
   e.preventDefault();
   const btn = document.getElementById("submitBtn");
@@ -1313,6 +1426,25 @@ async function saveProduct(e) {
     }
     const url = id ? `${BASE}/api/products/${id}` : `${BASE}/api/products`;
     const method = id ? "PUT" : "POST";
+
+    // لو الكمية زادت والمنتج له رصيد في المستودع → اسأل المستخدم
+    if (id && _currentEditProd && String(_currentEditProd.id) === String(id)) {
+      const whPlan = buildWhIncreasePlan(body);
+      if (whPlan) {
+        const choice = await showWhIncreaseModal(whPlan);
+        if (choice === 'cancel') return;
+        if (choice === 'transfer') {
+          try {
+            await runWhIncreaseTransfers(whPlan);
+          } catch (trErr) {
+            errDiv.textContent = "❌ فشل التحويل من المستودع: " + trErr.message + " — لم يتم حفظ أي تعديل.";
+            errDiv.classList.remove("hidden");
+            return;
+          }
+        }
+      }
+    }
+
     const res = await fetch(url, { method, headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
     const data = await res.json();
     if (!res.ok) {
