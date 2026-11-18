@@ -499,7 +499,9 @@
         <div class="flex items-center gap-3">
           <button type="button" id="vp-qty-min" onclick="decrVPQty()"
             style="width:32px;height:32px;border-radius:8px;border:1px solid #d1d5db;background:#fff;font-weight:900;font-size:17px;cursor:pointer;line-height:1;">−</button>
-          <span id="vp-qty-val" style="min-width:28px;text-align:center;font-weight:900;font-size:1.05rem;color:#1e3a8a;">1</span>
+          <input type="number" id="vp-qty-val" min="1" value="1"
+            onchange="setVPQty(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}" onfocus="this.select()"
+            style="width:60px;height:32px;text-align:center;font-weight:900;font-size:1rem;color:#1e3a8a;border:1px solid #d1d5db;border-radius:8px;background:#fff;" />
           <button type="button" id="vp-qty-plus" onclick="incrVPQty()"
             style="width:32px;height:32px;border-radius:8px;border:1px solid #d1d5db;background:#fff;font-weight:900;font-size:17px;cursor:pointer;line-height:1;">+</button>
         </div>
@@ -1399,29 +1401,57 @@ function selectVPSize(key) {
     // show qty counter
     const qtyRow = document.getElementById("vp-qty-row");
     qtyRow.classList.remove("hidden");
-    document.getElementById("vp-qty-val").textContent = 1;
+    const qtyInp = document.getElementById("vp-qty-val");
+    if (qtyInp) {
+      qtyInp.value = 1;
+      qtyInp.max = s.qty;
+    }
     document.getElementById("vp-qty-plus").disabled = s.qty <= 1;
     document.getElementById("vp-qty-min").disabled  = true;
   }
 }
 
+function getVPMaxAvailable() {
+  const s = (_vpVariants?.sizes || []).find(x => (x._cbKey || x.label) === _vpSelSize);
+  const cartKey = (_vpProduct && _vpSelSize) ? `${_vpProduct.id}__${_vpSelSize}__${_vpSelColor || ""}` : "";
+  const inCart = cartKey ? (cart.find(i => i._cartKey === cartKey)?.quantity || 0) : 0;
+  return Math.max(0, (s ? parseInt(s.qty || 0, 10) : 1) - inCart);
+}
+
+function setVPQty(rawVal) {
+  const max = getVPMaxAvailable();
+  let v = parseInt(rawVal, 10);
+  if (isNaN(v) || v < 1) v = 1;
+  if (v > max) {
+    alert(`⚠️ العدد الحالي لا يتوفر في المخزون — المتاح حالياً: ${max} قطعة فقط`);
+    v = Math.max(1, max);
+  }
+  _vpQty = v;
+  const inp = document.getElementById("vp-qty-val");
+  if (inp) inp.value = _vpQty;
+  document.getElementById("vp-qty-plus").disabled = _vpQty >= max;
+  document.getElementById("vp-qty-min").disabled  = _vpQty <= 1;
+}
+
 function incrVPQty() {
-  const s = (_vpVariants?.sizes || []).find(x => x.label === _vpSelSize);
-  const max = s ? s.qty : 1;
+  const max = getVPMaxAvailable();
   if (_vpQty < max) {
     _vpQty++;
-    document.getElementById("vp-qty-val").textContent = _vpQty;
+    const inp = document.getElementById("vp-qty-val");
+    if (inp) inp.value = _vpQty;
     document.getElementById("vp-qty-plus").disabled = _vpQty >= max;
     document.getElementById("vp-qty-min").disabled  = false;
+  } else {
+    alert(`⚠️ العدد الحالي لا يتوفر في المخزون — المتاح حالياً: ${max} قطعة فقط`);
   }
 }
 
 function decrVPQty() {
   if (_vpQty > 1) {
     _vpQty--;
-    const s = (_vpVariants?.sizes || []).find(x => x.label === _vpSelSize);
-    const max = s ? s.qty : 1;
-    document.getElementById("vp-qty-val").textContent = _vpQty;
+    const max = getVPMaxAvailable();
+    const inp = document.getElementById("vp-qty-val");
+    if (inp) inp.value = _vpQty;
     document.getElementById("vp-qty-plus").disabled = _vpQty >= max;
     document.getElementById("vp-qty-min").disabled  = _vpQty <= 1;
   }
@@ -1521,7 +1551,9 @@ function renderCart() {
       </div>
       <div class="flex items-center gap-1">
         <button onclick="changeQty(${idx},-1)" class="w-7 h-7 rounded-lg bg-gray-100 hover:bg-red-100 text-gray-600 font-bold text-lg flex items-center justify-center leading-none">−</button>
-        <span class="w-8 text-center font-bold text-sm">${item.quantity}</span>
+        <input type="number" min="1" max="${getEffectiveItemMax(item)}" value="${item.quantity}"
+          onchange="setCartQty(${idx}, this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}" onfocus="this.select()"
+          class="w-14 h-7 text-center font-bold text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono bg-white" />
         <button onclick="changeQty(${idx},1)"  class="w-7 h-7 rounded-lg bg-gray-100 hover:bg-green-100 text-gray-600 font-bold text-lg flex items-center justify-center leading-none">+</button>
       </div>
       <div class="font-bold text-blue-700 w-20 text-left text-sm">${(item.unit_price*item.quantity).toFixed(2)}</div>
@@ -1574,26 +1606,54 @@ function editPrice(idx, val) {
   }
 }
 
-function changeQty(idx, delta) {
-  const item = cart[idx];
-  // Compute effective max: for variant items use live variant qty, else product qty
-  let effectiveMax = item.max_qty;
-  if (item._size || item.selected_size) {
-    const sz    = item._size || item.selected_size;
-    const prod  = (_posCatProducts || []).find(p => p.id === item.product_id);
-    if (prod?.variants) {
-      try {
-        const vObj = typeof prod.variants === 'string' ? JSON.parse(prod.variants) : prod.variants;
-        const vSz  = (vObj.sizes || []).find(s => s.label === sz);
-        if (vSz) effectiveMax = vSz.qty;
-      } catch (_) {}
+function getEffectiveItemMax(item) {
+  let effectiveMax = parseInt(item.max_qty, 10);
+  if (isNaN(effectiveMax) || effectiveMax <= 0) effectiveMax = 999999;
+  const prod = (_posCatProducts || []).find(p => p.id === item.product_id);
+  if (!prod) return effectiveMax;
+  const sz = item.selected_option || item._size || item.selected_size;
+  if (sz) {
+    const pv = parseVariants(prod);
+    if (pv && Array.isArray(pv.sizes)) {
+      const match = pv.sizes.find(s => (s._cbKey && s._cbKey === sz) || s.label === sz);
+      if (match && match.qty != null) return parseInt(match.qty, 10);
     }
   }
+  if (prod.quantity != null) return parseInt(prod.quantity, 10);
+  return effectiveMax;
+}
+
+function setCartQty(idx, rawVal) {
+  const item = cart[idx];
+  if (!item) return;
+  const v = parseInt(rawVal, 10);
+  if (!isNaN(v) && v <= 0) {
+    cart.splice(idx, 1);
+    renderCart();
+    return;
+  }
+  if (isNaN(v) || v < 1) {
+    renderCart();
+    return;
+  }
+  const effectiveMax = getEffectiveItemMax(item);
+  if (v > effectiveMax) {
+    item.quantity = effectiveMax;
+    alert(`⚠️ العدد الحالي لا يتوفر في المخزون — المتاح حالياً: ${effectiveMax} قطعة فقط`);
+  } else {
+    item.quantity = v;
+  }
+  renderCart();
+}
+
+function changeQty(idx, delta) {
+  const item = cart[idx];
+  const effectiveMax = getEffectiveItemMax(item);
   item.quantity += delta;
   if (item.quantity <= 0) { cart.splice(idx, 1); }
   else if (item.quantity > effectiveMax) {
     item.quantity = effectiveMax;
-    alert("لا يوجد مخزون كافٍ للمقاس المحدد");
+    alert(`⚠️ العدد الحالي لا يتوفر في المخزون — المتاح حالياً: ${effectiveMax} قطعة فقط`);
   }
   renderCart();
 }
