@@ -1101,22 +1101,45 @@ async function sendInvoiceWhatsApp(id) {
 
     const doctorName = inv.customer_name || 'دكتورنا العزيز';
     const total = parseFloat(inv.net_total != null ? inv.net_total : (parseFloat(inv.total_amount || 0) - parseFloat(inv.total_refunded || 0)));
-    
+
+    const sp = (() => {
+      try {
+        if (!inv.payment_split) return {};
+        return typeof inv.payment_split === 'string' ? JSON.parse(inv.payment_split) : inv.payment_split;
+      } catch (_) { return {}; }
+    })();
+
     // Calculate credit portion vs paid
     let remaining = 0;
     if (inv.payment_method === 'credit') {
-      remaining = total;
+      const origDebt = Math.max(0, total - parseFloat(inv.amount_received || 0));
+      remaining = Math.max(0, Math.round((origDebt - parseFloat(inv.paid_amount || 0)) * 100) / 100);
     } else if (inv.payment_method === 'split') {
-      try { remaining = parseFloat(JSON.parse(inv.payment_split || '{}').credit || 0); } catch (_) {}
+      const origDebt = parseFloat(sp.credit || 0);
+      remaining = Math.max(0, Math.round((origDebt - parseFloat(inv.paid_amount || 0)) * 100) / 100);
     } else {
       remaining = 0;
     }
-    const paid = Math.max(0, total - remaining);
+    const paid = Math.max(0, Math.round((total - remaining) * 100) / 100);
 
     // Exact previous balance and total debt (matching invoice print page)
     const totalDebtInDb = inv.customer_total_debt != null ? parseFloat(inv.customer_total_debt) : customerTotalDebt;
     const prevDebt = inv.previous_balance != null ? parseFloat(inv.previous_balance) : Math.max(0, totalDebtInDb - remaining);
     const finalTotalDue = Math.max(totalDebtInDb, prevDebt + remaining);
+
+    const vodaNet = parseFloat(sp.vodafone || (inv.payment_method === 'vodafone' ? total : 0)) || 0;
+    const vodaFee = parseFloat(inv.vodafone_fee || sp.vodafone_fee || (vodaNet > 0 ? Math.round(vodaNet * 0.01 * 100) / 100 : 0)) || 0;
+    const vodaGross = parseFloat(sp.vodafone_gross || (vodaNet > 0 ? (vodaNet + vodaFee) : 0)) || 0;
+    const instaAmt = parseFloat(sp.instapay || (inv.payment_method === 'instapay' ? total : 0)) || 0;
+
+    const fmtEg = (n) => parseFloat(n || 0).toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2});
+    const paidLabel = inv.payment_method === 'vodafone'
+      ? 'المدفوع (فودافون كاش)'
+      : inv.payment_method === 'instapay'
+        ? 'المدفوع (InstaPay)'
+        : inv.payment_method === 'split'
+          ? 'المدفوع (دفع متعدد)'
+          : 'المدفوع';
 
     const itemsText = items.map(it => {
       const netQty = it.net_qty != null ? it.net_qty : it.quantity;
@@ -1124,21 +1147,60 @@ async function sendInvoiceWhatsApp(id) {
       const name = it.product_name || 'صنف';
       const opt = it.selected_option ? ` [${it.selected_option.includes('::') ? it.selected_option.split('::').pop() : it.selected_option}]` : '';
       const price = parseFloat(it.unit_price || 0);
-      const sub = (qty * price).toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2});
+      const sub = fmtEg(qty * price);
       return `▪️ ${qty} × ${name}${opt} (${price} ج) = ${sub} ج.م`;
     }).join('\n');
 
+    const delivAmt = parseFloat(inv.delivery_amount || 0) || 0;
+    const addr = (inv.clinic_address || inv.customer_address || '').trim();
+    const isPickup = inv.delivery_type === 'pickup' || inv.delivery_type === 'store_pickup'
+      || addr.includes('استلام من مقر الشركة') || addr.includes('الفرع الرئيسي');
+    let deliverySection = '';
+    if (!isPickup && (inv.delivery_type === 'delivery' || inv.delivery_type === 'shipping' || delivAmt > 0 || addr)) {
+      deliverySection += `🛵 التوصيل: توصيل للعيادة\n`;
+      if (addr) deliverySection += `📍 العنوان: ${addr}\n`;
+      if (delivAmt > 0) deliverySection += `🚚 مصاريف التوصيل: ${fmtEg(delivAmt)} ج.م\n`;
+    } else {
+      deliverySection += `🏪 الاستلام: من الفرع\n`;
+    }
+
+    let vodaFeeSection = '';
+    if (vodaFee > 0) {
+      vodaFeeSection += `📲 رسوم فودافون كاش (1%): ${fmtEg(vodaFee)} ج.م\n`;
+      vodaFeeSection += `📲 المطلوب تحويله فودافون كاش (شامل 1%): ${fmtEg(vodaGross)} ج.م\n`;
+    }
+
     let debtSection = '';
     if (remaining > 0) {
-      debtSection = `⏳ المتبقي على الفاتورة: ${remaining.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م (آجل)\n`;
-      if (prevDebt > 0) {
-        debtSection += `📋 رصيد سابق مستحق: ${prevDebt.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
-      }
-      debtSection += `⚠️ إجمالي المتبقي المستحق: ${finalTotalDue.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
+      const finalTotalDueVoda = Math.round(finalTotalDue * 1.01 * 100) / 100;
+      debtSection = `⏳ الآجل الجديد (المتبقي على الفاتورة): ${fmtEg(remaining)} ج.م\n`;
+      debtSection += `📋 الآجل القديم: ${fmtEg(prevDebt)} ج.م\n`;
+      debtSection += `⚠️ إجمالي الآجل المستحق: ${fmtEg(finalTotalDue)} ج.م\n\n`;
+      debtSection += `💳 طرق سداد الآجل:\n`;
+      debtSection += `⚡ الدفع عبر InstaPay:\n` +
+        `https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI\n` +
+        `اضغط الرابط لارسال نقود الي\n` +
+        `ahlamanwar72@instapay\n` +
+        `Powered by InstaPay\n\n`;
+      debtSection += `📲 الدفع عبر فودافون كاش (بنزود 1% رسوم على الفودافون كاش — المطلوب: ${fmtEg(finalTotalDueVoda)} ج.م):\n` +
+        `📱 رقم المحفظة: 01014067776\n` +
+        `👤 باسم: أحلام أنور السيد\n`;
     } else {
-      debtSection = `✅ حالة السداد: مسددة بالكامل كاش ✓\n`;
+      debtSection = `✅ حالة السداد: مسددة بالكامل ✓\n`;
       if (totalDebtInDb > 0) {
-        debtSection += `📋 تذكير برصيد سابق مستحق على الحساب: ${totalDebtInDb.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
+        debtSection += `📋 تذكير برصيد سابق مستحق على الحساب: ${fmtEg(totalDebtInDb)} ج.م\n`;
+      }
+      if (vodaNet > 0) {
+        debtSection += `\n📲 بيانات تحويل فودافون كاش:\n` +
+          `📱 رقم المحفظة: 01014067776\n` +
+          `👤 باسم: أحلام أنور السيد\n`;
+      }
+      if (instaAmt > 0) {
+        debtSection += `\n⚡ للدفع عبر InstaPay:\n` +
+          `https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI\n` +
+          `اضغط الرابط لارسال نقود الي\n` +
+          `ahlamanwar72@instapay\n` +
+          `Powered by InstaPay\n`;
       }
     }
 
@@ -1148,11 +1210,13 @@ async function sendInvoiceWhatsApp(id) {
     const msg = `مرحباً دكتور ${doctorName} 🦷✨\n` +
       `تم إصدار فاتورة طلبك بنجاح من DenTrust!\n\n` +
       `📄 فاتورة رقم: #${inv.id}\n` +
-      `📅 التاريخ: ${dateFormatted}\n\n` +
+      `📅 التاريخ: ${dateFormatted}\n` +
+      `${deliverySection}\n` +
       `📦 محتويات الفاتورة (${items.length} أصناف):\n` +
       `${itemsText}\n\n` +
-      `💵 إجمالي الفاتورة: ${total.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n` +
-      `💰 المدفوع نقداً: ${paid.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n` +
+      `💵 إجمالي الفاتورة: ${fmtEg(total)} ج.م\n` +
+      `💰 ${paidLabel}: ${fmtEg(paid)} ج.م\n` +
+      `${vodaFeeSection}` +
       `${debtSection}\n` +
       `🔗 رابط الفاتورة الإلكترونية للطباعة والعرض:\n` +
       `${invoiceUrl}\n\n` +

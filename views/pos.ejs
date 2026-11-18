@@ -1934,7 +1934,11 @@ async function checkout() {
     method: method,
     amountReceived: (amountReceived != null ? amountReceived : (method === 'credit' ? 0 : total)),
     delivery: delivery,
-    discount: discAmt
+    discount: discAmt,
+    paymentSplit: paymentSplitData,
+    vodafoneFee: vodafoneFee,
+    deliveryType: _currentDeliveryMode,
+    clinicAddress: selectedAddress
   };
 
   // ── Update in-memory product list so variant picker shows fresh stock ───────
@@ -2021,9 +2025,25 @@ function sendInvoiceWhatsAppFromPos() {
 
   const doctorName = s.customerName || cust.name || 'دكتورنا العزيز';
   const total = parseFloat(s.total || 0);
-  const paid = parseFloat(s.amountReceived || (s.method === 'credit' ? 0 : total));
-  const remaining = Math.max(0, total - paid);
+  const rawPaid = parseFloat(s.amountReceived != null ? s.amountReceived : (s.method === 'credit' ? 0 : total));
+  const remaining = Math.max(0, Math.round((total - rawPaid) * 100) / 100);
+  const paid = Math.min(total, rawPaid);
   const prevDebt = parseFloat(cust.total_debt || 0);
+
+  const sp = s.paymentSplit || {};
+  const vodaNet = parseFloat(sp.vodafone || (s.method === 'vodafone' ? total : 0)) || 0;
+  const vodaFee = parseFloat(s.vodafoneFee || sp.vodafone_fee || (vodaNet > 0 ? Math.round(vodaNet * 0.01 * 100) / 100 : 0)) || 0;
+  const vodaGross = parseFloat(sp.vodafone_gross || (vodaNet > 0 ? (vodaNet + vodaFee) : 0)) || 0;
+  const instaAmt = parseFloat(sp.instapay || (s.method === 'instapay' ? total : 0)) || 0;
+
+  const fmtEg = (n) => parseFloat(n || 0).toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2});
+  const paidLabel = s.method === 'vodafone'
+    ? 'المدفوع (فودافون كاش)'
+    : s.method === 'instapay'
+      ? 'المدفوع (InstaPay)'
+      : s.method === 'split'
+        ? 'المدفوع (دفع متعدد)'
+        : 'المدفوع';
 
   // Format items (Style 1)
   const itemsText = (s.items || []).map(it => {
@@ -2031,22 +2051,60 @@ function sendInvoiceWhatsAppFromPos() {
     const name = it.name || it.product_name || 'صنف';
     const opt = it.selected_option || it.selected_size || it._size ? ` [${it.selected_option || it.selected_size || it._size}]` : '';
     const price = parseFloat(it.price || it.unit_price || 0);
-    const sub = (qty * price).toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2});
+    const sub = fmtEg(qty * price);
     return `▪️ ${qty} × ${name}${opt} (${price} ج) = ${sub} ج.م`;
   }).join('\n');
 
+  const addr = (s.clinicAddress || cust.address || '').trim();
+  const delivFee = parseFloat(s.delivery || 0) || 0;
+  let deliverySection = '';
+  if (s.deliveryType === 'delivery' || delivFee > 0 || (addr && !addr.includes('استلام من مقر الشركة') && !addr.includes('الفرع الرئيسي'))) {
+    deliverySection += `🛵 التوصيل: توصيل للعيادة\n`;
+    if (addr) deliverySection += `📍 العنوان: ${addr}\n`;
+    if (delivFee > 0) deliverySection += `🚚 مصاريف التوصيل: ${fmtEg(delivFee)} ج.م\n`;
+  } else {
+    deliverySection += `🏪 الاستلام: من الفرع\n`;
+  }
+
+  let vodaFeeSection = '';
+  if (vodaFee > 0) {
+    vodaFeeSection += `📲 رسوم فودافون كاش (1%): ${fmtEg(vodaFee)} ج.م\n`;
+    vodaFeeSection += `📲 المطلوب تحويله فودافون كاش (شامل 1%): ${fmtEg(vodaGross)} ج.م\n`;
+  }
+
   let debtSection = '';
   if (remaining > 0) {
-    const totalRemaining = remaining + (prevDebt > 0 ? prevDebt : 0);
-    debtSection = `⏳ المتبقي على الفاتورة: ${remaining.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م (آجل)\n`;
-    if (prevDebt > 0) {
-      debtSection += `📋 رصيد سابق مستحق: ${prevDebt.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
-    }
-    debtSection += `⚠️ إجمالي المتبقي المستحق: ${totalRemaining.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
+    const oldDebt = Math.max(0, prevDebt);
+    const totalRemaining = remaining + oldDebt;
+    const totalRemainingVoda = Math.round(totalRemaining * 1.01 * 100) / 100;
+    debtSection = `⏳ الآجل الجديد (المتبقي على الفاتورة): ${fmtEg(remaining)} ج.م\n`;
+    debtSection += `📋 الآجل القديم: ${fmtEg(oldDebt)} ج.م\n`;
+    debtSection += `⚠️ إجمالي الآجل المستحق: ${fmtEg(totalRemaining)} ج.م\n\n`;
+    debtSection += `💳 طرق سداد الآجل:\n`;
+    debtSection += `⚡ الدفع عبر InstaPay:\n` +
+      `https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI\n` +
+      `اضغط الرابط لارسال نقود الي\n` +
+      `ahlamanwar72@instapay\n` +
+      `Powered by InstaPay\n\n`;
+    debtSection += `📲 الدفع عبر فودافون كاش (بنزود 1% رسوم على الفودافون كاش — المطلوب: ${fmtEg(totalRemainingVoda)} ج.م):\n` +
+      `📱 رقم المحفظة: 01014067776\n` +
+      `👤 باسم: أحلام أنور السيد\n`;
   } else {
-    debtSection = `✅ حالة السداد: مسددة بالكامل كاش ✓\n`;
+    debtSection = `✅ حالة السداد: مسددة بالكامل ✓\n`;
     if (prevDebt > 0) {
-      debtSection += `📋 تذكير برصيد سابق مستحق على الحساب: ${prevDebt.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n`;
+      debtSection += `📋 تذكير برصيد سابق مستحق على الحساب: ${fmtEg(prevDebt)} ج.م\n`;
+    }
+    if (vodaNet > 0) {
+      debtSection += `\n📲 بيانات تحويل فودافون كاش:\n` +
+        `📱 رقم المحفظة: 01014067776\n` +
+        `👤 باسم: أحلام أنور السيد\n`;
+    }
+    if (instaAmt > 0) {
+      debtSection += `\n⚡ للدفع عبر InstaPay:\n` +
+        `https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI\n` +
+        `اضغط الرابط لارسال نقود الي\n` +
+        `ahlamanwar72@instapay\n` +
+        `Powered by InstaPay\n`;
     }
   }
 
@@ -2057,11 +2115,13 @@ function sendInvoiceWhatsAppFromPos() {
   const msg = `مرحباً دكتور ${doctorName} 🦷✨\n` +
     `تم إصدار فاتورة طلبك بنجاح من DenTrust!\n\n` +
     `📄 فاتورة رقم: #${s.saleId}\n` +
-    `📅 التاريخ: ${dateStr}\n\n` +
+    `📅 التاريخ: ${dateStr}\n` +
+    `${deliverySection}\n` +
     `📦 محتويات الفاتورة (${(s.items || []).length} أصناف):\n` +
     `${itemsText}\n\n` +
-    `💵 إجمالي الفاتورة: ${total.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n` +
-    `💰 المدفوع نقداً: ${paid.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2})} ج.م\n` +
+    `💵 إجمالي الفاتورة: ${fmtEg(total)} ج.م\n` +
+    `💰 ${paidLabel}: ${fmtEg(paid)} ج.م\n` +
+    `${vodaFeeSection}` +
     `${debtSection}\n` +
     `🔗 رابط الفاتورة الإلكترونية للطباعة والعرض:\n` +
     `${invoiceUrl}\n\n` +

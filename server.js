@@ -396,11 +396,14 @@ app.get(`${BASE}/invoice/:sale_id`, async (req, res) => {
 
     let previousBalance = 0;
     if (['credit','split'].includes(sale.payment_method) && sale.customer_id) {
-      // previousBalance = current debt minus this sale's NET credit portion (after returns)
+      // previousBalance = current debt minus this sale's remaining unpaid credit portion (after upfront, payments & returns)
       const { rows: [pb] } = await posDb.query('SELECT total_debt FROM customers WHERE id=$1', [sale.customer_id]);
-      let saleDebtPortion = netTotal;
+      let saleDebtPortion = Math.max(0, netTotal - parseFloat(sale.amount_received || 0) - parseFloat(sale.paid_amount || 0));
       if (sale.payment_method === 'split') {
-        try { saleDebtPortion = parseFloat(JSON.parse(sale.payment_split || '{}').credit || 0); } catch (_) {}
+        try {
+          const spCredit = parseFloat(JSON.parse(sale.payment_split || '{}').credit || 0);
+          saleDebtPortion = Math.max(0, spCredit - parseFloat(sale.paid_amount || 0));
+        } catch (_) {}
       }
       previousBalance = pb ? Math.max(0, parseFloat(pb.total_debt || 0) - saleDebtPortion) : 0;
     }
@@ -5491,9 +5494,14 @@ app.get(`${BASE}/api/invoices/:sid`, async (req, res) => {
     if (inv.customer_id) {
       const { rows: [cRow] } = await posDb.query('SELECT total_debt FROM customers WHERE id=$1', [inv.customer_id]);
       customerTotalDebt = parseFloat(cRow?.total_debt || 0);
-      let saleDebtPortion = (inv.payment_method === 'credit') ? netTotal : 0;
+      let saleDebtPortion = (inv.payment_method === 'credit')
+        ? Math.max(0, netTotal - parseFloat(inv.amount_received || 0) - parseFloat(inv.paid_amount || 0))
+        : 0;
       if (inv.payment_method === 'split') {
-        try { saleDebtPortion = parseFloat(JSON.parse(inv.payment_split || '{}').credit || 0); } catch (_) {}
+        try {
+          const spCredit = parseFloat(JSON.parse(inv.payment_split || '{}').credit || 0);
+          saleDebtPortion = Math.max(0, spCredit - parseFloat(inv.paid_amount || 0));
+        } catch (_) {}
       }
       previousBalance = Math.max(0, customerTotalDebt - saleDebtPortion);
     }

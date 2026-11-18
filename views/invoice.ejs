@@ -49,14 +49,14 @@ function payMethodAr(m) {
   if (_isWebsitePickup && (!m || m === 'online' || m === 'pickup' || m === 'store_pickup')) {
     return 'الدفع عند الاستلام بالفرع';
   }
-  const map = { cash:'كاش', naqdi:'كاش', visa:'فيزا', instapay:'InstaPay', split:'مقسّم', credit:'آجل', online:'أونلاين', pickup:'استلام من الفرع', store_pickup:'استلام من الفرع' };
+  const map = { cash:'كاش', naqdi:'كاش', visa:'فيزا', instapay:'InstaPay', vodafone:'فودافون كاش', split:'مقسّم', credit:'آجل', online:'أونلاين', pickup:'استلام من الفرع', store_pickup:'استلام من الفرع' };
   return map[m] || m;
 }
 function payMethodEn(m) {
   if (_isWebsitePickup && (!m || m === 'online' || m === 'pickup' || m === 'store_pickup')) {
     return 'Pay at Store / Branch';
   }
-  const map = { cash:'Cash', naqdi:'Cash', visa:'Visa', instapay:'InstaPay', split:'Split', credit:'Credit', online:'Online', pickup:'Store Pickup', store_pickup:'Store Pickup' };
+  const map = { cash:'Cash', naqdi:'Cash', visa:'Visa', instapay:'InstaPay', vodafone:'Vodafone Cash', split:'Split', credit:'Credit', online:'Online', pickup:'Store Pickup', store_pickup:'Store Pickup' };
   return map[m] || m;
 }
 
@@ -67,6 +67,22 @@ function cleanAddr(addr) {
   return s;
 }
 const _validAddress = cleanAddr(sale.clinic_address) || cleanAddr(customer && customer.address);
+
+const _sp = (() => {
+  try {
+    if (!sale.payment_split) return {};
+    return typeof sale.payment_split === 'string' ? JSON.parse(sale.payment_split) : sale.payment_split;
+  } catch (_) { return {}; }
+})();
+const _vodaNet = parseFloat(_sp.vodafone || (sale.payment_method === 'vodafone' ? _netTotal : 0)) || 0;
+const _vodaFee = parseFloat(sale.vodafone_fee || _sp.vodafone_fee || (_vodaNet > 0 ? Math.round(_vodaNet * 0.01 * 100) / 100 : 0)) || 0;
+const _vodaGross = parseFloat(_sp.vodafone_gross || (_vodaNet > 0 ? (_vodaNet + _vodaFee) : 0)) || 0;
+const _instaAmt = parseFloat(_sp.instapay || (sale.payment_method === 'instapay' ? _netTotal : 0)) || 0;
+const _upfrontPaid = parseFloat(sale.amount_received || 0) || 0;
+const _laterPaid = parseFloat(sale.paid_amount || 0) || 0;
+const _creditOrderRem = sale.payment_method === 'credit'
+  ? Math.max(0, _netTotal - _upfrontPaid - _laterPaid)
+  : (sale.payment_method === 'split' ? Math.max(0, parseFloat(_sp.credit || 0) - _laterPaid) : 0);
 %>
 <html lang="<%= showAr ? 'ar' : 'en' %>" dir="<%= (showAr && !isBoth) ? 'rtl' : 'ltr' %>">
 <head>
@@ -361,6 +377,42 @@ const _validAddress = cleanAddr(sale.clinic_address) || cleanAddr(customer && cu
       <span><%= fmt(_netTotal) %> <%= currencyEnLabel %></span>
     </div>
     <% } %>
+    <% if (_vodaFee > 0) { %>
+    <% if (showAr) { %>
+    <div class="sub-row bold" style="color:#000;">
+      <span>1% رسوم فودافون كاش</span>
+      <span>+ <%= fmt(_vodaFee) %> <%= currencyLabel %></span>
+    </div>
+    <% if (sale.payment_method === 'vodafone') { %>
+    <div class="total-main" style="font-size:12px;">
+      <span>الإجمالي المطلوب تحويله (فودافون كاش)</span>
+      <span><%= fmt(_netTotal + _vodaFee) %> <%= currencyLabel %></span>
+    </div>
+    <% } else if (_vodaNet > 0) { %>
+    <div class="sub-row bold" style="color:#000;">
+      <span>المطلوب فودافون كاش (شامل 1%)</span>
+      <span><%= fmt(_vodaGross) %> <%= currencyLabel %></span>
+    </div>
+    <% } %>
+    <% } %>
+    <% if (showEn) { %>
+    <div class="sub-row bold" style="direction:ltr;color:#000;">
+      <span>1% Vodafone Cash Fee</span>
+      <span>+ <%= fmt(_vodaFee) %> <%= currencyEnLabel %></span>
+    </div>
+    <% if (sale.payment_method === 'vodafone') { %>
+    <div class="total-main" style="direction:ltr;font-size:12px;">
+      <span>Total Transfer (Vodafone Cash)</span>
+      <span><%= fmt(_netTotal + _vodaFee) %> <%= currencyEnLabel %></span>
+    </div>
+    <% } else if (_vodaNet > 0) { %>
+    <div class="sub-row bold" style="direction:ltr;color:#000;">
+      <span>Vodafone Cash Due (incl. 1%)</span>
+      <span><%= fmt(_vodaGross) %> <%= currencyEnLabel %></span>
+    </div>
+    <% } %>
+    <% } %>
+    <% } %>
     <% if (sale.payment_method !== 'credit' && sale.amount_received) { %>
     <% if (showAr) { %>
     <div class="sub-row"><span>مستلم</span><span><%= fmt(sale.amount_received) %> <%= currencyLabel %></span></div>
@@ -377,30 +429,73 @@ const _validAddress = cleanAddr(sale.clinic_address) || cleanAddr(customer && cu
     <% } %>
   </div>
 
-  <% if (sale.payment_method === 'credit') { %>
+  <% if (sale.payment_method === 'credit' || _creditOrderRem > 0) { %>
   <div class="credit-stamp">
     <% if (showAr) { %>★ آجـل ★<% } %>
     <% if (isBoth) { %> | <% } %>
     <% if (showEn) { %>★ CREDIT ★<% } %>
   </div>
   <div class="balance-box">
-    <% if (prevBal > 0) { %>
+    <% if ((_upfrontPaid + _laterPaid) > 0 && _creditOrderRem > 0) { %>
     <% if (showAr) { %>
-    <div class="row"><span>رصيد سابق:</span><span><%= fmt(prevBal) %> <%= currencyLabel %></span></div>
-    <div class="row"><span>هذا الطلب:</span><span><%= fmt(_netTotal) %> <%= currencyLabel %></span></div>
+    <div class="row"><span>مدفوع من الفاتورة:</span><span><%= fmt(_upfrontPaid + _laterPaid) %> <%= currencyLabel %></span></div>
     <% } %>
     <% if (showEn) { %>
-    <div class="row" style="direction:ltr;"><span>Previous:</span><span><%= fmt(prevBal) %> <%= currencyEnLabel %></span></div>
-    <div class="row" style="direction:ltr;"><span>This order:</span><span><%= fmt(_netTotal) %> <%= currencyEnLabel %></span></div>
+    <div class="row" style="direction:ltr;"><span>Paid on Invoice:</span><span><%= fmt(_upfrontPaid + _laterPaid) %> <%= currencyEnLabel %></span></div>
+    <% } %>
+    <% } %>
+    <% if (prevBal > 0 || (_upfrontPaid + _laterPaid) > 0) { %>
+    <% if (showAr) { %>
+    <% if (prevBal > 0) { %><div class="row"><span>رصيد سابق:</span><span><%= fmt(prevBal) %> <%= currencyLabel %></span></div><% } %>
+    <div class="row"><span>المتبقي من هذا الطلب:</span><span><%= fmt(_creditOrderRem) %> <%= currencyLabel %></span></div>
+    <% } %>
+    <% if (showEn) { %>
+    <% if (prevBal > 0) { %><div class="row" style="direction:ltr;"><span>Previous:</span><span><%= fmt(prevBal) %> <%= currencyEnLabel %></span></div><% } %>
+    <div class="row" style="direction:ltr;"><span>Remaining on Order:</span><span><%= fmt(_creditOrderRem) %> <%= currencyEnLabel %></span></div>
     <% } %>
     <% } %>
     <% if (showAr) { %>
-    <div class="balance-total"><span>إجمالي المتبقي</span><span><%= fmt(prevBal + _netTotal) %> <%= currencyLabel %></span></div>
+    <div class="balance-total"><span>إجمالي المتبقي</span><span><%= fmt(prevBal + _creditOrderRem) %> <%= currencyLabel %></span></div>
     <% } %>
     <% if (showEn) { %>
-    <div class="balance-total" style="direction:ltr;"><span>Total Due</span><span><%= fmt(prevBal + _netTotal) %> <%= currencyEnLabel %></span></div>
+    <div class="balance-total" style="direction:ltr;"><span>Total Due</span><span><%= fmt(prevBal + _creditOrderRem) %> <%= currencyEnLabel %></span></div>
     <% } %>
   </div>
+  <% } %>
+
+  <% if (_creditOrderRem > 0) { %>
+  <div class="balance-box" style="margin-top:6px;line-height:1.5;word-break:break-word;">
+    <div class="bold" style="margin-bottom:3px;">💳 طرق سداد الآجل المتاحة:</div>
+    <div style="font-size:10px;margin-bottom:4px;">
+      <strong>⚡ InstaPay (<%= fmt(prevBal + _creditOrderRem) %> <%= currencyLabel %>):</strong><br/>
+      <a href="https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI" target="_blank" style="color:#000;text-decoration:underline;overflow-wrap:anywhere;">https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI</a><br/>
+      <span>اضغط الرابط لارسال نقود الي <strong>ahlamanwar72@instapay</strong> (Powered by InstaPay)</span>
+    </div>
+    <div style="font-size:10px;border-top:1px dashed #000;padding-top:4px;">
+      <strong>📲 فودافون كاش (<%= fmt(Math.round((prevBal + _creditOrderRem) * 1.01 * 100) / 100) %> <%= currencyLabel %>):</strong><br/>
+      <span>رقم المحفظة: <strong>01014067776</strong></span><br/>
+      <span>باسم: أحلام أنور السيد</span><br/>
+      <span style="font-size:9px;">(بنزود 1% رسوم على الفودافون كاش)</span>
+    </div>
+  </div>
+  <% } else { %>
+    <% if (_vodaNet > 0) { %>
+    <div class="balance-box" style="margin-top:6px;line-height:1.5;word-break:break-word;">
+      <div class="bold">📲 التحويل عبر فودافون كاش (شامل 1% رسوم): <%= fmt(_vodaGross) %> <%= currencyLabel %></div>
+      <div style="font-size:10px;margin-top:2px;">رقم المحفظة: <strong>01014067776</strong></div>
+      <div style="font-size:10px;">باسم: أحلام أنور السيد</div>
+    </div>
+    <% } %>
+    <% if (_instaAmt > 0) { %>
+    <div class="balance-box" style="margin-top:6px;line-height:1.5;word-break:break-word;">
+      <div class="bold">⚡ الدفع عبر InstaPay:</div>
+      <div style="font-size:10px;margin-top:2px;">
+        <a href="https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI" target="_blank" style="color:#000;text-decoration:underline;overflow-wrap:anywhere;">https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI</a><br/>
+        <span>اضغط الرابط لارسال نقود الي <strong>ahlamanwar72@instapay</strong></span><br/>
+        <span>Powered by InstaPay</span>
+      </div>
+    </div>
+    <% } %>
   <% } %>
 
   <hr class="divider"/>

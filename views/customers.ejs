@@ -2397,7 +2397,9 @@ function selectWaTemplate(type) {
   if (!_waCustomer) return;
   const name = _waCustomer.name || 'دكتورنا العزيز';
   const custCode = _waCustomer.customer_code || _waCustomer.barcode || String(100000 + _waCustomer.id);
-  const debt = parseFloat(_waCustomer.total_debt || 0).toLocaleString('ar-EG', {minimumFractionDigits: 2});
+  const rawDebt = parseFloat(_waCustomer.total_debt || 0);
+  const debt = rawDebt.toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2});
+  const vodaDebt = (Math.round(rawDebt * 1.01 * 100) / 100).toLocaleString('ar-EG', {minimumFractionDigits: 0, maximumFractionDigits: 2});
 
   let text = '';
   if (type === 'care') {
@@ -2410,12 +2412,18 @@ function selectWaTemplate(type) {
     text = `أهلاً بحضرتك دكتور ${name}، نتمنى لحضرتك يوماً طيباً وموفقاً 🦷💐\n\n` +
       `بناءً على كشف الحساب المالي من نظام DenTrust:\n` +
       `▫️ كود الحساب: ${custCode}\n` +
-      `▫️ الرصيد المستحق الحالي: ${debt} ج.م\n\n` +
+      `▫️ الرصيد المستحق الحالي: ${debt} ج.م\n` +
+      `▫️ للسداد عبر InstaPay: ${debt} ج.م — للسداد عبر فودافون كاش (شامل 1%): ${vodaDebt} ج.م\n\n` +
       `💳 طرق السداد المتاحة لراحتكم:\n` +
-      `1️⃣ فودافون كاش / المحافظ الإلكترونية:\n` +
+      `1️⃣ عبر تطبيق InstaPay (المبلغ: ${debt} ج.م):\n` +
+      `https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI\n` +
+      `اضغط الرابط لارسال نقود الي\n` +
+      `ahlamanwar72@instapay\n` +
+      `Powered by InstaPay\n\n` +
+      `2️⃣ فودافون كاش / المحافظ الإلكترونية (بنزود 1% رسوم فودافون كاش — المطلوب: ${vodaDebt} ج.م):\n` +
       `📱 رقم المحفظة: 01014067776\n` +
       `👤 باسم: أحلام أنور السيد\n\n` +
-      `2️⃣ تحصيل كاش مع مندوب التوصيل في أقرب زيارة للعيادة.\n\n` +
+      `3️⃣ تحصيل كاش مع مندوب التوصيل في أقرب زيارة للعيادة.\n\n` +
       `لو محتاج تفاصيل الفواتير السابقة أو أي استفسار، إحنا معاك وتحت أمرك في أي وقت 🌸`;
   } else if (type === 'restock') {
     text = `دكتور ${name}، يا رب حضرتك تكون بألف خير ودايماً في نجاح وتألق 🌟\n\n` +
