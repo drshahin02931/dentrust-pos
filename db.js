@@ -378,6 +378,31 @@ const MIGRATIONS = [
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_type TEXT DEFAULT 'pickup'",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS clinic_address TEXT",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS points_earned INTEGER",
+  `CREATE TABLE IF NOT EXISTS company_assets (
+    id SERIAL PRIMARY KEY,
+    asset_type TEXT NOT NULL,
+    karat INTEGER DEFAULT 21,
+    weight_grams NUMERIC DEFAULT 0,
+    usd_amount NUMERIC DEFAULT 0,
+    purchase_total_egp NUMERIC NOT NULL DEFAULT 0,
+    notes TEXT,
+    purchase_date TEXT DEFAULT (CURRENT_DATE::text),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
+  `CREATE TABLE IF NOT EXISTS capital_snapshots (
+    snapshot_date TEXT PRIMARY KEY,
+    inventory_cost NUMERIC DEFAULT 0,
+    inventory_retail NUMERIC DEFAULT 0,
+    warehouse_cost NUMERIC DEFAULT 0,
+    warehouse_retail NUMERIC DEFAULT 0,
+    customer_debts NUMERIC DEFAULT 0,
+    assets_value_egp NUMERIC DEFAULT 0,
+    assets_cost_egp NUMERIC DEFAULT 0,
+    total_capital_egp NUMERIC DEFAULT 0,
+    gold_21_rate NUMERIC DEFAULT 0,
+    usd_egp_rate NUMERIC DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
   `CREATE TABLE IF NOT EXISTS customer_audit_logs (
     id SERIAL PRIMARY KEY,
     customer_id INTEGER,

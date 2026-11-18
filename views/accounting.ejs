@@ -15,6 +15,211 @@
     </div>
   </div>
 
+  <!-- ══ Capital, Debt Ratio, Gold/USD Assets & Growth Scale Dashboard ══ -->
+  <div id="capitalDashboard" class="space-y-4">
+    <!-- Top Banner: Total Capital & Composition -->
+    <div class="bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 text-white rounded-3xl shadow-lg p-5 sm:p-6 space-y-5">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div class="flex items-center gap-2 text-blue-200 text-xs font-bold mb-1">
+            <span>🏛️</span>
+            <span>إجمالي رأس مال DenTrust (المخزون + المستودع + الديون + الأصول)</span>
+          </div>
+          <div class="flex flex-wrap items-baseline gap-3">
+            <span id="cap-total-cost" class="text-3xl sm:text-4xl font-black tracking-tight">—</span>
+            <span class="text-sm text-blue-200 font-semibold">جنيه (بالتكلفة وسعر اليوم)</span>
+          </div>
+          <div class="text-xs text-slate-300 mt-1">
+            القيمة البيعية المتوقعة للبضاعة + الديون + الأصول:
+            <strong id="cap-total-retail" class="text-emerald-300 font-bold">—</strong> ج
+          </div>
+        </div>
+        <div class="flex flex-col items-end gap-1.5">
+          <div id="cap-scale-badge" class="px-3.5 py-1.5 rounded-2xl text-xs font-black bg-white/10 border border-white/20">
+            ⏳ جاري حساب النمو...
+          </div>
+          <div id="cap-scale-sub" class="text-[11px] text-slate-300 text-left"></div>
+        </div>
+      </div>
+
+      <!-- Visual Stacked Bar -->
+      <div class="space-y-1.5">
+        <div class="h-3.5 w-full bg-white/10 rounded-full overflow-hidden flex">
+          <div id="bar-inv" class="bg-sky-400 transition-all duration-500" style="width:0%" title="مخزون المحل"></div>
+          <div id="bar-wh" class="bg-indigo-400 transition-all duration-500" style="width:0%" title="المستودع"></div>
+          <div id="bar-debt" class="bg-amber-400 transition-all duration-500" style="width:0%" title="ديون العملاء"></div>
+          <div id="bar-assets" class="bg-yellow-300 transition-all duration-500" style="width:0%" title="أصول دهب ودولار"></div>
+        </div>
+      </div>
+
+      <!-- 4 Breakdown Cards -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div class="bg-white/10 border border-white/15 rounded-2xl p-3.5">
+          <div class="flex items-center justify-between text-xs text-sky-200 font-semibold">
+            <span>📦 مخزون المحل</span>
+            <span id="cap-inv-pct" class="bg-sky-400/20 text-sky-200 px-2 py-0.5 rounded-full font-bold">0%</span>
+          </div>
+          <div id="cap-inv-val" class="text-xl font-black mt-1">—</div>
+          <div class="text-[11px] text-slate-300 mt-0.5">بسعر البيع: <span id="cap-inv-retail">—</span> ج</div>
+        </div>
+
+        <div class="bg-white/10 border border-white/15 rounded-2xl p-3.5">
+          <div class="flex items-center justify-between text-xs text-indigo-200 font-semibold">
+            <span>🏢 بضاعة المستودع</span>
+            <span id="cap-wh-pct" class="bg-indigo-400/20 text-indigo-200 px-2 py-0.5 rounded-full font-bold">0%</span>
+          </div>
+          <div id="cap-wh-val" class="text-xl font-black mt-1">—</div>
+          <div class="text-[11px] text-slate-300 mt-0.5">بسعر البيع: <span id="cap-wh-retail">—</span> ج</div>
+        </div>
+
+        <div class="bg-amber-500/15 border border-amber-400/40 rounded-2xl p-3.5">
+          <div class="flex items-center justify-between text-xs text-amber-200 font-semibold">
+            <span>💳 جزء الديون (الآجل)</span>
+            <span id="cap-debt-pct" class="bg-amber-400/30 text-amber-100 px-2 py-0.5 rounded-full font-black">0%</span>
+          </div>
+          <div id="cap-debt-val" class="text-xl font-black text-amber-200 mt-1">—</div>
+          <div class="flex items-center justify-between text-[11px] mt-0.5">
+            <span id="cap-debt-cnt" class="text-slate-200">0 دكتور</span>
+            <span id="cap-debt-risk" class="font-bold">—</span>
+          </div>
+        </div>
+
+        <div class="bg-yellow-500/15 border border-yellow-300/40 rounded-2xl p-3.5">
+          <div class="flex items-center justify-between text-xs text-yellow-200 font-semibold">
+            <span>🪙 أصول (دهب + دولار)</span>
+            <span id="cap-assets-pct" class="bg-yellow-400/25 text-yellow-100 px-2 py-0.5 rounded-full font-bold">0%</span>
+          </div>
+          <div id="cap-assets-val" class="text-xl font-black text-yellow-200 mt-1">—</div>
+          <div id="cap-assets-gain" class="text-[11px] mt-0.5 font-semibold">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Two Columns: Growth Graph (Scale) + Gold/USD Portfolio -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+      <!-- Growth Graph / Scale (7 cols) -->
+      <div class="lg:col-span-7 bg-white rounded-2xl border shadow-sm p-5 flex flex-col justify-between space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="font-extrabold text-gray-800 text-base">📈 مؤشر النمو (Scale): بنكبر ولا بنخسر؟</h3>
+            <p class="text-xs text-gray-500 mt-0.5">مسار رأس المال شاملاً أرباح التشغيل وتغيّر أسعار الدهب والدولار</p>
+          </div>
+          <div class="flex bg-gray-100 p-1 rounded-xl text-xs font-bold">
+            <button type="button" id="scaleBtnMonths" onclick="setScaleChartView('months')" class="px-3 py-1 rounded-lg bg-blue-700 text-white shadow">آخر 6 شهور</button>
+            <button type="button" id="scaleBtnDaily" onclick="setScaleChartView('daily')" class="px-3 py-1 rounded-lg text-gray-600">اللقطات اليومية</button>
+          </div>
+        </div>
+
+        <div id="scale-svg-container" class="w-full min-h-[210px] bg-slate-50/70 border border-slate-100 rounded-2xl p-3 flex items-center justify-center">
+          <span class="text-xs text-gray-400">جاري رسم الجراف...</span>
+        </div>
+
+        <div class="grid grid-cols-3 gap-2.5 text-center">
+          <div class="bg-slate-50 border rounded-xl p-2.5">
+            <div class="text-[11px] text-gray-500 font-medium">درجة النمو (الشهر)</div>
+            <div id="scale-pct-val" class="text-lg font-black text-gray-800 mt-0.5">—</div>
+            <div id="scale-egp-val" class="text-[11px] text-gray-500">—</div>
+          </div>
+          <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-2.5">
+            <div class="text-[11px] text-emerald-700 font-medium">من أرباح التشغيل</div>
+            <div id="scale-ops-profit" class="text-lg font-black text-emerald-700 mt-0.5">—</div>
+            <div class="text-[11px] text-emerald-600">صافي الشهر الحالي</div>
+          </div>
+          <div class="bg-amber-50 border border-amber-100 rounded-xl p-2.5">
+            <div class="text-[11px] text-amber-800 font-medium">من ارتفاع الأصول</div>
+            <div id="scale-assets-gain" class="text-lg font-black text-amber-700 mt-0.5">—</div>
+            <div class="text-[11px] text-amber-700">فرق سعر الدهب/$</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Gold & USD Assets Tracker (5 cols) -->
+      <div class="lg:col-span-5 bg-white rounded-2xl border shadow-sm p-5 space-y-4">
+        <div class="flex items-center justify-between gap-2">
+          <h3 class="font-extrabold text-gray-800 text-base">🪙 محفظة الأصول (دهب بالجرام + دولار)</h3>
+          <button type="button" onclick="refreshCapitalRates()" id="btnRefreshRates"
+            class="text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold px-2.5 py-1.5 rounded-xl">
+            🔄 تحديث تلقائي
+          </button>
+        </div>
+
+        <!-- Live/Manual Rates Box -->
+        <div class="bg-amber-50/70 border border-amber-200 rounded-2xl p-3 space-y-2.5">
+          <div class="flex flex-wrap items-center justify-between gap-1 text-[11px] text-amber-900">
+            <span class="font-bold">أسعار السوق اليوم (<span id="rate-source">—</span>)</span>
+            <span id="rate-updated" class="text-amber-700"></span>
+          </div>
+          <div class="grid grid-cols-4 gap-1.5 text-center text-[11px]">
+            <div class="bg-white rounded-xl p-1.5 border border-amber-100"><div class="text-gray-400">عيار 24</div><strong id="rate-24" class="text-gray-800">—</strong></div>
+            <div class="bg-white rounded-xl p-1.5 border border-amber-200"><div class="text-amber-700 font-bold">عيار 21</div><strong id="rate-21" class="text-amber-800">—</strong></div>
+            <div class="bg-white rounded-xl p-1.5 border border-amber-100"><div class="text-gray-400">عيار 18</div><strong id="rate-18" class="text-gray-800">—</strong></div>
+            <div class="bg-white rounded-xl p-1.5 border border-emerald-200"><div class="text-emerald-700 font-bold">الدولار $</div><strong id="rate-usd" class="text-emerald-800">—</strong></div>
+          </div>
+          <div class="text-[11px] text-amber-800 flex items-center justify-between px-1">
+            <span>الجنيه الدهب (8 جم عيار 21):</span>
+            <strong id="rate-pound">—</strong>
+          </div>
+          <div class="grid grid-cols-5 gap-1.5 pt-1 border-t border-amber-200/70">
+            <input id="inp-rate-21" type="number" step="1" min="1" placeholder="سعر 21"
+              class="col-span-2 bg-white border border-amber-200 rounded-xl px-2.5 py-1.5 text-xs font-bold" title="سعر جرام عيار 21 بالصاغة"/>
+            <input id="inp-rate-usd" type="number" step="0.01" min="1" placeholder="سعر $"
+              class="col-span-2 bg-white border border-amber-200 rounded-xl px-2.5 py-1.5 text-xs font-bold" title="سعر الدولار اليوم"/>
+            <button type="button" onclick="saveCapitalRates()" class="col-span-1 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl py-1.5">حفظ</button>
+          </div>
+        </div>
+
+        <!-- Add Asset Form -->
+        <form onsubmit="addCompanyAsset(event)" class="space-y-2.5 border-t pt-3">
+          <div class="grid grid-cols-2 gap-2">
+            <select id="asset-type" onchange="toggleAssetTypeFields()" class="border rounded-xl px-2.5 py-2 text-xs font-bold bg-gray-50">
+              <option value="gold">🪙 دهب (جرام + عيار)</option>
+              <option value="usd">💵 دولار أمريكي ($)</option>
+            </select>
+            <input id="asset-date" type="date" class="border rounded-xl px-2.5 py-2 text-xs"/>
+          </div>
+
+          <div id="asset-gold-fields" class="grid grid-cols-2 gap-2">
+            <select id="asset-karat" onchange="onAssetKaratChange()" class="border rounded-xl px-2.5 py-2 text-xs font-semibold">
+              <option value="21">عيار 21</option>
+              <option value="24">عيار 24 (سبائك)</option>
+              <option value="18">عيار 18</option>
+              <option value="218">جنيه دهب (8 جم 21)</option>
+            </select>
+            <div class="relative">
+              <input id="asset-grams" type="number" step="0.01" min="0.01" placeholder="الوزن بالجرام (مثلاً 10.5)"
+                class="w-full border rounded-xl px-2.5 py-2 text-xs font-bold"/>
+              <button type="button" id="gold-pound-helper" onclick="addGoldPoundWeight()"
+                class="hidden mt-1 text-[10px] text-amber-700 font-bold hover:underline">+ إضافة 8 جم (جنيه واحد)</button>
+            </div>
+          </div>
+
+          <div id="asset-usd-fields" class="hidden">
+            <input id="asset-usd" type="number" step="0.01" min="0.01" placeholder="المبلغ بالدولار ($)"
+              class="w-full border rounded-xl px-2.5 py-2 text-xs font-bold"/>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div class="flex gap-1">
+              <input id="asset-cost" type="number" step="0.01" min="0" required placeholder="سعر الشراء الكلي (ج)"
+                class="w-full border rounded-xl px-2.5 py-2 text-xs font-bold"/>
+              <button type="button" onclick="fillAssetCurrentCost()" title="املأ بسعر اليوم"
+                class="px-2 bg-gray-100 hover:bg-gray-200 rounded-xl text-[11px] font-bold text-gray-600 shrink-0">اليوم</button>
+            </div>
+            <input id="asset-notes" type="text" placeholder="ملاحظة (مثلاً سبيكة BTC)"
+              class="border rounded-xl px-2.5 py-2 text-xs"/>
+          </div>
+          <button type="submit" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2 rounded-xl text-xs">
+            ➕ إضافة أصل للمحفظة
+          </button>
+        </form>
+
+        <!-- Holdings Summary + List -->
+        <div id="assets-holdings-summary" class="text-[11px] text-gray-600 bg-gray-50 rounded-xl px-3 py-2 hidden"></div>
+        <div class="max-h-52 overflow-y-auto divide-y text-xs" id="assets-list"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Period Selector & Basis Toggle -->
   <div class="bg-white rounded-2xl border shadow-sm p-4 flex flex-wrap items-center justify-between gap-3">
     <!-- Period Buttons -->
@@ -471,13 +676,13 @@ async function addExpense(ev) {
   });
   document.getElementById("e-title").value  = "";
   document.getElementById("e-amount").value = "";
-  loadExpenses(); loadSummary();
+  loadExpenses(); loadSummary(); loadCapitalDashboard();
 }
 
 async function deleteExpense(id) {
   if (!confirm("حذف هذا المصروف؟")) return;
   await fetch(`${BASE}/api/expenses/${id}`, { method:"DELETE" });
-  loadExpenses(); loadSummary();
+  loadExpenses(); loadSummary(); loadCapitalDashboard();
 }
 
 // ── Extra Profits ──────────────────────────────────────────────────────────
@@ -515,13 +720,13 @@ async function addExtraProfit(ev) {
   });
   document.getElementById("ep-title").value  = "";
   document.getElementById("ep-amount").value = "";
-  loadExtraProfit(); loadSummary();
+  loadExtraProfit(); loadSummary(); loadCapitalDashboard();
 }
 
 async function deleteExtraProfit(id) {
   if (!confirm("حذف هذا الربح الإضافي؟")) return;
   await fetch(`${BASE}/api/extra-profits/${id}`, { method:"DELETE" });
-  loadExtraProfit(); loadSummary();
+  loadExtraProfit(); loadSummary(); loadCapitalDashboard();
 }
 
 // ── CSV & Excel Export ─────────────────────────────────────────────────────
@@ -532,9 +737,313 @@ function exportCSV(type) {
   window.location.href = url;
 }
 
+// ── Capital, Assets & Growth Scale Dashboard ───────────────────────────────
+let capitalDataCache = null;
+let scaleChartView = "months";
+
+function fmtEgp(n) {
+  return (parseFloat(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+function escHtml(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c]));
+}
+
+async function loadCapitalDashboard(refreshRates = false) {
+  try {
+    const res = await fetch(`${BASE}/api/accounting/capital${refreshRates ? "?refresh_rates=1" : ""}`);
+    const d = await res.json();
+    if (!res.ok || d.error) return;
+    capitalDataCache = d;
+    renderCapitalDashboard(d);
+  } catch (err) {
+    console.error("Capital load err:", err);
+  }
+}
+
+function renderCapitalDashboard(d) {
+  const b = d.breakdown || {};
+  const r = d.rates || {};
+  const sc = d.scale_metrics || {};
+
+  document.getElementById("cap-total-cost").textContent = fmtEgp(d.total_capital_cost);
+  document.getElementById("cap-total-retail").textContent = fmtEgp(d.total_capital_retail);
+
+  // Stacked bar widths
+  document.getElementById("bar-inv").style.width = `${b.inventory_pct || 0}%`;
+  document.getElementById("bar-wh").style.width = `${b.warehouse_pct || 0}%`;
+  document.getElementById("bar-debt").style.width = `${b.debts_pct || 0}%`;
+  document.getElementById("bar-assets").style.width = `${b.assets_pct || 0}%`;
+
+  // Breakdown cards
+  document.getElementById("cap-inv-val").textContent = fmtEgp(b.inventory_cost) + " ج";
+  document.getElementById("cap-inv-pct").textContent = (b.inventory_pct || 0) + "%";
+  document.getElementById("cap-inv-retail").textContent = fmtEgp(b.inventory_retail);
+
+  document.getElementById("cap-wh-val").textContent = fmtEgp(b.warehouse_cost) + " ج";
+  document.getElementById("cap-wh-pct").textContent = (b.warehouse_pct || 0) + "%";
+  document.getElementById("cap-wh-retail").textContent = fmtEgp(b.warehouse_retail);
+
+  document.getElementById("cap-debt-val").textContent = fmtEgp(b.customer_debts) + " ج";
+  document.getElementById("cap-debt-pct").textContent = (b.debts_pct || 0) + "%";
+  document.getElementById("cap-debt-cnt").textContent = `${b.debtors_count || 0} دكتور`;
+  const debtPct = parseFloat(b.debts_pct || 0);
+  const riskEl = document.getElementById("cap-debt-risk");
+  if (debtPct >= 40) { riskEl.textContent = "🔴 مرتفعة"; riskEl.className = "font-bold text-red-300"; }
+  else if (debtPct >= 25) { riskEl.textContent = "🟡 متوسطة"; riskEl.className = "font-bold text-amber-200"; }
+  else { riskEl.textContent = "🟢 آمنة"; riskEl.className = "font-bold text-emerald-300"; }
+
+  document.getElementById("cap-assets-val").textContent = fmtEgp(b.assets_value) + " ج";
+  document.getElementById("cap-assets-pct").textContent = (b.assets_pct || 0) + "%";
+  const aGain = parseFloat(b.assets_gain || 0);
+  const gainEl = document.getElementById("cap-assets-gain");
+  gainEl.textContent = `${aGain >= 0 ? "+" : ""}${fmtEgp(aGain)} ج فرق سعر`;
+  gainEl.className = `text-[11px] mt-0.5 font-bold ${aGain >= 0 ? "text-emerald-300" : "text-red-300"}`;
+
+  // Top Scale badge
+  const mPct = parseFloat(sc.monthly_growth_pct || 0);
+  const mChg = parseFloat(sc.monthly_change_egp || 0);
+  const badge = document.getElementById("cap-scale-badge");
+  if (sc.status === "growing") {
+    badge.className = "px-3.5 py-1.5 rounded-2xl text-xs font-black bg-emerald-500/25 border border-emerald-400/50 text-emerald-200";
+    badge.textContent = `📈 الشركة بتكبر (${mPct >= 0 ? "+" : ""}${mPct}%)`;
+  } else if (sc.status === "shrinking") {
+    badge.className = "px-3.5 py-1.5 rounded-2xl text-xs font-black bg-red-500/25 border border-red-400/50 text-red-200";
+    badge.textContent = `📉 تراجع (${mPct}%)`;
+  } else {
+    badge.className = "px-3.5 py-1.5 rounded-2xl text-xs font-black bg-white/15 border border-white/25 text-slate-200";
+    badge.textContent = `⚖️ استقرار (${mPct >= 0 ? "+" : ""}${mPct}%)`;
+  }
+  document.getElementById("cap-scale-sub").textContent = `التغيّر هذا الشهر: ${mChg >= 0 ? "+" : ""}${fmtEgp(mChg)} ج`;
+
+  // Scale pills below chart
+  document.getElementById("scale-pct-val").textContent = `${mPct >= 0 ? "+" : ""}${mPct}%`;
+  document.getElementById("scale-pct-val").className = `text-lg font-black mt-0.5 ${mPct >= 0 ? "text-emerald-700" : "text-red-600"}`;
+  document.getElementById("scale-egp-val").textContent = `${mChg >= 0 ? "+" : ""}${fmtEgp(mChg)} ج عن الشهر السابق`;
+
+  const opsP = parseFloat(sc.current_month_profit || 0);
+  document.getElementById("scale-ops-profit").textContent = `${opsP >= 0 ? "+" : ""}${fmtEgp(opsP)} ج`;
+  document.getElementById("scale-assets-gain").textContent = `${aGain >= 0 ? "+" : ""}${fmtEgp(aGain)} ج`;
+
+  // Rates box
+  document.getElementById("rate-24").textContent = fmtEgp(r.gold_24) + " ج";
+  document.getElementById("rate-21").textContent = fmtEgp(r.gold_21) + " ج";
+  document.getElementById("rate-18").textContent = fmtEgp(r.gold_18) + " ج";
+  document.getElementById("rate-pound").textContent = fmtEgp(r.gold_pound) + " ج";
+  document.getElementById("rate-usd").textContent = fmtEgp(r.usd_egp) + " ج";
+  document.getElementById("rate-source").textContent = r.source || "—";
+  document.getElementById("rate-updated").textContent = r.updated_at ? r.updated_at.slice(0, 16).replace("T", " ") : "";
+  document.getElementById("inp-rate-21").value = r.gold_21 || "";
+  document.getElementById("inp-rate-usd").value = r.usd_egp || "";
+
+  // Assets holdings summary
+  const sm = d.assets_summary || {};
+  const parts = [];
+  if (sm.gold_grams_24 > 0) parts.push(`عيار 24: <b>${sm.gold_grams_24} جم</b>`);
+  if (sm.gold_grams_21 > 0) parts.push(`عيار 21: <b>${sm.gold_grams_21} جم</b>`);
+  if (sm.gold_grams_18 > 0) parts.push(`عيار 18: <b>${sm.gold_grams_18} جم</b>`);
+  if (sm.gold_grams_pound > 0) parts.push(`جنيه دهب: <b>${sm.gold_grams_pound} جم</b>`);
+  if (sm.total_usd > 0) parts.push(`دولار: <b>$${fmtEgp(sm.total_usd)}</b>`);
+  const sumEl = document.getElementById("assets-holdings-summary");
+  if (parts.length) {
+    sumEl.innerHTML = "الرصيد: " + parts.join(" · ");
+    sumEl.classList.remove("hidden");
+  } else {
+    sumEl.classList.add("hidden");
+  }
+
+  // Assets list
+  const listEl = document.getElementById("assets-list");
+  const assets = d.assets || [];
+  if (!assets.length) {
+    listEl.innerHTML = '<div class="text-center text-gray-400 py-5">لا توجد أصول مسجلة بعد — أضف دهب أو دولار أعلاه</div>';
+  } else {
+    const karatLabel = k => k === 218 ? "جنيه دهب (عيار 21)" : `دهب عيار ${k}`;
+    listEl.innerHTML = assets.map(a => {
+      const title = a.asset_type === "gold"
+        ? `🪙 ${karatLabel(a.karat)} — ${a.weight_grams} جرام`
+        : `💵 $${fmtEgp(a.usd_amount)}`;
+      const diff = parseFloat(a.profit_loss_egp || 0);
+      const diffCls = diff >= 0 ? "text-emerald-700" : "text-red-600";
+      return `
+        <div class="py-2.5 flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <div class="font-bold text-gray-800">${title}</div>
+            <div class="text-[11px] text-gray-400">
+              شراء: ${fmtEgp(a.purchase_total_egp)} ج (${escHtml(a.purchase_date)})${a.notes ? " · " + escHtml(a.notes) : ""}
+            </div>
+          </div>
+          <div class="text-left shrink-0 flex items-center gap-2">
+            <div>
+              <div class="font-black text-gray-900">${fmtEgp(a.current_value_egp)} ج</div>
+              <div class="text-[11px] font-bold ${diffCls}">${diff >= 0 ? "+" : ""}${fmtEgp(diff)} ج (${a.profit_loss_pct >= 0 ? "+" : ""}${a.profit_loss_pct}%)</div>
+            </div>
+            <button type="button" onclick="deleteCompanyAsset(${a.id})" class="text-red-400 hover:text-red-600 px-1.5 py-1 rounded hover:bg-red-50" title="حذف">🗑</button>
+          </div>
+        </div>`;
+    }).join("");
+  }
+
+  renderScaleChart();
+}
+
+function setScaleChartView(v) {
+  scaleChartView = v;
+  const bm = document.getElementById("scaleBtnMonths");
+  const bd = document.getElementById("scaleBtnDaily");
+  bm.className = v === "months" ? "px-3 py-1 rounded-lg bg-blue-700 text-white shadow" : "px-3 py-1 rounded-lg text-gray-600";
+  bd.className = v === "daily" ? "px-3 py-1 rounded-lg bg-blue-700 text-white shadow" : "px-3 py-1 rounded-lg text-gray-600";
+  renderScaleChart();
+}
+
+function renderScaleChart() {
+  const box = document.getElementById("scale-svg-container");
+  if (!capitalDataCache) return;
+  const raw = scaleChartView === "daily"
+    ? (capitalDataCache.snapshots || []).map(s => ({ label: String(s.snapshot_date).slice(5), val: parseFloat(s.total_capital_egp || 0), sub: null }))
+    : (capitalDataCache.growth_series || []).map(m => ({ label: m.label, val: parseFloat(m.capital || 0), sub: parseFloat(m.net_profit || 0) }));
+
+  if (!raw.length) {
+    box.innerHTML = '<span class="text-xs text-gray-400">لا توجد بيانات كافية للرسم بعد</span>';
+    return;
+  }
+
+  const W = 560, H = 200, padL = 54, padR = 24, padT = 24, padB = 34;
+  const vals = raw.map(p => p.val);
+  let minV = Math.min(...vals), maxV = Math.max(...vals);
+  if (minV === maxV) { minV = Math.max(0, minV * 0.9); maxV = maxV * 1.1 || 100; }
+  const margin = (maxV - minV) * 0.15;
+  minV = Math.max(0, minV - margin);
+  maxV = maxV + margin;
+
+  const xFor = i => raw.length === 1 ? (padL + (W - padL - padR) / 2) : padL + (i / (raw.length - 1)) * (W - padL - padR);
+  const yFor = v => padT + (1 - (v - minV) / (maxV - minV || 1)) * (H - padT - padB);
+
+  const pts = raw.map((p, i) => ({ ...p, x: xFor(i), y: yFor(p.val) }));
+  const lineD = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const areaD = `${lineD} L${pts[pts.length - 1].x.toFixed(1)},${(H - padB).toFixed(1)} L${pts[0].x.toFixed(1)},${(H - padB).toFixed(1)} Z`;
+
+  const isUp = pts[pts.length - 1].val >= pts[0].val;
+  const stroke = isUp ? "#059669" : "#dc2626";
+  const fillGrad = isUp ? "rgba(16,185,129,0.18)" : "rgba(239,68,68,0.18)";
+
+  const gridYs = [0, 0.5, 1].map(t => {
+    const v = minV + t * (maxV - minV);
+    const y = yFor(v);
+    const lbl = v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v.toFixed(0);
+    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="#e2e8f0" stroke-dasharray="3,3"/>
+            <text x="${padL - 6}" y="${y + 4}" text-anchor="end" font-size="10" fill="#64748b">${lbl}</text>`;
+  }).join("");
+
+  const dots = pts.map(p => {
+    const valLbl = p.val >= 1000 ? `${(p.val / 1000).toFixed(1)}k` : p.val.toFixed(0);
+    return `<circle cx="${p.x}" cy="${p.y}" r="4.5" fill="#fff" stroke="${stroke}" stroke-width="2.5">
+              <title>${p.label}: ${fmtEgp(p.val)} ج${p.sub != null ? " | ربح التشغيل: " + fmtEgp(p.sub) + " ج" : ""}</title>
+            </circle>
+            <text x="${p.x}" y="${p.y - 10}" text-anchor="middle" font-size="10" font-weight="bold" fill="#0f172a">${valLbl}</text>
+            <text x="${p.x}" y="${H - 12}" text-anchor="middle" font-size="10" fill="#475569">${escHtml(p.label)}</text>`;
+  }).join("");
+
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="w-full h-auto overflow-visible" dir="ltr">
+    ${gridYs}
+    <path d="${areaD}" fill="${fillGrad}"/>
+    <path d="${lineD}" fill="none" stroke="${stroke}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    ${dots}
+  </svg>`;
+}
+
+function toggleAssetTypeFields() {
+  const isGold = document.getElementById("asset-type").value === "gold";
+  document.getElementById("asset-gold-fields").classList.toggle("hidden", !isGold);
+  document.getElementById("asset-usd-fields").classList.toggle("hidden", isGold);
+}
+
+function onAssetKaratChange() {
+  const k = document.getElementById("asset-karat").value;
+  document.getElementById("gold-pound-helper").classList.toggle("hidden", k !== "218");
+}
+
+function addGoldPoundWeight() {
+  const el = document.getElementById("asset-grams");
+  el.value = ((parseFloat(el.value) || 0) + 8).toFixed(2);
+}
+
+function fillAssetCurrentCost() {
+  if (!capitalDataCache?.rates) return;
+  const r = capitalDataCache.rates;
+  const t = document.getElementById("asset-type").value;
+  if (t === "gold") {
+    const k = parseInt(document.getElementById("asset-karat").value, 10);
+    const g = parseFloat(document.getElementById("asset-grams").value) || 0;
+    const rate = k === 24 ? r.gold_24 : (k === 18 ? r.gold_18 : r.gold_21);
+    document.getElementById("asset-cost").value = (g * rate).toFixed(2);
+  } else {
+    const u = parseFloat(document.getElementById("asset-usd").value) || 0;
+    document.getElementById("asset-cost").value = (u * (r.usd_egp || 0)).toFixed(2);
+  }
+}
+
+async function saveCapitalRates() {
+  const g21 = parseFloat(document.getElementById("inp-rate-21").value);
+  const usd = parseFloat(document.getElementById("inp-rate-usd").value);
+  const res = await fetch(`${BASE}/api/accounting/capital/rates`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode: "manual", gold_21_egp: g21, usd_egp: usd })
+  });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error || "خطأ في حفظ الأسعار"); return; }
+  await loadCapitalDashboard(false);
+}
+
+async function refreshCapitalRates() {
+  const btn = document.getElementById("btnRefreshRates");
+  btn.disabled = true; btn.textContent = "جاري التحديث...";
+  try {
+    await fetch(`${BASE}/api/accounting/capital/rates`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "auto" })
+    });
+    await loadCapitalDashboard(false);
+  } finally {
+    btn.disabled = false; btn.textContent = "🔄 تحديث تلقائي";
+  }
+}
+
+async function addCompanyAsset(ev) {
+  ev.preventDefault();
+  const type = document.getElementById("asset-type").value;
+  const body = {
+    asset_type: type,
+    karat: parseInt(document.getElementById("asset-karat").value, 10),
+    weight_grams: parseFloat(document.getElementById("asset-grams").value) || 0,
+    usd_amount: parseFloat(document.getElementById("asset-usd").value) || 0,
+    purchase_total_egp: parseFloat(document.getElementById("asset-cost").value) || 0,
+    purchase_date: document.getElementById("asset-date").value,
+    notes: document.getElementById("asset-notes").value
+  };
+  const res = await fetch(`${BASE}/api/accounting/capital/assets`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error || "تعذر إضافة الأصل"); return; }
+  document.getElementById("asset-grams").value = "";
+  document.getElementById("asset-usd").value = "";
+  document.getElementById("asset-cost").value = "";
+  document.getElementById("asset-notes").value = "";
+  await loadCapitalDashboard(false);
+}
+
+async function deleteCompanyAsset(id) {
+  if (!confirm("حذف هذا الأصل من المحفظة؟")) return;
+  await fetch(`${BASE}/api/accounting/capital/assets/${id}`, { method: "DELETE" });
+  await loadCapitalDashboard(false);
+}
+
 document.getElementById("e-date").value  = new Date().toISOString().split("T")[0];
 document.getElementById("ep-date").value = new Date().toISOString().split("T")[0];
+document.getElementById("asset-date").value = new Date().toISOString().split("T")[0];
 document.getElementById("p-today").classList.add("active");
+loadCapitalDashboard();
 loadSummary();
 loadExpenses();
 loadExtraProfit();

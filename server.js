@@ -4277,6 +4277,498 @@ app.get(`${BASE}/api/reports/hourly`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+// ── API: Capital, Debt Ratio, Gold/USD Assets & Growth Scale ──────────────────
+function deriveGoldKaratRates(gold21) {
+  const g21 = Math.max(0, parseFloat(gold21) || 0);
+  return {
+    gold_21: r2(g21),
+    gold_24: r2(g21 * 24 / 21),
+    gold_18: r2(g21 * 18 / 21),
+    gold_pound: r2(g21 * 8),
+  };
+}
+
+async function ensureCapitalTables() {
+  await posDb.query(`CREATE TABLE IF NOT EXISTS company_assets (
+    id SERIAL PRIMARY KEY,
+    asset_type TEXT NOT NULL,
+    karat INTEGER DEFAULT 21,
+    weight_grams NUMERIC DEFAULT 0,
+    usd_amount NUMERIC DEFAULT 0,
+    purchase_total_egp NUMERIC NOT NULL DEFAULT 0,
+    notes TEXT,
+    purchase_date TEXT DEFAULT (CURRENT_DATE::text),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => {});
+  await posDb.query(`CREATE TABLE IF NOT EXISTS capital_snapshots (
+    snapshot_date TEXT PRIMARY KEY,
+    inventory_cost NUMERIC DEFAULT 0,
+    inventory_retail NUMERIC DEFAULT 0,
+    warehouse_cost NUMERIC DEFAULT 0,
+    warehouse_retail NUMERIC DEFAULT 0,
+    customer_debts NUMERIC DEFAULT 0,
+    assets_value_egp NUMERIC DEFAULT 0,
+    assets_cost_egp NUMERIC DEFAULT 0,
+    total_capital_egp NUMERIC DEFAULT 0,
+    gold_21_rate NUMERIC DEFAULT 0,
+    usd_egp_rate NUMERIC DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => {});
+}
+
+async function fetchLiveEgyptRates() {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 3500);
+  try {
+    const [erRes, auRes] = await Promise.all([
+      fetch('https://open.er-api.com/v6/latest/USD', { signal: ctrl.signal }),
+      fetch('https://data-asg.goldprice.org/dbXRates/USD', { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } })
+    ]);
+    const erJson = erRes.ok ? await erRes.json() : null;
+    const auJson = auRes.ok ? await auRes.json() : null;
+    const usdEgp = parseFloat(erJson?.rates?.EGP || 0);
+    const xauUsd = parseFloat(auJson?.items?.[0]?.xauPrice || 0);
+    const gold21 = (usdEgp > 0 && xauUsd > 0) ? r2(((xauUsd / 31.1034768) * usdEgp) * (21 / 24)) : 0;
+    return { ok: usdEgp > 0 || gold21 > 0, usd_egp: usdEgp > 0 ? r2(usdEgp) : 0, gold_21_egp: gold21 };
+  } catch (_) {
+    return { ok: false, usd_egp: 0, gold_21_egp: 0 };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function getOrRefreshCapitalRates(forceRefresh = false) {
+  let saved = { mode: 'auto', gold_21_egp: 3750, usd_egp: 50, updated_at: null, source: 'افتراضي' };
+  try {
+    const { rows: [row] } = await posDb.query("SELECT value FROM store_settings WHERE key='capital_market_rates'");
+    if (row?.value) saved = { ...saved, ...JSON.parse(row.value) };
+  } catch (_) {}
+
+  const ageMs = saved.updated_at ? (Date.now() - new Date(saved.updated_at).getTime()) : Infinity;
+  const shouldFetch = forceRefresh || (saved.mode !== 'manual' && ageMs > 30 * 60 * 1000);
+  if (shouldFetch) {
+    const live = await fetchLiveEgyptRates();
+    if (live.ok) {
+      if (live.usd_egp > 0) saved.usd_egp = live.usd_egp;
+      if (live.gold_21_egp > 0) saved.gold_21_egp = live.gold_21_egp;
+      saved.mode = forceRefresh ? 'auto' : (saved.mode || 'auto');
+      saved.source = 'تحديث تلقائي عالمي';
+      saved.updated_at = new Date().toISOString();
+      await posDb.query(
+        `INSERT INTO store_settings (key, value) VALUES ('capital_market_rates', $1)
+         ON CONFLICT (key) DO UPDATE SET value=$1`,
+        [JSON.stringify(saved)]
+      ).catch(() => {});
+    }
+  }
+  return saved;
+}
+
+function sumProductVariantValuation(prod) {
+  const qty = Math.max(0, parseInt(prod.quantity || 0, 10));
+  const baseCost = parseFloat(prod.purchase_price || 0);
+  const baseSale = parseFloat(prod.sale_price || 0);
+  if (!prod.checkbox_values) {
+    return { cost: qty * baseCost, retail: qty * baseSale };
+  }
+  try {
+    const cbv = typeof prod.checkbox_values === 'string' ? JSON.parse(prod.checkbox_values) : prod.checkbox_values;
+    let optQtySum = 0, optCostSum = 0, optSaleSum = 0, hasOptStock = false;
+    const visit = obj => {
+      if (!obj || typeof obj !== 'object') return;
+      for (const v of Object.values(obj)) {
+        if (!v || typeof v !== 'object') continue;
+        if (v.stock != null) {
+          hasOptStock = true;
+          const s = Math.max(0, parseInt(v.stock || 0, 10));
+          const c = (v.cost_price != null && parseFloat(v.cost_price) > 0) ? parseFloat(v.cost_price) : baseCost;
+          const p = (v.sale_price != null && parseFloat(v.sale_price) > 0) ? parseFloat(v.sale_price) : baseSale;
+          optQtySum += s; optCostSum += s * c; optSaleSum += s * p;
+        } else {
+          visit(v);
+        }
+      }
+    };
+    visit(cbv);
+    if (hasOptStock && optQtySum > 0) return { cost: optCostSum, retail: optSaleSum };
+  } catch (_) {}
+  return { cost: qty * baseCost, retail: qty * baseSale };
+}
+
+async function computeCapitalSummary(forceRefresh = false) {
+  await ensureCapitalTables();
+  const rates = await getOrRefreshCapitalRates(forceRefresh);
+  const karats = deriveGoldKaratRates(rates.gold_21_egp);
+  const usdRate = Math.max(0, parseFloat(rates.usd_egp || 0));
+
+  // 1. Shop inventory valuation
+  const { rows: prods } = await posDb.query(
+    'SELECT id, quantity, purchase_price, sale_price, checkbox_values FROM products WHERE quantity > 0'
+  ).catch(() => ({ rows: [] }));
+  let inventoryCost = 0, inventoryRetail = 0;
+  for (const p of prods) {
+    const v = sumProductVariantValuation(p);
+    inventoryCost += v.cost;
+    inventoryRetail += v.retail;
+  }
+
+  // 2. Warehouse valuation (batches first, fallback to warehouse_items)
+  const { rows: whItems } = await posDb.query(
+    'SELECT id, quantity, cost_price, sale_price FROM warehouse_items'
+  ).catch(() => ({ rows: [] }));
+  const { rows: whBatches } = await posDb.query(
+    `SELECT warehouse_item_id, COALESCE(SUM(quantity),0) AS qty,
+            COALESCE(SUM(quantity * COALESCE(cost_price,0)),0) AS cost_sum
+     FROM warehouse_batches WHERE quantity > 0 GROUP BY warehouse_item_id`
+  ).catch(() => ({ rows: [] }));
+  const batchByItem = {};
+  for (const b of whBatches) batchByItem[b.warehouse_item_id] = b;
+
+  let warehouseCost = 0, warehouseRetail = 0;
+  for (const w of whItems) {
+    const b = batchByItem[w.id];
+    const sale = parseFloat(w.sale_price || 0);
+    if (b && parseInt(b.qty || 0, 10) > 0) {
+      const bq = parseInt(b.qty, 10);
+      warehouseCost += parseFloat(b.cost_sum || 0) > 0 ? parseFloat(b.cost_sum) : (bq * parseFloat(w.cost_price || 0));
+      warehouseRetail += bq * sale;
+    } else if (parseInt(w.quantity || 0, 10) > 0) {
+      const wq = parseInt(w.quantity, 10);
+      warehouseCost += wq * parseFloat(w.cost_price || 0);
+      warehouseRetail += wq * sale;
+    }
+  }
+
+  // 3. Customer debts
+  const { rows: [debtRow] } = await posDb.query(
+    `SELECT COALESCE(SUM(GREATEST(0, COALESCE(total_debt,0))),0) AS total_debt,
+            COUNT(*) FILTER (WHERE COALESCE(total_debt,0) > 0) AS debtors_count
+     FROM customers`
+  ).catch(() => ({ rows: [{ total_debt: 0, debtors_count: 0 }] }));
+  const customerDebts = r2(debtRow?.total_debt || 0);
+  const debtorsCount = parseInt(debtRow?.debtors_count || 0, 10);
+
+  // 4. Company assets (Gold by gram/karat + USD)
+  const { rows: assetsRaw } = await posDb.query(
+    'SELECT * FROM company_assets ORDER BY purchase_date DESC, id DESC'
+  ).catch(() => ({ rows: [] }));
+  let assetsValue = 0, assetsCost = 0, totalUsd = 0;
+  const goldByKarat = { 24: 0, 21: 0, 18: 0, 218: 0 };
+  const assets = assetsRaw.map(a => {
+    const cost = r2(a.purchase_total_egp);
+    let curVal = 0;
+    let unitRate = 0;
+    if (a.asset_type === 'gold') {
+      const k = parseInt(a.karat || 21, 10);
+      const grams = parseFloat(a.weight_grams || 0);
+      unitRate = k === 24 ? karats.gold_24 : (k === 18 ? karats.gold_18 : karats.gold_21);
+      curVal = r2(grams * unitRate);
+      if (goldByKarat[k] !== undefined) goldByKarat[k] = r2(goldByKarat[k] + grams);
+    } else if (a.asset_type === 'usd') {
+      const usd = parseFloat(a.usd_amount || 0);
+      unitRate = usdRate;
+      curVal = r2(usd * usdRate);
+      totalUsd = r2(totalUsd + usd);
+    }
+    const diff = r2(curVal - cost);
+    assetsValue += curVal;
+    assetsCost += cost;
+    return {
+      ...a,
+      karat: parseInt(a.karat || 21, 10),
+      weight_grams: parseFloat(a.weight_grams || 0),
+      usd_amount: parseFloat(a.usd_amount || 0),
+      purchase_total_egp: cost,
+      unit_rate_today: unitRate,
+      current_value_egp: curVal,
+      profit_loss_egp: diff,
+      profit_loss_pct: cost > 0 ? r2((diff / cost) * 100) : 0
+    };
+  });
+
+  inventoryCost = r2(inventoryCost);
+  inventoryRetail = r2(inventoryRetail);
+  warehouseCost = r2(warehouseCost);
+  warehouseRetail = r2(warehouseRetail);
+  assetsValue = r2(assetsValue);
+  assetsCost = r2(assetsCost);
+  const assetsGain = r2(assetsValue - assetsCost);
+
+  const totalCapitalCost = r2(inventoryCost + warehouseCost + customerDebts + assetsValue);
+  const totalCapitalRetail = r2(inventoryRetail + warehouseRetail + customerDebts + assetsValue);
+  const pct = part => totalCapitalCost > 0 ? r2((part / totalCapitalCost) * 100) : 0;
+
+  // Save today's snapshot
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  await posDb.query(
+    `INSERT INTO capital_snapshots
+       (snapshot_date, inventory_cost, inventory_retail, warehouse_cost, warehouse_retail,
+        customer_debts, assets_value_egp, assets_cost_egp, total_capital_egp, gold_21_rate, usd_egp_rate, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+     ON CONFLICT (snapshot_date) DO UPDATE SET
+       inventory_cost=$2, inventory_retail=$3, warehouse_cost=$4, warehouse_retail=$5,
+       customer_debts=$6, assets_value_egp=$7, assets_cost_egp=$8, total_capital_egp=$9,
+       gold_21_rate=$10, usd_egp_rate=$11, updated_at=NOW()`,
+    [todayStr, inventoryCost, inventoryRetail, warehouseCost, warehouseRetail,
+     customerDebts, assetsValue, assetsCost, totalCapitalCost, karats.gold_21, usdRate]
+  ).catch(() => {});
+
+  // 5. Monthly operating P&L + capital growth scale (last 6 months)
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const ym = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+    const label = dt.toLocaleDateString('ar-EG', { month: 'short', year: '2-digit' });
+    months.push({ ym, label, net_profit: 0, capital: 0 });
+  }
+  const ymSet = new Map(months.map(m => [m.ym, m]));
+
+  const [salesProfRows, salesDiscRows, retProfRows, expMonthRows, extraMonthRows, snapRows] = await Promise.all([
+    posDb.query(`
+      SELECT TO_CHAR(s.date::date, 'YYYY-MM') AS ym,
+             COALESCE(SUM(si.quantity * (si.unit_price - COALESCE(NULLIF(si.snapshot_purchase_price,0), p.purchase_price, 0))), 0) AS gross
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN products p ON p.id = si.product_id
+      WHERE s.date::date >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months')
+      GROUP BY 1
+    `).catch(() => ({ rows: [] })),
+    posDb.query(`
+      SELECT TO_CHAR(date::date, 'YYYY-MM') AS ym, COALESCE(SUM(discount_amount),0) AS disc
+      FROM sales
+      WHERE date::date >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months')
+      GROUP BY 1
+    `).catch(() => ({ rows: [] })),
+    posDb.query(`
+      SELECT TO_CHAR(s.date::date, 'YYYY-MM') AS ym,
+             COALESCE(SUM(ri.quantity * (ri.unit_price - COALESCE(NULLIF(si.snapshot_purchase_price,0), p.purchase_price, 0))), 0) AS ret_prof
+      FROM return_items ri
+      JOIN returns r ON r.id = ri.return_id
+      JOIN sales s ON s.id = r.sale_id
+      LEFT JOIN sale_items si ON si.id = ri.sale_item_id
+      LEFT JOIN products p ON p.id = COALESCE(ri.product_id, si.product_id)
+      WHERE s.date::date >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months')
+      GROUP BY 1
+    `).catch(() => ({ rows: [] })),
+    posDb.query(`
+      SELECT TO_CHAR(date::date, 'YYYY-MM') AS ym, COALESCE(SUM(amount),0) AS exp
+      FROM expenses
+      WHERE date::date >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months')
+        AND (title NOT LIKE 'مردود #%' OR title IS NULL)
+      GROUP BY 1
+    `).catch(() => ({ rows: [] })),
+    posDb.query(`
+      SELECT TO_CHAR(date::date, 'YYYY-MM') AS ym, COALESCE(SUM(amount),0) AS extra
+      FROM extra_profits
+      WHERE date::date >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months')
+      GROUP BY 1
+    `).catch(() => ({ rows: [] })),
+    posDb.query(`SELECT snapshot_date, total_capital_egp FROM capital_snapshots WHERE snapshot_date >= (CURRENT_DATE - INTERVAL '90 days')::text ORDER BY snapshot_date ASC`).catch(() => ({ rows: [] }))
+  ]);
+
+  for (const row of salesProfRows.rows) if (ymSet.has(row.ym)) ymSet.get(row.ym).net_profit += parseFloat(row.gross || 0);
+  for (const row of salesDiscRows.rows) if (ymSet.has(row.ym)) ymSet.get(row.ym).net_profit -= parseFloat(row.disc || 0);
+  for (const row of retProfRows.rows)   if (ymSet.has(row.ym)) ymSet.get(row.ym).net_profit -= parseFloat(row.ret_prof || 0);
+  for (const row of expMonthRows.rows)  if (ymSet.has(row.ym)) ymSet.get(row.ym).net_profit -= parseFloat(row.exp || 0);
+  for (const row of extraMonthRows.rows) if (ymSet.has(row.ym)) ymSet.get(row.ym).net_profit += parseFloat(row.extra || 0);
+
+  // Map latest snapshot per month if available, otherwise walk backwards from current total capital
+  const snapByMonth = {};
+  for (const s of snapRows.rows) {
+    snapByMonth[String(s.snapshot_date).slice(0, 7)] = parseFloat(s.total_capital_egp || 0);
+  }
+  months[months.length - 1].capital = totalCapitalCost;
+  for (let i = months.length - 2; i >= 0; i--) {
+    const next = months[i + 1];
+    months[i].net_profit = r2(months[i].net_profit);
+    if (snapByMonth[months[i].ym]) {
+      months[i].capital = r2(snapByMonth[months[i].ym]);
+    } else {
+      const stripAssetsGain = (i === months.length - 2) ? assetsGain : 0;
+      months[i].capital = r2(Math.max(0, next.capital - next.net_profit - stripAssetsGain));
+    }
+  }
+  months[months.length - 1].net_profit = r2(months[months.length - 1].net_profit);
+
+  const curMonth = months[months.length - 1];
+  const prevMonth = months[months.length - 2];
+  const monthlyChangeEgp = r2(curMonth.capital - prevMonth.capital);
+  const monthlyGrowthPct = prevMonth.capital > 0 ? r2((monthlyChangeEgp / prevMonth.capital) * 100) : 0;
+  const startCap = months[0].capital;
+  const sixMonthChangeEgp = r2(curMonth.capital - startCap);
+  const sixMonthGrowthPct = startCap > 0 ? r2((sixMonthChangeEgp / startCap) * 100) : 0;
+
+  let status = 'stable';
+  if (monthlyChangeEgp > 100 || curMonth.net_profit > 100) status = 'growing';
+  else if (monthlyChangeEgp < -100) status = 'shrinking';
+
+  return {
+    total_capital_cost: totalCapitalCost,
+    total_capital_retail: totalCapitalRetail,
+    breakdown: {
+      inventory_cost: inventoryCost,
+      inventory_retail: inventoryRetail,
+      inventory_pct: pct(inventoryCost),
+      warehouse_cost: warehouseCost,
+      warehouse_retail: warehouseRetail,
+      warehouse_pct: pct(warehouseCost),
+      customer_debts: customerDebts,
+      debtors_count: debtorsCount,
+      debts_pct: pct(customerDebts),
+      assets_value: assetsValue,
+      assets_cost: assetsCost,
+      assets_gain: assetsGain,
+      assets_pct: pct(assetsValue),
+    },
+    rates: {
+      mode: rates.mode || 'auto',
+      source: rates.source || 'افتراضي',
+      updated_at: rates.updated_at,
+      usd_egp: usdRate,
+      ...karats,
+    },
+    assets_summary: {
+      total_usd: totalUsd,
+      gold_grams_24: goldByKarat[24],
+      gold_grams_21: goldByKarat[21],
+      gold_grams_18: goldByKarat[18],
+      gold_grams_pound: goldByKarat[218],
+    },
+    assets,
+    growth_series: months,
+    snapshots: snapRows.rows,
+    scale_metrics: {
+      status,
+      current_month_profit: curMonth.net_profit,
+      prev_month_profit: prevMonth.net_profit,
+      assets_gain_egp: assetsGain,
+      monthly_change_egp: monthlyChangeEgp,
+      monthly_growth_pct: monthlyGrowthPct,
+      six_month_change_egp: sixMonthChangeEgp,
+      six_month_growth_pct: sixMonthGrowthPct,
+    }
+  };
+}
+
+app.get(`${BASE}/api/accounting/capital`, async (req, res) => {
+  if (req.session?.user_id && !hasPerm(req, 'accounting')) {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  try {
+    const data = await computeCapitalSummary(req.query.refresh_rates === '1');
+    res.json(data);
+  } catch (err) {
+    console.error('[GET /api/accounting/capital Error]:', err);
+    res.status(500).json({ error: 'خطأ داخلي في حساب رأس المال' });
+  }
+});
+
+app.post(`${BASE}/api/accounting/capital/rates`, async (req, res) => {
+  if (req.session?.user_id && !hasPerm(req, 'accounting')) {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  try {
+    await ensureCapitalTables();
+    const { mode, gold_21_egp, usd_egp } = req.body || {};
+    if (mode === 'auto') {
+      const live = await fetchLiveEgyptRates();
+      let prev = { gold_21_egp: 3750, usd_egp: 50 };
+      try {
+        const { rows: [r] } = await posDb.query("SELECT value FROM store_settings WHERE key='capital_market_rates'");
+        if (r?.value) prev = { ...prev, ...JSON.parse(r.value) };
+      } catch (_) {}
+      const next = {
+        mode: 'auto',
+        gold_21_egp: live.gold_21_egp > 0 ? live.gold_21_egp : prev.gold_21_egp,
+        usd_egp: live.usd_egp > 0 ? live.usd_egp : prev.usd_egp,
+        source: live.ok ? 'تحديث تلقائي عالمي' : 'آخر سعر محفوظ (تعذر الجلب التلقائي)',
+        updated_at: new Date().toISOString()
+      };
+      await posDb.query(
+        `INSERT INTO store_settings (key, value) VALUES ('capital_market_rates', $1)
+         ON CONFLICT (key) DO UPDATE SET value=$1`,
+        [JSON.stringify(next)]
+      );
+      return res.json({ ok: true, live_fetched: live.ok, rates: { ...next, ...deriveGoldKaratRates(next.gold_21_egp) } });
+    }
+    const g21 = parseFloat(gold_21_egp);
+    const usd = parseFloat(usd_egp);
+    if (isNaN(g21) || g21 <= 0 || isNaN(usd) || usd <= 0) {
+      return res.status(400).json({ error: 'أدخل سعر صحيح للدهب عيار 21 والدولار أكبر من صفر' });
+    }
+    const next = {
+      mode: 'manual',
+      gold_21_egp: r2(g21),
+      usd_egp: r2(usd),
+      source: 'تعديل يدوي',
+      updated_at: new Date().toISOString()
+    };
+    await posDb.query(
+      `INSERT INTO store_settings (key, value) VALUES ('capital_market_rates', $1)
+       ON CONFLICT (key) DO UPDATE SET value=$1`,
+      [JSON.stringify(next)]
+    );
+    res.json({ ok: true, rates: { ...next, ...deriveGoldKaratRates(next.gold_21_egp) } });
+  } catch (err) {
+    console.error('[POST /api/accounting/capital/rates Error]:', err);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
+});
+
+app.post(`${BASE}/api/accounting/capital/assets`, async (req, res) => {
+  if (req.session?.user_id && !hasPerm(req, 'accounting')) {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  try {
+    await ensureCapitalTables();
+    const { asset_type, karat, weight_grams, usd_amount, purchase_total_egp, purchase_date, notes } = req.body || {};
+    if (!['gold', 'usd'].includes(asset_type)) {
+      return res.status(400).json({ error: 'نوع الأصل لازم يكون دهب أو دولار' });
+    }
+    const cost = parseFloat(purchase_total_egp);
+    if (isNaN(cost) || cost < 0) {
+      return res.status(400).json({ error: 'أدخل تكلفة شراء صحيحة بالجنيه' });
+    }
+    let k = 21, grams = 0, usd = 0;
+    if (asset_type === 'gold') {
+      k = parseInt(karat || 21, 10);
+      if (![24, 21, 18, 218].includes(k)) k = 21;
+      grams = parseFloat(weight_grams || 0);
+      if (isNaN(grams) || grams <= 0) return res.status(400).json({ error: 'أدخل وزن الدهب بالجرام أكبر من صفر' });
+    } else {
+      usd = parseFloat(usd_amount || 0);
+      if (isNaN(usd) || usd <= 0) return res.status(400).json({ error: 'أدخل المبلغ بالدولار أكبر من صفر' });
+    }
+    const pDate = (purchase_date && /^\d{4}-\d{2}-\d{2}$/.test(purchase_date))
+      ? purchase_date
+      : new Date().toISOString().slice(0, 10);
+    const { rows: [inserted] } = await posDb.query(
+      `INSERT INTO company_assets (asset_type, karat, weight_grams, usd_amount, purchase_total_egp, notes, purchase_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [asset_type, k, grams, usd, r2(cost), (notes || '').trim(), pDate]
+    );
+    res.status(201).json({ ok: true, asset: inserted });
+  } catch (err) {
+    console.error('[POST /api/accounting/capital/assets Error]:', err);
+    res.status(500).json({ error: 'خطأ داخلي في حفظ الأصل' });
+  }
+});
+
+app.delete(`${BASE}/api/accounting/capital/assets/:id`, async (req, res) => {
+  if (req.session?.user_id && !hasPerm(req, 'accounting')) {
+    return res.status(403).json({ error: 'غير مصرح' });
+  }
+  try {
+    await ensureCapitalTables();
+    const id = parseInt(req.params.id, 10);
+    await posDb.query('DELETE FROM company_assets WHERE id=$1', [id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
+});
+
 // ── API: Daily Comprehensive Report (التقرير الإداري والمالي اليومي الشامل) ───
 app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
   if (req.session?.user_id && !isMgr(req) && !hasPerm(req, 'accounting') && !hasPerm(req, 'reports')) {
