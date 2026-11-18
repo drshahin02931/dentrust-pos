@@ -1971,6 +1971,14 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
         const earnedPoints = Math.floor(total / 100) * multiplier;
         if (earnedPoints > 0) {
           await client.query('UPDATE customers SET points_balance = COALESCE(points_balance, 0) + $1 WHERE id=$2', [earnedPoints, customerId]);
+          // نسجّل النقط على الفاتورة نفسها (عشان لو اتحولت لآجل نعرف نشيلها بالظبط)
+          await client.query('SAVEPOINT sp_sale_pts');
+          try {
+            await client.query('UPDATE sales SET points_earned=$1 WHERE id=$2', [earnedPoints, saleId]);
+            await client.query('RELEASE SAVEPOINT sp_sale_pts');
+          } catch (_spErr) {
+            await client.query('ROLLBACK TO SAVEPOINT sp_sale_pts');
+          }
         }
       } catch (ptsErr) {
         console.error('[Error updating POS loyalty points]:', ptsErr.message);
@@ -2092,6 +2100,106 @@ app.post(`${BASE}/api/sales/:sid/mark-credit-paid`, async (req, res) => {
       remaining: Math.max(0, origDebt - newPaid)
     });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
+});
+
+// ── تحويل فاتورة من كاش/إنستاباي إلى آجل (كامل أو جزئي) ─────────────────────
+app.post(`${BASE}/api/sales/:sid/convert-to-credit`, async (req, res) => {
+  if (!hasPerm(req, 'convert_to_credit')) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const sid = parseInt(req.params.sid, 10);
+  const d = req.body || {};
+  const dryRun = d.dry_run === true || d.dry_run === 'true';
+  const round2 = n => Math.round(n * 100) / 100;
+  const client = await posDb.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [sale] } = await client.query('SELECT * FROM sales WHERE id=$1 FOR UPDATE', [sid]);
+    if (!sale) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'الفاتورة غير موجودة' }); }
+
+    const method = String(sale.payment_method || '').toLowerCase();
+    if (!['cash', 'naqdi', 'instapay'].includes(method)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'التحويل لآجل متاح للفواتير الكاش أو الإنستاباي فقط' });
+    }
+    if (!sale.customer_id) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'الفاتورة غير مربوطة بعميل. اربطها بالدكتور الأول من زرار "تعديل العميل" وبعدين حوّلها لآجل' });
+    }
+    const { rows: [rr] } = await client.query('SELECT COALESCE(SUM(total_refund),0) AS t FROM returns WHERE sale_id=$1', [sid]);
+    if (parseFloat(rr?.t || 0) > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'الفاتورة عليها مردود، مينفعش تتحول لآجل. اعمل التسوية على حساب العميل يدوي' });
+    }
+
+    const total = parseFloat(sale.total_amount || 0);
+    let paid = parseFloat(d.paid_amount || 0);
+    if (isNaN(paid) || paid < 0) paid = 0;
+    if (paid >= total - 0.001) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'المبلغ المدفوع يساوي إجمالي الفاتورة أو أكبر منه، مفيش حاجة تتحول لآجل' });
+    }
+    paid = round2(paid);
+    const debt = round2(total - paid);
+
+    const { rows: [cust] } = await client.query('SELECT id, name, is_vip, points_balance, total_debt FROM customers WHERE id=$1 FOR UPDATE', [sale.customer_id]);
+    if (!cust) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'العميل غير موجود' }); }
+
+    // النقط اللي الدكتور خدها على الفاتورة دي
+    let pts = sale.points_earned;
+    if (pts === null || pts === undefined) {
+      pts = Math.floor(total / 100) * (cust.is_vip ? 5 : 1);
+    }
+    pts = Math.max(0, parseInt(pts, 10) || 0);
+    const curPts = Math.max(0, parseInt(cust.points_balance || 0, 10));
+    const ptsToRemove = Math.min(pts, curPts); // يقف عند صفر ومينزلش بالسالب
+
+    if (dryRun) {
+      await client.query('ROLLBACK');
+      return res.json({
+        ok: true, dry_run: true, total, customer_name: cust.name,
+        current_debt: parseFloat(cust.total_debt || 0),
+        points_earned: pts, points_to_remove: ptsToRemove, points_balance: curPts
+      });
+    }
+
+    const paidKey = method === 'instapay' ? 'instapay' : 'cash';
+    const splitJson = paid > 0 ? JSON.stringify({ cash: paidKey === 'cash' ? paid : 0, instapay: paidKey === 'instapay' ? paid : 0 }) : null;
+
+    await client.query(
+      `UPDATE sales SET payment_method='credit', amount_received=$1, change_due=0, payment_split=$2 WHERE id=$3`,
+      [paid, splitJson, sid]
+    );
+    await safeUpdateSaleCreditStatus(client, sid, 0, false);
+    await client.query('UPDATE customers SET total_debt = COALESCE(total_debt,0) + $1 WHERE id=$2', [debt, cust.id]);
+
+    if (ptsToRemove > 0) {
+      await client.query('UPDATE customers SET points_balance = GREATEST(0, COALESCE(points_balance,0) - $1) WHERE id=$2', [ptsToRemove, cust.id]);
+    }
+    await client.query('SAVEPOINT sp_conv_pts');
+    try {
+      await client.query('UPDATE sales SET points_earned=0 WHERE id=$1', [sid]);
+      await client.query('RELEASE SAVEPOINT sp_conv_pts');
+    } catch (_e) { await client.query('ROLLBACK TO SAVEPOINT sp_conv_pts'); }
+
+    const who = req.session?.username || 'المدير';
+    const details = `تحويل فاتورة #${sid} من ${method === 'instapay' ? 'إنستاباي' : 'كاش'} إلى آجل — إجمالي ${total} ج، مدفوع ${paid} ج، آجل ${debt} ج، نقط اتشالت ${ptsToRemove}`;
+    await client.query('SAVEPOINT sp_conv_audit');
+    try {
+      await client.query(
+        `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+         VALUES ($1, $2, $3, 'convert_to_credit', $4, $5, $6)`,
+        [cust.id, '', cust.name || '', details, '', who]
+      );
+      await client.query('RELEASE SAVEPOINT sp_conv_audit');
+    } catch (_e) { await client.query('ROLLBACK TO SAVEPOINT sp_conv_audit'); }
+
+    await client.query('COMMIT');
+    console.log(`[convert-to-credit] ${details} (by ${who})`);
+    res.json({ ok: true, debt_added: debt, paid_now: paid, points_removed: ptsToRemove });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[convert-to-credit Error]:', err);
+    res.status(500).json({ error: 'خطأ داخلي أثناء التحويل: ' + (err.message || '') });
+  } finally { client.release(); }
 });
 
 app.delete(`${BASE}/api/sales/:sid`, async (req, res) => {
@@ -7000,6 +7108,7 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
         const onlineEarnedPoints = Math.floor(total / 100) * multiplier;
         if (onlineEarnedPoints > 0) {
           await posDb.query('UPDATE customers SET points_balance = COALESCE(points_balance, 0) + $1 WHERE id=$2', [onlineEarnedPoints, customerId]);
+          await posDb.query('UPDATE sales SET points_earned=$1 WHERE id=$2', [onlineEarnedPoints, saleId]).catch(() => {});
         }
       } catch (ptsErr) {
         console.error('[Error updating online points]:', ptsErr.message);

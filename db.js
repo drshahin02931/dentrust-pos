@@ -377,6 +377,7 @@ const MIGRATIONS = [
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS promo_code TEXT",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS delivery_type TEXT DEFAULT 'pickup'",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS clinic_address TEXT",
+  "ALTER TABLE sales ADD COLUMN IF NOT EXISTS points_earned INTEGER",
   `CREATE TABLE IF NOT EXISTS customer_audit_logs (
     id SERIAL PRIMARY KEY,
     customer_id INTEGER,

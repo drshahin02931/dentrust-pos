@@ -434,6 +434,7 @@ async function viewInvoice(id) {
     <button onclick="printInv(${inv.id})" class="flex-1 bg-gray-100 text-gray-700 font-semibold py-2.5 rounded-xl hover:bg-gray-200">🖨️ طباعة</button>
     <button onclick="openEditCustomer(${inv.id},(inv.customer_name||''),(inv.customer_phone||''),(inv.customer_address||inv.customer_city||''))" class="flex-1 bg-purple-100 text-purple-700 font-semibold py-2.5 rounded-xl hover:bg-purple-200">✏️ تعديل العميل</button>
     ${IS_MGR ? `<button onclick="openEditPrices(${inv.id})" class="flex-1 bg-yellow-100 text-yellow-700 font-semibold py-2.5 rounded-xl hover:bg-yellow-200">💲 تعديل الأسعار</button>` : ''}
+    ${(IS_MGR && ['cash','naqdi','instapay'].includes(inv.payment_method) && !(parseFloat(inv.total_refunded||0) > 0)) ? `<button onclick="openConvertToCredit(${inv.id})" class="flex-1 bg-amber-500 text-white font-semibold py-2.5 rounded-xl hover:bg-amber-600">💳 تحويل لآجل</button>` : ''}
     <button onclick="closeDetail(); openAddItems(${inv.id})" class="flex-1 bg-green-600 text-white font-semibold py-2.5 rounded-xl hover:bg-green-700">➕ إضافة أصناف</button>
     ${canReturnThis ? `<button onclick="closeDetail(); openReturn(${inv.id})" class="flex-1 bg-orange-500 text-white font-semibold py-2.5 rounded-xl hover:bg-orange-600">↩️ استرجاع</button>` : ''}
     ${IS_MGR ? `<button onclick="closeDetail(); voidInvoice(${inv.id})" class="flex-1 bg-red-600 text-white font-semibold py-2.5 rounded-xl hover:bg-red-700">🗑 حذف نهائي</button>` : ''}
@@ -447,6 +448,84 @@ async function viewInvoice(id) {
 
 function closeDetail() { document.getElementById("detailModal").classList.add("hidden"); document.body.style.overflow = ""; }
 function printInv(id) { window.open(`${BASE}/invoice/${id}`, "_blank"); }
+
+// ── تحويل الفاتورة من كاش/إنستاباي إلى آجل ──────────────────────────────
+async function openConvertToCredit(id) {
+  let info;
+  try {
+    const r = await fetch(`${BASE}/api/sales/${id}/convert-to-credit`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paid_amount: 0, dry_run: true })
+    });
+    info = await r.json();
+    if (!r.ok || info.error) { alert('⚠️ ' + (info.error || 'تعذر تجهيز التحويل')); return; }
+  } catch (e) { alert('تعذر الاتصال بالسيرفر'); return; }
+
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const total = parseFloat(info.total || 0);
+  const ov = document.createElement('div');
+  ov.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4';
+  ov.innerHTML = `
+    <div dir="rtl" class="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 space-y-4">
+      <div class="flex items-center gap-3">
+        <div class="w-12 h-12 rounded-2xl bg-amber-100 flex items-center justify-center text-2xl">💳</div>
+        <div>
+          <h3 class="font-extrabold text-gray-900 text-base">تحويل الفاتورة #${String(id).padStart(5,'0')} إلى آجل</h3>
+          <p class="text-xs text-gray-500">العميل: <strong>${esc(info.customer_name)}</strong></p>
+        </div>
+      </div>
+      <div class="bg-gray-50 rounded-2xl p-3 text-sm space-y-1.5">
+        <div class="flex justify-between"><span class="text-gray-500">إجمالي الفاتورة</span><strong>${total.toFixed(2)} جنيه</strong></div>
+        <div class="flex justify-between"><span class="text-gray-500">مديونيته الحالية</span><strong>${parseFloat(info.current_debt||0).toFixed(2)} جنيه</strong></div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1">الدكتور دفع كام من الفاتورة؟ (سيبها 0 لو ماداش حاجة)</label>
+        <input id="cvPaid" type="number" min="0" max="${total}" step="0.01" value="0"
+          class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-base font-bold focus:outline-none focus:ring-2 focus:ring-amber-400">
+      </div>
+      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-sm space-y-1.5">
+        <div class="flex justify-between"><span class="text-amber-800">هيتحط عليه آجل</span><strong id="cvDebt" class="text-amber-800"></strong></div>
+        <div class="flex justify-between"><span class="text-amber-800">مديونيته بعد التحويل</span><strong id="cvNewDebt" class="text-amber-800"></strong></div>
+        <div class="flex justify-between"><span class="text-red-700">نقط هتتشال منه</span><strong class="text-red-700">${info.points_to_remove} نقطة</strong></div>
+        ${info.points_earned > info.points_to_remove ? `<div class="text-[11px] text-gray-500">(كان واخد ${info.points_earned} نقطة على الفاتورة، ورصيده الحالي ${info.points_balance} فهتتشال المتاح بس ويقف عند صفر)</div>` : ''}
+      </div>
+      <p id="cvErr" class="hidden text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2"></p>
+      <div class="space-y-2 pt-1">
+        <button id="cvOk" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-2xl text-sm">✅ تأكيد التحويل لآجل</button>
+        <button id="cvCancel" class="w-full text-gray-400 hover:text-gray-600 text-xs py-1">إلغاء</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+
+  const paidEl = ov.querySelector('#cvPaid');
+  const refresh = () => {
+    let p = parseFloat(paidEl.value || 0); if (isNaN(p) || p < 0) p = 0;
+    const debt = Math.max(0, total - p);
+    ov.querySelector('#cvDebt').textContent = debt.toFixed(2) + ' جنيه';
+    ov.querySelector('#cvNewDebt').textContent = (parseFloat(info.current_debt || 0) + debt).toFixed(2) + ' جنيه';
+  };
+  paidEl.addEventListener('input', refresh); refresh();
+  ov.querySelector('#cvCancel').onclick = () => ov.remove();
+
+  ov.querySelector('#cvOk').onclick = async () => {
+    const btn = ov.querySelector('#cvOk'); const errEl = ov.querySelector('#cvErr');
+    errEl.classList.add('hidden'); btn.disabled = true; btn.textContent = 'جاري التحويل...';
+    try {
+      const r = await fetch(`${BASE}/api/sales/${id}/convert-to-credit`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paid_amount: parseFloat(paidEl.value || 0) || 0 })
+      });
+      const data = await r.json();
+      if (!r.ok || data.error) throw new Error(data.error || 'فشل التحويل');
+      ov.remove(); closeDetail();
+      alert(`✅ تم التحويل لآجل.\nآجل على الدكتور: ${data.debt_added} جنيه\nمدفوع: ${data.paid_now} جنيه\nنقط اتشالت: ${data.points_removed}`);
+      await loadInvoices();
+    } catch (e) {
+      errEl.textContent = e.message; errEl.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = '✅ تأكيد التحويل لآجل';
+    }
+  };
+}
 
 async function voidInvoice(id) {
   const lang = typeof getCurrentLang === 'function' ? getCurrentLang() : 'ar';
