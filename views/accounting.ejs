@@ -114,19 +114,24 @@
           <span class="text-xs text-gray-400">جاري رسم الجراف...</span>
         </div>
 
-        <div class="grid grid-cols-3 gap-2.5 text-center">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
           <div class="bg-slate-50 border rounded-xl p-2.5">
             <div class="text-[11px] text-gray-500 font-medium">درجة النمو (الشهر)</div>
             <div id="scale-pct-val" class="text-lg font-black text-gray-800 mt-0.5">—</div>
             <div id="scale-egp-val" class="text-[11px] text-gray-500">—</div>
           </div>
           <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-2.5">
-            <div class="text-[11px] text-emerald-700 font-medium">من أرباح التشغيل</div>
-            <div id="scale-ops-profit" class="text-lg font-black text-emerald-700 mt-0.5">—</div>
-            <div class="text-[11px] text-emerald-600">صافي الشهر الحالي</div>
+            <div class="text-[11px] text-emerald-700 font-medium">🔄 50% ضخ لرأس المال</div>
+            <div id="scale-reinvest-val" class="text-lg font-black text-emerald-700 mt-0.5">—</div>
+            <div class="text-[11px] text-emerald-600">من صافي <span id="scale-ops-profit">—</span></div>
+          </div>
+          <div class="bg-purple-50 border border-purple-100 rounded-xl p-2.5">
+            <div class="text-[11px] text-purple-700 font-medium">🏦 50% سحب شخصي</div>
+            <div id="scale-owner-val" class="text-lg font-black text-purple-700 mt-0.5">—</div>
+            <div class="text-[11px] text-purple-600">حصتك الصافية الشهر ده</div>
           </div>
           <div class="bg-amber-50 border border-amber-100 rounded-xl p-2.5">
-            <div class="text-[11px] text-amber-800 font-medium">من ارتفاع الأصول</div>
+            <div class="text-[11px] text-amber-800 font-medium">🪙 من ارتفاع الأصول</div>
             <div id="scale-assets-gain" class="text-lg font-black text-amber-700 mt-0.5">—</div>
             <div class="text-[11px] text-amber-700">فرق سعر الدهب/$/العقار</div>
           </div>
@@ -289,6 +294,7 @@
       <div id="c-net-title" class="text-xs text-purple-600 font-medium mb-1">صافي الربح الفعلي</div>
       <div id="c-net" class="text-2xl font-black text-purple-700">—</div>
       <div id="c-net-note" class="text-[11px] text-purple-500 mt-1">= الربح المحقق − المصروفات</div>
+      <div id="c-net-split" class="text-[11px] font-bold text-purple-800 bg-purple-100/80 rounded-lg px-2 py-1 mt-1.5 hidden"></div>
     </div>
   </div>
 
@@ -550,6 +556,16 @@ function renderSummaryCards() {
   const netEl = document.getElementById("c-net");
   netEl.textContent = netVal.toFixed(2);
   netEl.className = `text-2xl font-black ${netVal >= 0 ? 'text-purple-700' : 'text-red-700'}`;
+  const splitEl = document.getElementById("c-net-split");
+  if (splitEl) {
+    if (netVal > 0) {
+      const half = (netVal * 0.5).toFixed(0);
+      splitEl.textContent = `🔄 50% لرأس المال: ${half} ج | 🏦 50% شخصي: ${half} ج`;
+      splitEl.classList.remove("hidden");
+    } else {
+      splitEl.classList.add("hidden");
+    }
+  }
 
   const breakdown = document.getElementById("payBreakdown");
   const pList = d.payment_breakdown || [];
@@ -831,7 +847,11 @@ function renderCapitalDashboard(d) {
   document.getElementById("scale-egp-val").textContent = `${mChg >= 0 ? "+" : ""}${fmtEgp(mChg)} ج عن الشهر السابق`;
 
   const opsP = parseFloat(sc.current_month_profit || 0);
+  const reinvP = parseFloat(sc.current_month_reinvested || 0);
+  const ownerP = parseFloat(sc.current_month_owner_share || 0);
   document.getElementById("scale-ops-profit").textContent = `${opsP >= 0 ? "+" : ""}${fmtEgp(opsP)} ج`;
+  document.getElementById("scale-reinvest-val").textContent = `${reinvP >= 0 ? "+" : ""}${fmtEgp(reinvP)} ج`;
+  document.getElementById("scale-owner-val").textContent = `${fmtEgp(ownerP)} ج`;
   document.getElementById("scale-assets-gain").textContent = `${aGain >= 0 ? "+" : ""}${fmtEgp(aGain)} ج`;
 
   // Rates box
@@ -922,8 +942,8 @@ function renderScaleChart() {
   const box = document.getElementById("scale-svg-container");
   if (!capitalDataCache) return;
   const raw = scaleChartView === "daily"
-    ? (capitalDataCache.snapshots || []).map(s => ({ label: String(s.snapshot_date).slice(5), val: parseFloat(s.total_capital_egp || 0), sub: null }))
-    : (capitalDataCache.growth_series || []).map(m => ({ label: m.label, val: parseFloat(m.capital || 0), sub: parseFloat(m.net_profit || 0) }));
+    ? (capitalDataCache.snapshots || []).map(s => ({ label: String(s.snapshot_date).slice(5), val: parseFloat(s.total_capital_egp || 0), sub: null, reinv: null }))
+    : (capitalDataCache.growth_series || []).map(m => ({ label: m.label, val: parseFloat(m.capital || 0), sub: parseFloat(m.net_profit || 0), reinv: parseFloat(m.reinvested_profit || 0) }));
 
   if (!raw.length) {
     box.innerHTML = '<span class="text-xs text-gray-400">لا توجد بيانات كافية للرسم بعد</span>';
@@ -960,7 +980,7 @@ function renderScaleChart() {
   const dots = pts.map(p => {
     const valLbl = p.val >= 1000 ? `${(p.val / 1000).toFixed(1)}k` : p.val.toFixed(0);
     return `<circle cx="${p.x}" cy="${p.y}" r="4.5" fill="#fff" stroke="${stroke}" stroke-width="2.5">
-              <title>${p.label}: ${fmtEgp(p.val)} ج${p.sub != null ? " | ربح التشغيل: " + fmtEgp(p.sub) + " ج" : ""}</title>
+              <title>${p.label}: ${fmtEgp(p.val)} ج${p.sub != null ? " | ربح التشغيل: " + fmtEgp(p.sub) + " ج | ضخ 50%: " + fmtEgp(p.reinv) + " ج" : ""}</title>
             </circle>
             <text x="${p.x}" y="${p.y - 10}" text-anchor="middle" font-size="10" font-weight="bold" fill="#0f172a">${valLbl}</text>
             <text x="${p.x}" y="${H - 12}" text-anchor="middle" font-size="10" fill="#475569">${escHtml(p.label)}</text>`;

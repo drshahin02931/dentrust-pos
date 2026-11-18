@@ -4587,22 +4587,26 @@ async function computeCapitalSummary(forceRefresh = false) {
   for (const row of extraMonthRows.rows) if (ymSet.has(row.ym)) ymSet.get(row.ym).net_profit += parseFloat(row.extra || 0);
 
   // Map latest snapshot per month if available, otherwise walk backwards from current total capital
+  // Applying the 50% reinvestment rule: 50% of positive monthly net profit stays in capital (goods or assets)
   const snapByMonth = {};
   for (const s of snapRows.rows) {
     snapByMonth[String(s.snapshot_date).slice(0, 7)] = parseFloat(s.total_capital_egp || 0);
   }
+  for (const m of months) {
+    m.net_profit = r2(m.net_profit);
+    m.reinvested_profit = m.net_profit > 0 ? r2(m.net_profit * 0.5) : m.net_profit;
+    m.owner_share = m.net_profit > 0 ? r2(m.net_profit * 0.5) : 0;
+  }
   months[months.length - 1].capital = totalCapitalCost;
   for (let i = months.length - 2; i >= 0; i--) {
     const next = months[i + 1];
-    months[i].net_profit = r2(months[i].net_profit);
     if (snapByMonth[months[i].ym]) {
       months[i].capital = r2(snapByMonth[months[i].ym]);
     } else {
       const stripAssetsGain = (i === months.length - 2) ? assetsGain : 0;
-      months[i].capital = r2(Math.max(0, next.capital - next.net_profit - stripAssetsGain));
+      months[i].capital = r2(Math.max(0, next.capital - next.reinvested_profit - stripAssetsGain));
     }
   }
-  months[months.length - 1].net_profit = r2(months[months.length - 1].net_profit);
 
   const curMonth = months[months.length - 1];
   const prevMonth = months[months.length - 2];
@@ -4613,7 +4617,7 @@ async function computeCapitalSummary(forceRefresh = false) {
   const sixMonthGrowthPct = startCap > 0 ? r2((sixMonthChangeEgp / startCap) * 100) : 0;
 
   let status = 'stable';
-  if (monthlyChangeEgp > 100 || curMonth.net_profit > 100) status = 'growing';
+  if (monthlyChangeEgp > 100 || curMonth.reinvested_profit > 100) status = 'growing';
   else if (monthlyChangeEgp < -100) status = 'shrinking';
 
   return {
@@ -4654,7 +4658,10 @@ async function computeCapitalSummary(forceRefresh = false) {
     snapshots: snapRows.rows,
     scale_metrics: {
       status,
+      reinvestment_rate_pct: 50,
       current_month_profit: curMonth.net_profit,
+      current_month_reinvested: curMonth.reinvested_profit,
+      current_month_owner_share: curMonth.owner_share,
       prev_month_profit: prevMonth.net_profit,
       assets_gain_egp: assetsGain,
       monthly_change_egp: monthlyChangeEgp,
