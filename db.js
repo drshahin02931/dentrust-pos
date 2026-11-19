@@ -383,6 +383,7 @@ const MIGRATIONS = [
   "ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS vodafone_fee NUMERIC DEFAULT 0",
   "ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS realized_profit NUMERIC",
   "ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0",
+  "ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0",
   `CREATE TABLE IF NOT EXISTS company_assets (
     id SERIAL PRIMARY KEY,
     asset_type TEXT NOT NULL,

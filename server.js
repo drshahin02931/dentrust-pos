@@ -245,7 +245,10 @@ app.get(`${BASE}/expiry`, (req, res) => {
   if (!hasPerm(req, 'expiry')) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'expiry');
 });
-app.get(`${BASE}/notifications`, (req, res) => { if (!req.session?.user_id) return res.redirect(`${BASE}/login`); return renderPage(req, res, 'notifications'); });
+app.get([`${BASE}/notifications`, `${BASE}/shortages`, '/notifications', '/shortages'], (req, res) => {
+  if (!req.session?.user_id) return res.redirect(`${BASE}/login`);
+  return renderPage(req, res, 'notifications', { pageTitle: 'النواقص' });
+});
 app.get(`${BASE}/warehouse`, (req, res) => {
   if (!isMgr(req)) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'warehouse');
@@ -906,14 +909,364 @@ app.delete(`${BASE}/api/products/categories/:name`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
-app.get(`${BASE}/api/products/low-stock`, async (req, res) => {
+function parseCbvSafe(cbv) {
+  if (!cbv) return null;
   try {
-    const { rows } = await posDb.query(
-      'SELECT id, product_name, quantity, min_stock, category FROM products WHERE min_stock > 0 AND quantity <= min_stock ORDER BY (quantity - min_stock) ASC'
-    );
-    res.json(rows);
-  } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
-});
+    const parsed = typeof cbv === 'string' ? JSON.parse(cbv) : cbv;
+    return (parsed && typeof parsed === 'object') ? JSON.parse(JSON.stringify(parsed)) : null;
+  } catch (_) { return null; }
+}
+
+function flattenCbvOptions(cbvRaw) {
+  const cbv = parseCbvSafe(cbvRaw);
+  if (!cbv) return [];
+  const list = [];
+  for (const [k, val] of Object.entries(cbv)) {
+    if (val && typeof val === 'object' && !('stock' in val) && !('checked' in val) && !('min_stock' in val) && !('cost_price' in val)) {
+      for (const [subK, subV] of Object.entries(val)) {
+        if (!subV || typeof subV !== 'object') continue;
+        list.push({
+          key: subK,
+          groupName: k,
+          rawKey: subK,
+          normKey: String(subK).trim().toLowerCase(),
+          stock: subV.stock != null ? Math.max(0, parseInt(subV.stock || 0, 10)) : 0,
+          min_stock: subV.min_stock != null ? Math.max(0, parseInt(subV.min_stock || 0, 10)) : 0,
+          cost_price: subV.cost_price != null ? parseFloat(subV.cost_price || 0) : null,
+          sale_price: subV.sale_price != null ? parseFloat(subV.sale_price || 0) : null,
+          disabled: !!subV.disabled,
+        });
+      }
+    } else if (val && typeof val === 'object') {
+      const sep = k.indexOf('::');
+      const grp = sep !== -1 ? k.slice(0, sep) : 'عام';
+      const rawK = sep !== -1 ? k.slice(sep + 2) : k;
+      list.push({
+        key: k,
+        groupName: grp,
+        rawKey: rawK,
+        normKey: String(rawK).trim().toLowerCase(),
+        stock: val.stock != null ? Math.max(0, parseInt(val.stock || 0, 10)) : 0,
+        min_stock: val.min_stock != null ? Math.max(0, parseInt(val.min_stock || 0, 10)) : 0,
+        cost_price: val.cost_price != null ? parseFloat(val.cost_price || 0) : null,
+        sale_price: val.sale_price != null ? parseFloat(val.sale_price || 0) : null,
+        disabled: !!val.disabled,
+      });
+    }
+  }
+  return list;
+}
+
+function extractCbvMetaMap(cbvRaw) {
+  const map = {};
+  for (const opt of flattenCbvOptions(cbvRaw)) {
+    const existing = map[opt.normKey] || {};
+    map[opt.normKey] = {
+      groupName: opt.groupName || existing.groupName || 'عام',
+      rawKey: opt.rawKey || existing.rawKey,
+      min_stock: opt.min_stock > 0 ? opt.min_stock : (existing.min_stock || 0),
+      cost_price: opt.cost_price != null && opt.cost_price > 0 ? opt.cost_price : (existing.cost_price || null),
+      sale_price: opt.sale_price != null && opt.sale_price > 0 ? opt.sale_price : (existing.sale_price || null),
+    };
+  }
+  return map;
+}
+
+function applyMetaToCbv(cbvRaw, metaMap = {}, overwriteMin = false) {
+  const cbv = parseCbvSafe(cbvRaw);
+  if (!cbv) return null;
+  for (const [k, val] of Object.entries(cbv)) {
+    if (val && typeof val === 'object' && !('stock' in val) && !('checked' in val) && !('min_stock' in val) && !('cost_price' in val)) {
+      for (const [subK, subV] of Object.entries(val)) {
+        if (!subV || typeof subV !== 'object') continue;
+        const m = metaMap[String(subK).trim().toLowerCase()];
+        if (!m) continue;
+        if (m.min_stock > 0 && (overwriteMin || !subV.min_stock || parseInt(subV.min_stock, 10) === 0)) subV.min_stock = m.min_stock;
+        if (m.cost_price != null && m.cost_price > 0 && (!subV.cost_price || parseFloat(subV.cost_price) === 0)) subV.cost_price = m.cost_price;
+        if (m.sale_price != null && m.sale_price > 0 && (!subV.sale_price || parseFloat(subV.sale_price) === 0)) subV.sale_price = m.sale_price;
+      }
+    } else if (val && typeof val === 'object') {
+      const sep = k.indexOf('::');
+      const rawK = sep !== -1 ? k.slice(sep + 2) : k;
+      const m = metaMap[String(rawK).trim().toLowerCase()];
+      if (!m) continue;
+      if (m.min_stock > 0 && (overwriteMin || !val.min_stock || parseInt(val.min_stock, 10) === 0)) val.min_stock = m.min_stock;
+      if (m.cost_price != null && m.cost_price > 0 && (!val.cost_price || parseFloat(val.cost_price) === 0)) val.cost_price = m.cost_price;
+      if (m.sale_price != null && m.sale_price > 0 && (!val.sale_price || parseFloat(val.sale_price) === 0)) val.sale_price = m.sale_price;
+    }
+  }
+  return cbv;
+}
+
+function mergeWhBatchCbv(batches, fallbackCbvRaw) {
+  const baseCbv = parseCbvSafe(fallbackCbvRaw);
+  const metaMap = extractCbvMetaMap(baseCbv);
+  let merged = null;
+  const hasAnyBatchCbv = (batches || []).some(b => !!parseCbvSafe(b.checkbox_values));
+
+  if (hasAnyBatchCbv) {
+    for (const b of batches) {
+      const bObj = parseCbvSafe(b.checkbox_values);
+      if (bObj) {
+        const bMeta = extractCbvMetaMap(bObj);
+        for (const [nk, bm] of Object.entries(bMeta)) {
+          if (!metaMap[nk] || bm.min_stock > 0) metaMap[nk] = { ...(metaMap[nk] || {}), ...bm, min_stock: bm.min_stock > 0 ? bm.min_stock : (metaMap[nk]?.min_stock || 0) };
+        }
+        if (!merged) {
+          merged = bObj;
+        } else {
+          for (const [k, v] of Object.entries(bObj)) {
+            if (v && typeof v === 'object' && !('stock' in v) && !('checked' in v) && !('min_stock' in v) && !('cost_price' in v)) {
+              if (!merged[k] || typeof merged[k] !== 'object') merged[k] = {};
+              for (const [subK, subV] of Object.entries(v)) {
+                if (!subV || typeof subV !== 'object') continue;
+                if (!merged[k][subK]) merged[k][subK] = { ...subV, stock: 0 };
+                merged[k][subK].stock = Math.max(0, parseInt(merged[k][subK].stock || 0, 10)) + Math.max(0, parseInt(subV.stock || 0, 10));
+                if (subV.min_stock > 0) merged[k][subK].min_stock = parseInt(subV.min_stock, 10);
+              }
+            } else if (v && typeof v === 'object') {
+              if (!merged[k]) merged[k] = { ...v, stock: 0 };
+              merged[k].stock = Math.max(0, parseInt(merged[k].stock || 0, 10)) + Math.max(0, parseInt(v.stock || 0, 10));
+              if (v.min_stock > 0) merged[k].min_stock = parseInt(v.min_stock, 10);
+            }
+          }
+        }
+      } else if (baseCbv) {
+        const keys = Object.keys(baseCbv);
+        if (keys.length > 0) {
+          if (!merged) merged = JSON.parse(JSON.stringify(baseCbv));
+          const fk = keys[0];
+          if (merged[fk] && typeof merged[fk] === 'object' && 'stock' in merged[fk]) {
+            merged[fk].stock = Math.max(0, parseInt(merged[fk].stock || 0, 10)) + Math.max(0, parseInt(b.quantity || 0, 10));
+          }
+        }
+      }
+    }
+    return applyMetaToCbv(merged, metaMap, false);
+  }
+  return baseCbv;
+}
+
+async function handleGetShortages(req, res) {
+  try {
+    await posDb.query('ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0').catch(() => {});
+
+    const [prodRes, whRes, whBatchAllRes, prodBatchRes] = await Promise.all([
+      posDb.query(`
+        SELECT id, barcode, product_name, quantity, COALESCE(min_stock, 0) AS min_stock,
+               COALESCE(category, 'عام') AS category, purchase_price, sale_price,
+               expiry_date, checkbox_values, variants
+        FROM products
+        ORDER BY product_name ASC
+      `),
+      posDb.query('SELECT * FROM warehouse_items ORDER BY id ASC').catch(() => ({ rows: [] })),
+      posDb.query('SELECT * FROM warehouse_batches ORDER BY id ASC').catch(() => ({ rows: [] })),
+      posDb.query('SELECT product_id, cost_price, expiry_date FROM product_cost_batches ORDER BY id DESC').catch(() => ({ rows: [] }))
+    ]);
+
+    const products = prodRes.rows || [];
+    const whItems = whRes.rows || [];
+    const allWhBatches = whBatchAllRes.rows || [];
+    const prodBatches = prodBatchRes.rows || [];
+
+    const whBatchesByItem = {};
+    for (const b of allWhBatches) {
+      if (!whBatchesByItem[b.warehouse_item_id]) whBatchesByItem[b.warehouse_item_id] = [];
+      whBatchesByItem[b.warehouse_item_id].push(b);
+    }
+    const latestProdBatchCost = {};
+    const latestProdBatchExp = {};
+    for (const pb of prodBatches) {
+      if (!latestProdBatchCost[pb.product_id] && parseFloat(pb.cost_price || 0) > 0) {
+        latestProdBatchCost[pb.product_id] = parseFloat(pb.cost_price);
+      }
+      const exp = pb.expiry_date ? String(pb.expiry_date).trim() : '';
+      if (!latestProdBatchExp[pb.product_id] && exp) {
+        latestProdBatchExp[pb.product_id] = exp;
+      }
+    }
+
+    const whByProdId = {};
+    const whByBarcode = {};
+    const whByName = {};
+    const matchedWhIds = new Set();
+
+    for (const w of whItems) {
+      const batchesForW = whBatchesByItem[w.id] || [];
+      const activeBatches = batchesForW.filter(b => parseInt(b.quantity || 0, 10) > 0);
+      w._allBatches = batchesForW;
+      w._activeBatches = activeBatches;
+      if (batchesForW.length > 0) {
+        w._effQty = activeBatches.reduce((s, b) => s + parseInt(b.quantity || 0, 10), 0);
+        const latestWithCost = [...batchesForW].reverse().find(b => parseFloat(b.cost_price || 0) > 0);
+        w._effCost = latestWithCost ? parseFloat(latestWithCost.cost_price) : parseFloat(w.cost_price || 0);
+        w._effCbv = activeBatches.length > 0 ? mergeWhBatchCbv(activeBatches, w.checkbox_values) : applyMetaToCbv(parseCbvSafe(w.checkbox_values), extractCbvMetaMap(w.checkbox_values), false);
+      } else {
+        w._effQty = Math.max(0, parseInt(w.quantity || 0, 10));
+        w._effCost = parseFloat(w.cost_price || 0);
+        w._effCbv = parseCbvSafe(w.checkbox_values);
+      }
+      if (w.product_id) whByProdId[w.product_id] = w;
+      if (w.barcode && String(w.barcode).trim()) whByBarcode[String(w.barcode).trim()] = w;
+      if (w.product_name) whByName[String(w.product_name).trim().toLowerCase()] = w;
+    }
+
+    const buildEntry = (p, w) => {
+      if (w) matchedWhIds.add(w.id);
+
+      const shopQty = p ? Math.max(0, parseInt(p.quantity || 0, 10)) : 0;
+      const shopMin = p ? Math.max(0, parseInt(p.min_stock || 0, 10)) : 0;
+      const whQty = w ? Math.max(0, parseInt(w._effQty || 0, 10)) : 0;
+      const whMin = w ? Math.max(0, parseInt(w.min_stock || 0, 10)) : 0;
+
+      // Last expiry date ONLY if present on product or batches
+      const pExp = (p && p.expiry_date && String(p.expiry_date).trim()) ? String(p.expiry_date).trim() : null;
+      const pbExp = p ? (latestProdBatchExp[p.id] || null) : null;
+      const whBatchExp = w ? ([...(w._allBatches || [])].reverse().find(b => b.expiry_date && String(b.expiry_date).trim())?.expiry_date || null) : null;
+      const wExp = (w && w.expiry_date && String(w.expiry_date).trim()) ? String(w.expiry_date).trim() : null;
+      const lastExpiryDate = pExp || pbExp || whBatchExp || wExp || null;
+
+      // Last purchase price priority: latest warehouse batch cost -> warehouse item cost -> latest shop batch cost -> product purchase_price
+      const lastPurchasePrice =
+        (w && parseFloat(w._effCost || 0) > 0 ? parseFloat(w._effCost) : 0) ||
+        (w && parseFloat(w.cost_price || 0) > 0 ? parseFloat(w.cost_price) : 0) ||
+        (p && latestProdBatchCost[p.id] ? latestProdBatchCost[p.id] : 0) ||
+        (p && parseFloat(p.purchase_price || 0) > 0 ? parseFloat(p.purchase_price) : 0) || 0;
+
+      // Per-variant analysis
+      const shopOpts = p ? flattenCbvOptions(p.checkbox_values) : [];
+      const whOpts = w ? flattenCbvOptions(w._effCbv) : [];
+      const hasVariants = shopOpts.length > 0 || whOpts.length > 0;
+
+      const variantsMap = new Map();
+      for (const sOpt of shopOpts) {
+        variantsMap.set(sOpt.normKey, {
+          key: sOpt.key,
+          raw_key: sOpt.rawKey,
+          group_name: sOpt.groupName,
+          shop_qty: sOpt.stock,
+          shop_min: sOpt.min_stock,
+          wh_qty: 0,
+          wh_min: 0,
+          cost_price: sOpt.cost_price || null,
+        });
+      }
+      for (const wOpt of whOpts) {
+        const cur = variantsMap.get(wOpt.normKey) || {
+          key: wOpt.key,
+          raw_key: wOpt.rawKey,
+          group_name: wOpt.groupName,
+          shop_qty: 0,
+          shop_min: 0,
+          wh_qty: 0,
+          wh_min: 0,
+          cost_price: null,
+        };
+        cur.wh_qty += wOpt.stock;
+        if (wOpt.min_stock > 0) cur.wh_min = wOpt.min_stock;
+        if (!cur.raw_key) cur.raw_key = wOpt.rawKey;
+        if (cur.group_name === 'عام' && wOpt.groupName !== 'عام') cur.group_name = wOpt.groupName;
+        if (!cur.cost_price && wOpt.cost_price) cur.cost_price = wOpt.cost_price;
+        variantsMap.set(wOpt.normKey, cur);
+      }
+
+      const variantsDetail = Array.from(variantsMap.values()).map(v => {
+        const effectiveMin = v.shop_min > 0 ? v.shop_min : (v.wh_min > 0 ? v.wh_min : 0);
+        const isVShopShort = p ? ((v.shop_qty <= 0) || (effectiveMin > 0 && v.shop_qty <= effectiveMin)) : false;
+        const isVWhShort = w ? ((v.wh_min > 0 && v.wh_qty <= v.wh_min) || (isVShopShort && v.wh_qty <= 0)) : false;
+        return {
+          ...v,
+          min_stock: effectiveMin,
+          is_shop_short: isVShopShort,
+          is_wh_short: isVWhShort,
+          is_short: isVShopShort || isVWhShort,
+          can_transfer: w ? (v.wh_qty > 0) : false,
+        };
+      });
+
+      const shortVariants = variantsDetail.filter(v => v.is_short);
+      const isShopShort = p
+        ? (hasVariants
+            ? (shortVariants.some(v => v.is_shop_short) || shopQty <= 0 || (shopMin > 0 && shopQty <= shopMin))
+            : ((shopQty <= 0) || (shopMin > 0 && shopQty <= shopMin)))
+        : false;
+      const isWhShort = w
+        ? (hasVariants
+            ? (shortVariants.some(v => v.is_wh_short) || (whMin > 0 && whQty <= whMin))
+            : ((whMin > 0 && whQty <= whMin) || (isShopShort && whQty <= 0)))
+        : false;
+
+      if (!isShopShort && !isWhShort) return null;
+
+      return {
+        id: p ? p.id : null,
+        product_id: p ? p.id : null,
+        warehouse_item_id: w ? w.id : null,
+        product_name: p ? p.product_name : w.product_name,
+        barcode: (p && p.barcode) || (w && w.barcode) || '',
+        category: (p && p.category) || (w && w.category) || 'عام',
+        quantity: shopQty,
+        shop_qty: shopQty,
+        min_stock: shopMin > 0 ? shopMin : whMin,
+        shop_min_stock: shopMin,
+        warehouse_qty: whQty,
+        warehouse_min_stock: whMin,
+        has_warehouse_record: !!w,
+        is_shop_short: isShopShort,
+        is_wh_short: isWhShort,
+        needs_purchase: (!w || whQty <= 0 || (whMin > 0 && whQty <= whMin) || shortVariants.some(v => v.is_shop_short && v.wh_qty <= 0)),
+        can_transfer: !!(w && whQty > 0),
+        last_expiry_date: lastExpiryDate,
+        last_purchase_price: lastPurchasePrice,
+        sale_price: parseFloat((p && p.sale_price) || (w && w.sale_price) || 0),
+        has_variants: hasVariants,
+        variants_detail: variantsDetail,
+        short_variants: shortVariants,
+        wh_batches: (w ? w._activeBatches : []).map(b => ({
+          id: b.id,
+          batch_number: b.batch_number || `شحنة #${b.id}`,
+          quantity: parseInt(b.quantity || 0, 10),
+          cost_price: parseFloat(b.cost_price || 0),
+          expiry_date: (b.expiry_date && String(b.expiry_date).trim()) ? String(b.expiry_date).trim() : null,
+          notes: b.notes || '',
+          checkbox_values: parseCbvSafe(b.checkbox_values)
+        })),
+        wh_checkbox_values: w ? w._effCbv : null,
+      };
+    };
+
+    const shortages = [];
+    for (const p of products) {
+      const w = whByProdId[p.id]
+        || (p.barcode && whByBarcode[String(p.barcode).trim()])
+        || (p.product_name && whByName[String(p.product_name).trim().toLowerCase()])
+        || null;
+      const row = buildEntry(p, w);
+      if (row) shortages.push(row);
+    }
+
+    // Also include warehouse-only items whose stock reached warehouse min_stock or 0
+    for (const w of whItems) {
+      if (matchedWhIds.has(w.id)) continue;
+      const row = buildEntry(null, w);
+      if (row) shortages.push(row);
+    }
+
+    // Priority sort: Shop 0 & no warehouse (urgent purchase) -> Shop 0 & warehouse available -> Shop low -> Warehouse low
+    shortages.sort((a, b) => {
+      const score = x => (x.shop_qty === 0 && !x.can_transfer ? 0 : x.shop_qty === 0 ? 1 : x.is_shop_short ? 2 : 3);
+      const d = score(a) - score(b);
+      return d !== 0 ? d : String(a.product_name || '').localeCompare(String(b.product_name || ''), 'ar');
+    });
+
+    res.json(shortages);
+  } catch (err) {
+    console.error('[GET /api/products/low-stock Error]:', err);
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
+}
+
+app.get([`${BASE}/api/products/low-stock`, `${BASE}/api/shortages`], handleGetShortages);
 
 app.get(`${BASE}/api/products/financial-summary`, async (req, res) => {
   try {
@@ -11800,6 +12153,7 @@ app.get(`${BASE}/api/warehouse/products`, async (req, res) => {
     )`).catch(() => {});
     await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS expiry_date TEXT DEFAULT ''`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0`).catch(() => {});
     await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_batches (
       id SERIAL PRIMARY KEY, warehouse_item_id INTEGER, product_id INTEGER, batch_number TEXT,
       quantity INTEGER NOT NULL DEFAULT 0, cost_price NUMERIC DEFAULT 0, expiry_date TEXT, notes TEXT,
@@ -11811,7 +12165,8 @@ app.get(`${BASE}/api/warehouse/products`, async (req, res) => {
     const { rows: items } = await posDb.query(`
       SELECT w.*, 
         p.quantity AS shop_quantity,
-        p.sale_price AS shop_sale_price
+        p.sale_price AS shop_sale_price,
+        p.min_stock AS shop_min_stock
       FROM warehouse_items w
       LEFT JOIN products p ON p.id = w.product_id
       ORDER BY w.id DESC
@@ -11841,42 +12196,9 @@ app.get(`${BASE}/api/warehouse/products`, async (req, res) => {
         const latestBatchWithCost = [...it.batches].reverse().find(b => parseFloat(b.cost_price || 0) > 0);
         if (latestBatchWithCost) it.cost_price = parseFloat(latestBatchWithCost.cost_price);
 
-        // Calculate aggregated checkbox_values across batches
-        let itemBaseCbv = it.checkbox_values ? (typeof it.checkbox_values === 'string' ? JSON.parse(it.checkbox_values) : JSON.parse(JSON.stringify(it.checkbox_values))) : null;
-        let mergedCbv = null;
-        let hasAnyBatchCbv = it.batches.some(b => b.checkbox_values);
-
-        if (hasAnyBatchCbv) {
-          it.batches.forEach(b => {
-            if (b.checkbox_values) {
-              let bObj = typeof b.checkbox_values === 'string' ? JSON.parse(b.checkbox_values) : b.checkbox_values;
-              if (!mergedCbv) mergedCbv = JSON.parse(JSON.stringify(bObj));
-              else {
-                for (const [k, v] of Object.entries(bObj)) {
-                  if (typeof v === 'object' && v !== null && v.stock != null) {
-                    if (!mergedCbv[k]) mergedCbv[k] = { ...v, stock: 0 };
-                    mergedCbv[k].stock = (parseInt(mergedCbv[k].stock || 0, 10)) + (parseInt(v.stock || 0, 10));
-                  }
-                }
-              }
-            } else if (itemBaseCbv) {
-              const keys = Object.keys(itemBaseCbv);
-              if (keys.length > 0) {
-                if (!mergedCbv) mergedCbv = JSON.parse(JSON.stringify(itemBaseCbv));
-                const k = keys[0];
-                if (!mergedCbv[k]) mergedCbv[k] = { checked: true, stock: 0 };
-                mergedCbv[k].stock = (parseInt(mergedCbv[k].stock || 0, 10)) + (parseInt(b.quantity || 0, 10));
-              }
-            }
-          });
-          if (mergedCbv) it.checkbox_values = mergedCbv;
-        } else if (itemBaseCbv) {
-          const keys = Object.keys(itemBaseCbv);
-          if (keys.length === 1) {
-            itemBaseCbv[keys[0]].stock = it.quantity;
-            it.checkbox_values = itemBaseCbv;
-          }
-        }
+        // Calculate aggregated checkbox_values across batches while preserving min_stock & prices
+        const mergedCbv = mergeWhBatchCbv(it.batches, it.checkbox_values);
+        if (mergedCbv) it.checkbox_values = mergedCbv;
       }
     });
 
@@ -12056,19 +12378,22 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
     await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS expiry_date TEXT DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT ''`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0`).catch(() => {});
     await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_batches (
       id SERIAL PRIMARY KEY, warehouse_item_id INTEGER, product_id INTEGER, batch_number TEXT,
       quantity INTEGER NOT NULL DEFAULT 0, cost_price NUMERIC DEFAULT 0, expiry_date TEXT, notes TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      checkbox_values JSONB, created_at TIMESTAMPTZ DEFAULT NOW()
     )`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_batches ADD COLUMN IF NOT EXISTS checkbox_values JSONB`).catch(() => {});
 
-    const { product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants_json, checkbox_values_json, notes, description, expiry_date, batch_number } = req.body;
+    const { product_id, product_name, barcode, category, cost_price, sale_price, quantity, min_stock, variants_json, checkbox_values_json, notes, description, expiry_date, batch_number } = req.body;
     if (!product_name || !product_name.trim()) {
       return res.status(400).json({ error: 'اسم الصنف مطلوب' });
     }
     const qty = parseInt(quantity || 0, 10);
     const cost = parseFloat(cost_price || 0);
     const price = parseFloat(sale_price || 0);
+    let minStock = Math.max(0, parseInt(min_stock || 0, 10));
 
     let finalDesc = description || '';
     let finalCategory = category || 'عام';
@@ -12076,7 +12401,7 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
     let finalCbv = checkbox_values_json ? (typeof checkbox_values_json === 'string' ? checkbox_values_json : JSON.stringify(checkbox_values_json)) : null;
     let finalVars = variants_json ? (typeof variants_json === 'string' ? variants_json : JSON.stringify(variants_json)) : null;
 
-    // If linked to a shop product, sync metadata
+    // If linked to a shop product, sync metadata (and inherit min_stock if not provided)
     if (product_id) {
       try {
         const { rows: [p] } = await posDb.query('SELECT * FROM products WHERE id=$1', [product_id]);
@@ -12086,6 +12411,12 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
           if (!finalDesc) finalDesc = p.description || p.details || '';
           if (!finalCategory || finalCategory === 'عام') finalCategory = p.category || 'عام';
           if (!finalBarcode) finalBarcode = p.barcode || '';
+          if (minStock === 0 && parseInt(p.min_stock || 0, 10) > 0) minStock = parseInt(p.min_stock, 10);
+          if (finalCbv && p.checkbox_values) {
+            const pMeta = extractCbvMetaMap(p.checkbox_values);
+            const enriched = applyMetaToCbv(finalCbv, pMeta, false);
+            if (enriched) finalCbv = JSON.stringify(enriched);
+          }
         }
       } catch (_) {}
     }
@@ -12103,6 +12434,16 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
     }
 
     if (existingItem) {
+      // Preserve existing min_stock metadata across batches if adding a new batch
+      let mergedItemCbv = finalCbv;
+      if (existingItem.checkbox_values) {
+        const oldMeta = extractCbvMetaMap(existingItem.checkbox_values);
+        if (mergedItemCbv) {
+          const enriched = applyMetaToCbv(mergedItemCbv, oldMeta, false);
+          if (enriched) mergedItemCbv = JSON.stringify(enriched);
+        }
+      }
+      const effMinStock = minStock > 0 ? minStock : Math.max(0, parseInt(existingItem.min_stock || 0, 10));
       // Add quantity to existing item and update cost & metadata
       const { rows: [upd] } = await posDb.query(
         `UPDATE warehouse_items 
@@ -12112,25 +12453,25 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
              expiry_date = CASE WHEN $7 != '' THEN $7 ELSE expiry_date END,
              category = CASE WHEN $8 != '' AND $8 != 'عام' THEN $8 ELSE category END,
              barcode = CASE WHEN $9 != '' THEN $9 ELSE barcode END,
-             notes = COALESCE($10, notes), updated_at = NOW()
-         WHERE id = $11 RETURNING *`,
-        [qty, cost, price, finalCbv, finalVars, finalDesc, expiry_date || '', finalCategory, finalBarcode, notes || '', existingItem.id]
+             notes = COALESCE($10, notes), min_stock = $11, updated_at = NOW()
+         WHERE id = $12 RETURNING *`,
+        [qty, cost, price, mergedItemCbv, finalVars, finalDesc, expiry_date || '', finalCategory, finalBarcode, notes || '', effMinStock, existingItem.id]
       );
       item = upd;
     } else {
       const { rows: [ins] } = await posDb.query(
-        `INSERT INTO warehouse_items (product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants, checkbox_values, description, expiry_date, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-        [product_id || null, product_name.trim(), finalBarcode, finalCategory, cost, price, qty, finalVars, finalCbv, finalDesc, expiry_date || '', notes || '']
+        `INSERT INTO warehouse_items (product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants, checkbox_values, description, expiry_date, notes, min_stock)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+        [product_id || null, product_name.trim(), finalBarcode, finalCategory, cost, price, qty, finalVars, finalCbv, finalDesc, expiry_date || '', notes || '', minStock]
       );
       item = ins;
     }
 
-    // Insert batch record in warehouse_batches
+    // Insert batch record in warehouse_batches (with variant breakdown if any)
     await posDb.query(
-      `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [item.id, product_id || null, batch_number || `شحنة #${Date.now().toString().slice(-6)}`, qty, cost, expiry_date || null, notes || 'توريد مستودع']
+      `INSERT INTO warehouse_batches (warehouse_item_id, product_id, batch_number, quantity, cost_price, expiry_date, notes, checkbox_values)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [item.id, product_id || null, batch_number || `شحنة #${Date.now().toString().slice(-6)}`, qty, cost, expiry_date || null, notes || 'توريد مستودع', finalCbv]
     ).catch(() => {});
 
     // Log movement
@@ -12162,35 +12503,24 @@ app.put(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
   if (req.session?.user_id && !isMgr(req) && !hasPerm(req, 'warehouse') && !hasPerm(req, 'inventory')) return res.status(403).json({ error: 'غير مصرح' });
   const id = parseInt(req.params.id, 10);
   try {
-    const { product_name, barcode, category, cost_price, sale_price, quantity, checkbox_values_json, variants_json, description, expiry_date, notes } = req.body;
-    let qty = parseInt(quantity || 0, 10);
-    let cost = parseFloat(cost_price || 0);
+    await posDb.query('ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0').catch(() => {});
+    const { product_name, barcode, category, cost_price, sale_price, quantity, min_stock, checkbox_values_json, variants_json, description, expiry_date, notes } = req.body;
+    const { rows: [curWh] } = await posDb.query('SELECT * FROM warehouse_items WHERE id=$1', [id]).catch(() => ({ rows: [] }));
+    let qty = parseInt(quantity || curWh?.quantity || 0, 10);
+    let cost = parseFloat(cost_price || curWh?.cost_price || 0);
     const price = parseFloat(sale_price || 0);
+    const minStockVal = min_stock !== undefined && min_stock !== null && min_stock !== '' ? Math.max(0, parseInt(min_stock, 10) || 0) : null;
     let finalCbv = checkbox_values_json !== undefined ? (typeof checkbox_values_json === 'string' ? checkbox_values_json : JSON.stringify(checkbox_values_json)) : null;
     const finalVars = variants_json !== undefined ? (typeof variants_json === 'string' ? variants_json : JSON.stringify(variants_json)) : null;
 
-    // If batches exist, compute accurate quantity, cost, and checkbox_values from batches
+    // If batches exist, compute accurate quantity, cost, and checkbox_values from batches while preserving min_stock
     const { rows: batches } = await posDb.query('SELECT * FROM warehouse_batches WHERE warehouse_item_id = $1', [id]).catch(() => ({ rows: [] }));
     if (batches && batches.length > 0) {
       qty = batches.reduce((sum, b) => sum + (parseInt(b.quantity || 0, 10)), 0);
       const latestBatch = [...batches].reverse().find(b => parseFloat(b.cost_price || 0) > 0);
       if (latestBatch) cost = parseFloat(latestBatch.cost_price);
 
-      let mergedCbv = null;
-      batches.forEach(b => {
-        if (b.checkbox_values) {
-          let bObj = typeof b.checkbox_values === 'string' ? JSON.parse(b.checkbox_values) : b.checkbox_values;
-          if (!mergedCbv) mergedCbv = JSON.parse(JSON.stringify(bObj));
-          else {
-            for (const [k, v] of Object.entries(bObj)) {
-              if (typeof v === 'object' && v !== null && v.stock != null) {
-                if (!mergedCbv[k]) mergedCbv[k] = { ...v, stock: 0 };
-                mergedCbv[k].stock = (parseInt(mergedCbv[k].stock || 0, 10)) + (parseInt(v.stock || 0, 10));
-              }
-            }
-          }
-        }
-      });
+      const mergedCbv = mergeWhBatchCbv(batches, finalCbv || curWh?.checkbox_values);
       if (mergedCbv) finalCbv = JSON.stringify(mergedCbv);
     }
 
@@ -12207,9 +12537,10 @@ app.put(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
            description = $9,
            expiry_date = $10,
            notes = $11,
+           min_stock = COALESCE($12, min_stock),
            updated_at = NOW()
-       WHERE id = $12 RETURNING *`,
-      [product_name?.trim(), barcode || '', category || 'عام', cost, price, qty, finalCbv, finalVars, description || '', expiry_date || '', notes || '', id]
+       WHERE id = $13 RETURNING *`,
+      [product_name?.trim(), barcode || '', category || 'عام', cost, price, qty, finalCbv, finalVars, description || '', expiry_date || '', notes || '', minStockVal, id]
     );
 
     if (!upd) return res.status(404).json({ error: 'الصنف غير موجود بالمستودع' });
@@ -12279,24 +12610,9 @@ app.post(`${BASE}/api/warehouse/items/:id/batches`, async (req, res) => {
     );
     const newTotalQty = parseInt(agg.total_qty || 0, 10);
 
-    // Merge variants across all active batches if applicable
-    const { rows: allBatches } = await client.query('SELECT checkbox_values FROM warehouse_batches WHERE warehouse_item_id=$1', [itemId]);
-    let mergedCbv = null;
-    allBatches.forEach(bRow => {
-      if (bRow.checkbox_values) {
-        let bObj = typeof bRow.checkbox_values === 'string' ? JSON.parse(bRow.checkbox_values) : bRow.checkbox_values;
-        if (!mergedCbv) mergedCbv = JSON.parse(JSON.stringify(bObj));
-        else {
-          for (const [k, v] of Object.entries(bObj)) {
-            if (typeof v === 'object' && v !== null && v.stock != null) {
-              if (!mergedCbv[k]) mergedCbv[k] = { ...v, stock: 0 };
-              mergedCbv[k].stock = (parseInt(mergedCbv[k].stock || 0, 10)) + (parseInt(v.stock || 0, 10));
-            }
-          }
-        }
-      }
-    });
-
+    // Merge variants across all batches while preserving min_stock
+    const { rows: allBatches } = await client.query('SELECT quantity, checkbox_values FROM warehouse_batches WHERE warehouse_item_id=$1', [itemId]);
+    const mergedCbv = mergeWhBatchCbv(allBatches, whItem.checkbox_values);
     const finalWhCbv = mergedCbv ? JSON.stringify(mergedCbv) : (whItem.checkbox_values ? (typeof whItem.checkbox_values === 'string' ? whItem.checkbox_values : JSON.stringify(whItem.checkbox_values)) : null);
 
     await client.query(
@@ -12350,25 +12666,10 @@ app.put(`${BASE}/api/warehouse/batches/:bid`, async (req, res) => {
     );
     const newTotalQty = parseInt(agg.total_qty || 0, 10);
 
-    // Merge variants across all active batches
-    const { rows: allBatches } = await client.query('SELECT checkbox_values FROM warehouse_batches WHERE warehouse_item_id=$1', [b.warehouse_item_id]);
-    let mergedCbv = null;
-    allBatches.forEach(bRow => {
-      if (bRow.checkbox_values) {
-        let bObj = typeof bRow.checkbox_values === 'string' ? JSON.parse(bRow.checkbox_values) : bRow.checkbox_values;
-        if (!mergedCbv) mergedCbv = JSON.parse(JSON.stringify(bObj));
-        else {
-          for (const [k, v] of Object.entries(bObj)) {
-            if (typeof v === 'object' && v !== null && v.stock != null) {
-              if (!mergedCbv[k]) mergedCbv[k] = { ...v, stock: 0 };
-              mergedCbv[k].stock = (parseInt(mergedCbv[k].stock || 0, 10)) + (parseInt(v.stock || 0, 10));
-            }
-          }
-        }
-      }
-    });
-
+    // Merge variants across all batches while preserving min_stock
+    const { rows: allBatches } = await client.query('SELECT quantity, checkbox_values FROM warehouse_batches WHERE warehouse_item_id=$1', [b.warehouse_item_id]);
     const { rows: [whItem] } = await client.query('SELECT checkbox_values FROM warehouse_items WHERE id=$1', [b.warehouse_item_id]);
+    const mergedCbv = mergeWhBatchCbv(allBatches, cbv || whItem?.checkbox_values);
     const finalWhCbv = mergedCbv ? JSON.stringify(mergedCbv) : (whItem?.checkbox_values ? (typeof whItem.checkbox_values === 'string' ? whItem.checkbox_values : JSON.stringify(whItem.checkbox_values)) : null);
     
     await client.query(
@@ -12424,43 +12725,77 @@ app.delete(`${BASE}/api/warehouse/batches/:bid`, async (req, res) => {
   }
 });
 
-// Helper to update variant stock in checkbox_values (handles both grouped and flat structures)
-function updateCbvStock(cbv, optKey, changeQty) {
+// Helper to update variant stock in checkbox_values (handles flat, cat::opt, and grouped structures while preserving min_stock)
+function updateCbvStock(cbv, optKey, changeQty, extraMeta = {}) {
+  const newOptObj = {
+    checked: true,
+    stock: Math.max(0, changeQty),
+    disabled: changeQty <= 0,
+    ...(extraMeta.min_stock > 0 ? { min_stock: parseInt(extraMeta.min_stock, 10) } : {}),
+    ...(extraMeta.cost_price > 0 ? { cost_price: parseFloat(extraMeta.cost_price) } : {}),
+    ...(extraMeta.sale_price > 0 ? { sale_price: parseFloat(extraMeta.sale_price) } : {}),
+  };
   if (!cbv || typeof cbv !== 'object') {
     if (changeQty > 0) {
-      return { updated: true, newCbv: { [optKey]: { checked: true, stock: changeQty, disabled: false } } };
+      return { updated: true, newCbv: { [optKey]: newOptObj } };
     }
     return { updated: false, newCbv: cbv || {} };
   }
   let found = false;
+  let matchedRef = null;
   let newCbv = JSON.parse(JSON.stringify(cbv));
 
   // 1. Direct key match (flat structure)
   if (newCbv[optKey] && typeof newCbv[optKey] === 'object') {
-    const cur = parseInt(newCbv[optKey].stock || 0);
-    newCbv[optKey].stock = Math.max(0, cur + changeQty);
-    newCbv[optKey].disabled = false;
-    newCbv[optKey].checked = true;
+    matchedRef = newCbv[optKey];
     found = true;
   }
 
-  // 2. Search inside groups (grouped structure)
+  // 2. Suffix match for `group::optKey` (inventory.ejs format)
   if (!found) {
-    for (const grp of Object.keys(newCbv)) {
-      if (typeof newCbv[grp] === 'object' && newCbv[grp] !== null && newCbv[grp][optKey]) {
-        const cur = parseInt(newCbv[grp][optKey].stock || 0);
-        newCbv[grp][optKey].stock = Math.max(0, cur + changeQty);
-        newCbv[grp][optKey].disabled = false;
-        newCbv[grp][optKey].checked = true;
+    const suffix = `::${optKey}`;
+    for (const k of Object.keys(newCbv)) {
+      if (k.endsWith(suffix) && typeof newCbv[k] === 'object' && newCbv[k] !== null) {
+        matchedRef = newCbv[k];
         found = true;
         break;
       }
     }
   }
 
-  // 3. If not found in store product and we are adding stock (+changeQty > 0): create it
-  if (!found && changeQty > 0) {
-    newCbv[optKey] = { checked: true, stock: changeQty, disabled: false };
+  // 3. Search inside groups (nested grouped structure)
+  if (!found) {
+    for (const grp of Object.keys(newCbv)) {
+      if (typeof newCbv[grp] === 'object' && newCbv[grp] !== null && newCbv[grp][optKey]) {
+        matchedRef = newCbv[grp][optKey];
+        found = true;
+        break;
+      }
+    }
+  }
+
+  if (found && matchedRef) {
+    const cur = parseInt(matchedRef.stock || 0, 10);
+    matchedRef.stock = Math.max(0, cur + changeQty);
+    matchedRef.disabled = matchedRef.stock <= 0 ? (changeQty < 0 && matchedRef.stock === 0 ? true : false) : false;
+    matchedRef.checked = true;
+    if (extraMeta.min_stock > 0 && (!matchedRef.min_stock || parseInt(matchedRef.min_stock, 10) === 0)) {
+      matchedRef.min_stock = parseInt(extraMeta.min_stock, 10);
+    }
+    if (extraMeta.cost_price > 0 && changeQty > 0) {
+      matchedRef.cost_price = parseFloat(extraMeta.cost_price);
+    }
+  } else if (changeQty > 0) {
+    // Not found in target product: create it in matching format
+    const hasCatKeys = Object.keys(newCbv).some(k => k.includes('::'));
+    const hasNestedGrp = extraMeta.groupName && extraMeta.groupName !== 'عام' && newCbv[extraMeta.groupName] && typeof newCbv[extraMeta.groupName] === 'object';
+    if (hasNestedGrp) {
+      newCbv[extraMeta.groupName][optKey] = newOptObj;
+    } else if (hasCatKeys && extraMeta.groupName && extraMeta.groupName !== 'عام') {
+      newCbv[`${extraMeta.groupName}::${optKey}`] = newOptObj;
+    } else {
+      newCbv[optKey] = newOptObj;
+    }
     found = true;
   }
 
@@ -12498,6 +12833,7 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
   const client = await posDb.connect();
   try {
     await client.query('BEGIN');
+    await client.query('ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0').catch(() => {});
     const { rows: [whItem] } = await client.query('SELECT * FROM warehouse_items WHERE id=$1 FOR UPDATE', [warehouse_item_id]);
     if (!whItem) {
       await client.query('ROLLBACK');
@@ -12508,6 +12844,9 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: `الكمية المتاحة بالمستودع (${whItem.quantity}) أقل من المطلوب (${transferQty})` });
     }
+
+    const whMetaMap = extractCbvMetaMap(whItem.checkbox_values);
+    const selOptMeta = selected_option ? (whMetaMap[String(selected_option).trim().toLowerCase()] || {}) : {};
 
     // Deduct from warehouse_batches (specific batch or FIFO)
     let transferCost = parseFloat(whItem.cost_price || 0);
@@ -12526,7 +12865,7 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       transferCost = parseFloat(b.cost_price || transferCost);
       transferExpiry = b.expiry_date || transferExpiry;
 
-      let newBatchCbv = b.checkbox_values ? (typeof b.checkbox_values === 'string' ? JSON.parse(b.checkbox_values) : { ...b.checkbox_values }) : null;
+      let newBatchCbv = parseCbvSafe(b.checkbox_values);
       if (selected_option && newBatchCbv) {
         const { newCbv } = updateCbvStock(newBatchCbv, selected_option, -transferQty);
         newBatchCbv = newCbv;
@@ -12543,7 +12882,7 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       for (const b of batches) {
         if (rem <= 0) break;
         const take = Math.min(b.quantity, rem);
-        let bCbv = b.checkbox_values ? (typeof b.checkbox_values === 'string' ? JSON.parse(b.checkbox_values) : { ...b.checkbox_values }) : null;
+        let bCbv = parseCbvSafe(b.checkbox_values);
         if (selected_option && bCbv) {
           const { newCbv } = updateCbvStock(bCbv, selected_option, -take);
           bCbv = newCbv;
@@ -12558,56 +12897,52 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       }
     }
 
-    // Recompute total warehouse_items quantity and checkbox_values across all batches
+    // Recompute total warehouse_items quantity and checkbox_values across all batches (preserving min_stock)
     const { rows: allBatches } = await client.query('SELECT * FROM warehouse_batches WHERE warehouse_item_id=$1', [whItem.id]);
     const newTotalWhQty = allBatches.reduce((sum, b) => sum + parseInt(b.quantity || 0, 10), 0);
-    let mergedWhCbv = null;
-    allBatches.forEach(b => {
-      if (b.checkbox_values) {
-        let bObj = typeof b.checkbox_values === 'string' ? JSON.parse(b.checkbox_values) : b.checkbox_values;
-        if (!mergedWhCbv) mergedWhCbv = JSON.parse(JSON.stringify(bObj));
-        else {
-          for (const [k, v] of Object.entries(bObj)) {
-            if (typeof v === 'object' && v !== null && v.stock != null) {
-              if (!mergedWhCbv[k]) mergedWhCbv[k] = { ...v, stock: 0 };
-              mergedWhCbv[k].stock = (parseInt(mergedWhCbv[k].stock || 0, 10)) + (parseInt(v.stock || 0, 10));
-            }
-          }
-        }
-      }
-    });
+    const mergedWhCbv = mergeWhBatchCbv(allBatches, whItem.checkbox_values);
 
-    if (mergedWhCbv) {
+    if (mergedWhCbv && allBatches.some(b => !!b.checkbox_values)) {
       await client.query('UPDATE warehouse_items SET quantity = $1, checkbox_values = $2 WHERE id = $3', [newTotalWhQty, JSON.stringify(mergedWhCbv), whItem.id]);
     } else if (selected_option && whItem.checkbox_values) {
-      const cbv = typeof whItem.checkbox_values === 'string' ? JSON.parse(whItem.checkbox_values) : { ...whItem.checkbox_values };
+      const cbv = parseCbvSafe(whItem.checkbox_values);
       const { newCbv } = updateCbvStock(cbv, selected_option, -transferQty);
       await client.query('UPDATE warehouse_items SET quantity = $1, checkbox_values = $2 WHERE id = $3', [newTotalWhQty, JSON.stringify(newCbv), whItem.id]);
     } else {
       await client.query('UPDATE warehouse_items SET quantity = $1 WHERE id = $2', [newTotalWhQty, whItem.id]);
     }
 
-    // 2. Add to Shop Products (and sync description, category, barcode, variants)
+    // 2. Add to Shop Products (and sync description, category, barcode, variants, and min_stock)
     let shopProdId = whItem.product_id;
     let beforeShopQty = 0;
     let isBrandNewShopProd = false;
+    const whItemMin = Math.max(0, parseInt(whItem.min_stock || 0, 10));
 
     if (shopProdId) {
-      const { rows: [sp] } = await client.query('SELECT id, quantity, variants, checkbox_values, purchase_price, expiry_date, description, category, barcode, dentrust_id FROM products WHERE id=$1', [shopProdId]);
+      const { rows: [sp] } = await client.query('SELECT id, quantity, min_stock, variants, checkbox_values, purchase_price, expiry_date, description, category, barcode, dentrust_id FROM products WHERE id=$1', [shopProdId]);
       if (sp) {
         beforeShopQty = parseInt(sp.quantity || 0);
 
-        // If size option was transferred, increase or create that size in shop product
+        // If size option was transferred, increase or create that size in shop product and carry over variant min_stock
         if (selected_option) {
-          let scbv = sp.checkbox_values ? (typeof sp.checkbox_values === 'string' ? JSON.parse(sp.checkbox_values) : { ...sp.checkbox_values }) : {};
-          const { newCbv } = updateCbvStock(scbv, selected_option, transferQty);
-          if (newCbv[selected_option] && typeof newCbv[selected_option] === 'object') {
-            newCbv[selected_option].cost_price = transferCost;
-          }
-          const totalCb = sumCbvStock(newCbv);
-          await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(newCbv), shopProdId]);
+          let scbv = parseCbvSafe(sp.checkbox_values) || {};
+          const { newCbv } = updateCbvStock(scbv, selected_option, transferQty, { ...selOptMeta, cost_price: transferCost });
+          const enrichedCbv = applyMetaToCbv(newCbv, whMetaMap, false) || newCbv;
+          const totalCb = sumCbvStock(enrichedCbv);
+          await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(enrichedCbv), shopProdId]);
         } else {
           await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [transferQty, shopProdId]);
+          if (sp.checkbox_values && Object.keys(whMetaMap).length > 0) {
+            const enrichedCbv = applyMetaToCbv(sp.checkbox_values, whMetaMap, false);
+            if (enrichedCbv) {
+              await client.query('UPDATE products SET checkbox_values=$1 WHERE id=$2', [JSON.stringify(enrichedCbv), shopProdId]);
+            }
+          }
+        }
+
+        // Carry over item-level min_stock from warehouse if shop product min_stock is currently 0
+        if (whItemMin > 0 && parseInt(sp.min_stock || 0, 10) === 0) {
+          await client.query('UPDATE products SET min_stock = $1 WHERE id=$2', [whItemMin, shopProdId]);
         }
 
         // Sync description & category if shop product was missing them or warehouse has specific category
@@ -12636,13 +12971,24 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       }
     }
 
-    // If no linked shop product, create or link by name with all metadata (category, barcode, variants, etc.)
+    // If no linked shop product, create or link by name with all metadata (category, barcode, variants, min_stock, etc.)
     if (!shopProdId) {
-      const { rows: [existingByName] } = await client.query('SELECT id, quantity, category, description, variants, checkbox_values, barcode, dentrust_id FROM products WHERE LOWER(product_name)=LOWER($1) LIMIT 1', [whItem.product_name]);
+      const { rows: [existingByName] } = await client.query('SELECT id, quantity, min_stock, category, description, variants, checkbox_values, barcode, dentrust_id FROM products WHERE LOWER(product_name)=LOWER($1) LIMIT 1', [whItem.product_name]);
       if (existingByName) {
         shopProdId = existingByName.id;
         beforeShopQty = parseInt(existingByName.quantity || 0);
-        await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [transferQty, shopProdId]);
+        if (selected_option) {
+          let scbv = parseCbvSafe(existingByName.checkbox_values) || {};
+          const { newCbv } = updateCbvStock(scbv, selected_option, transferQty, { ...selOptMeta, cost_price: transferCost });
+          const enrichedCbv = applyMetaToCbv(newCbv, whMetaMap, false) || newCbv;
+          const totalCb = sumCbvStock(enrichedCbv);
+          await client.query('UPDATE products SET quantity=$1, checkbox_values=$2 WHERE id=$3', [totalCb, JSON.stringify(enrichedCbv), shopProdId]);
+        } else {
+          await client.query('UPDATE products SET quantity = quantity + $1 WHERE id=$2', [transferQty, shopProdId]);
+        }
+        if (whItemMin > 0 && parseInt(existingByName.min_stock || 0, 10) === 0) {
+          await client.query('UPDATE products SET min_stock = $1 WHERE id=$2', [whItemMin, shopProdId]);
+        }
         if (whItem.category && whItem.category.trim() && whItem.category !== 'عام' && (!existingByName.category || existingByName.category === 'عام')) {
           await client.query('UPDATE products SET category = $1 WHERE id=$2', [whItem.category.trim(), shopProdId]);
         }
@@ -12656,20 +13002,37 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
           await client.query('UPDATE products SET variants = $1 WHERE id=$2', [typeof whItem.variants === 'string' ? whItem.variants : JSON.stringify(whItem.variants), shopProdId]);
         }
       } else {
+        let initialShopCbv = parseCbvSafe(whItem.checkbox_values);
+        if (selected_option && initialShopCbv) {
+          // Zero out stocks on initial copy, then add only transferred variant stock while keeping all min_stocks
+          for (const optVal of Object.values(initialShopCbv)) {
+            if (optVal && typeof optVal === 'object') {
+              if ('stock' in optVal) optVal.stock = 0;
+              else {
+                for (const subVal of Object.values(optVal)) {
+                  if (subVal && typeof subVal === 'object' && 'stock' in subVal) subVal.stock = 0;
+                }
+              }
+            }
+          }
+          const { newCbv } = updateCbvStock(initialShopCbv, selected_option, transferQty, { ...selOptMeta, cost_price: transferCost });
+          initialShopCbv = newCbv;
+        }
         const { rows: [newProd] } = await client.query(
-          `INSERT INTO products (product_name, sale_price, purchase_price, quantity, barcode, category, description, expiry_date, variants, checkbox_values, section)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+          `INSERT INTO products (product_name, sale_price, purchase_price, quantity, min_stock, barcode, category, description, expiry_date, variants, checkbox_values, section)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
           [
             whItem.product_name,
             whItem.sale_price,
             transferCost,
             transferQty,
+            whItemMin,
             whItem.barcode || '',
             (whItem.category || '').trim() || 'عام',
             whItem.description || '',
             transferExpiry || null,
             whItem.variants ? (typeof whItem.variants === 'string' ? whItem.variants : JSON.stringify(whItem.variants)) : null,
-            whItem.checkbox_values ? (typeof whItem.checkbox_values === 'string' ? whItem.checkbox_values : JSON.stringify(whItem.checkbox_values)) : null,
+            initialShopCbv ? JSON.stringify(initialShopCbv) : null,
             'dental'
           ]
         );

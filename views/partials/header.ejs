@@ -129,8 +129,8 @@
       </a>
       <% } %>
 
-      <a href="<%= base %>/notifications" class="nav-link relative <%= reqPath.includes('/notifications') ? 'active' : '' %>">
-        🔔 الإشعارات
+      <a href="<%= base %>/notifications" class="nav-link relative <%= reqPath.includes('/notifications') || reqPath.includes('/shortages') ? 'active' : '' %>">
+        📉 النواقص
         <span id="lowStockBadge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white font-black rounded-full text-[9px] min-w-[1rem] px-1 leading-none py-0.5 text-center"></span>
       </a>
 

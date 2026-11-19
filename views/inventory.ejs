@@ -1787,9 +1787,10 @@ function cbLoad(raw) {
     const disabled   = typeof val === 'object' ? (val?.disabled ?? false) : false;
     const reason     = typeof val === 'object' ? (val?.reason ?? "") : "";
     const stock      = typeof val === 'object' && val?.stock !== undefined ? val.stock : null;
+    const min_stock  = typeof val === 'object' && val?.min_stock != null ? parseInt(val.min_stock, 10) : null;
     const cost_price = typeof val === 'object' && val?.cost_price != null ? parseFloat(val.cost_price) : null;
     const sale_price = typeof val === 'object' && val?.sale_price != null ? parseFloat(val.sale_price) : null;
-    cbData[cat][label] = { checked, disabled, reason, stock, cost_price, sale_price };
+    cbData[cat][label] = { checked, disabled, reason, stock, min_stock, cost_price, sale_price };
   });
   cbRender();
   cbUpdateTotalQty();
@@ -1801,15 +1802,17 @@ function cbGetValues() {
     Object.entries(opts).forEach(([label, v]) => {
       const key = `${cat}::${label}`;
       const hasStock = v.stock !== null && v.stock !== undefined;
+      const hasMin   = v.min_stock !== null && v.min_stock !== undefined && !isNaN(v.min_stock) && parseInt(v.min_stock, 10) > 0;
       const hasCost  = v.cost_price !== null && v.cost_price !== undefined && !isNaN(v.cost_price);
       const hasPrice = v.sale_price !== null && v.sale_price !== undefined && !isNaN(v.sale_price);
 
-      if (!v.disabled && !hasStock && !hasCost && !hasPrice) {
+      if (!v.disabled && !hasStock && !hasMin && !hasCost && !hasPrice) {
         out[key] = v.checked;
       } else {
         const obj = { checked: v.checked };
         if (v.disabled) { obj.disabled = true; if (v.reason) obj.reason = v.reason; }
         if (hasStock) obj.stock = v.stock;
+        if (hasMin) obj.min_stock = parseInt(v.min_stock, 10);
         if (hasCost) obj.cost_price = parseFloat(v.cost_price);
         if (hasPrice) obj.sale_price = parseFloat(v.sale_price);
         out[key] = obj;
@@ -1817,6 +1820,12 @@ function cbGetValues() {
     });
   });
   return Object.keys(out).length > 0 ? out : null;
+}
+
+function cbSetMinStock(cat, label, val) {
+  if (cbData[cat]?.[label]) {
+    cbData[cat][label].min_stock = val === "" ? null : Math.max(0, parseInt(val, 10) || 0);
+  }
 }
 
 function cbSetCost(cat, label, val) {
@@ -1857,7 +1866,7 @@ function cbAddOption(cat) {
   if (!label) { inp.focus(); return; }
   if (!cbData[cat]) cbData[cat] = {};
   if (cbData[cat][label]) { inp.value = ""; return; }
-  cbData[cat][label] = { checked: true, disabled: false, reason: "", stock: null, cost_price: null, sale_price: null };
+  cbData[cat][label] = { checked: true, disabled: false, reason: "", stock: null, min_stock: null, cost_price: null, sale_price: null };
   inp.value = "";
   cbRender();
   setTimeout(() => { const el = document.getElementById(`cb-opt-inp-${CSS.escape(cat)}`); if (el) el.focus(); }, 30);
@@ -1933,6 +1942,7 @@ function cbRender() {
       const isSoldOut = o.stock !== null && o.stock <= 0;
       const isDisabled = o.disabled || isSoldOut;
       const stockVal = o.stock !== null ? o.stock : "";
+      const minVal = o.min_stock !== null && o.min_stock !== undefined ? o.min_stock : "";
       const costVal = o.cost_price !== null && o.cost_price !== undefined ? o.cost_price : "";
       const saleVal = o.sale_price !== null && o.sale_price !== undefined ? o.sale_price : "";
       return `<div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl border ${isDisabled ? 'border-red-200 bg-red-50/50' : 'border-gray-200 bg-white shadow-xs'}">
@@ -1944,13 +1954,21 @@ function cbRender() {
           ${isDisabled ? `<span class="text-[10px] font-bold text-red-500 bg-red-100 px-1.5 py-0.5 rounded-full">${isSoldOut ? 'نفذ' : 'غير متاح'}</span>` : ''}
         </div>
 
-        <div class="flex items-center gap-2 text-xs">
+        <div class="flex items-center gap-2 text-xs flex-wrap">
           <!-- Stock -->
           <div class="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1" title="رصيد هذا المقاس بالمحل">
             <span class="text-[11px] text-gray-500 font-bold">الكمية:</span>
             <input type="number" min="0" placeholder="0" value="${stockVal}"
               onchange="cbSetStock('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}',this.value)"
               class="w-14 border border-gray-300 rounded px-1.5 py-0.5 text-xs text-center font-bold font-mono focus:ring-1 focus:ring-blue-400 bg-white"/>
+          </div>
+
+          <!-- Min Stock per variant -->
+          <div class="flex items-center gap-1 bg-rose-50/70 border border-rose-200 rounded-lg px-2 py-1" title="الحد الأدنى لهذا المقاس في المحل (للتنبيه في النواقص)">
+            <span class="text-[11px] text-rose-700 font-bold">حد أدنى:</span>
+            <input type="number" min="0" placeholder="0" value="${minVal}"
+              onchange="cbSetMinStock('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}',this.value)"
+              class="w-14 border border-rose-300 rounded px-1.5 py-0.5 text-xs text-center font-bold font-mono text-rose-800 bg-white focus:ring-1 focus:ring-rose-400"/>
           </div>
 
           <!-- Cost Price -->

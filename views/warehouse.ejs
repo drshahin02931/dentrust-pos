@@ -284,7 +284,7 @@
         <div class="text-xs font-bold text-gray-700 border-b pb-2 flex items-center gap-1.5">
           <span>📦</span> بيانات الشحنة والتكلفة الواردة:
         </div>
-        <div class="grid grid-cols-3 gap-2">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <div>
             <label class="text-xs font-bold text-gray-700 block mb-1">الكمية الواردة *</label>
             <input id="aw-qty" type="number" min="1" value="1" required
@@ -294,6 +294,11 @@
             <label class="text-xs font-bold text-gray-700 block mb-1">سعر التكلفة (EGP) *</label>
             <input id="aw-cost" type="number" min="0" step="0.01" value="0.00" required
               class="w-full border rounded-xl px-3 py-2 text-sm text-center font-mono font-bold text-amber-700 focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+          </div>
+          <div>
+            <label class="text-xs font-bold text-rose-700 block mb-1">الحد الأدنى (اختياري)</label>
+            <input id="aw-min-stock" type="number" min="0" value="0"
+              class="w-full border border-rose-200 rounded-xl px-3 py-2 text-sm text-center font-mono font-bold text-rose-800 bg-rose-50/40 focus:outline-none focus:ring-2 focus:ring-rose-300"/>
           </div>
           <div>
             <label class="text-xs font-bold text-gray-700 block mb-1">الصلاحية (اختياري)</label>
@@ -358,7 +363,7 @@
         </div>
       </div>
 
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-3 gap-3">
         <div>
           <label class="text-xs font-bold text-gray-700 block mb-1">التصنيف</label>
           <input id="ew-category" type="text"
@@ -368,6 +373,11 @@
           <label class="text-xs font-bold text-gray-700 block mb-1">سعر البيع بالمحل (EGP)</label>
           <input id="ew-price" type="number" min="0" step="0.01"
             class="w-full border rounded-xl px-3 py-2 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-amber-400"/>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-rose-700 block mb-1">الحد الأدنى بالمستودع</label>
+          <input id="ew-min-stock" type="number" min="0" value="0"
+            class="w-full border border-rose-200 rounded-xl px-3 py-2 text-sm font-mono font-bold text-rose-800 bg-rose-50/40 focus:outline-none focus:ring-2 focus:ring-rose-400"/>
         </div>
       </div>
 
@@ -451,7 +461,7 @@
               </span>
               <span class="text-[10px] text-indigo-700 font-mono font-bold">إجمالي مقاسات الشحنة: <strong id="ew-ab-var-sum" class="font-bold">0</strong></span>
             </div>
-            <div id="ew-ab-variants-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-2 p-0.5"></div>
+            <div id="ew-ab-variants-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-0.5"></div>
 
             <!-- Form: Add New Variant / Type (Spacious & Clean Layout) -->
             <div class="bg-white/95 p-3.5 rounded-2xl border-2 border-indigo-200/90 shadow-xs space-y-3 mt-1">
@@ -967,6 +977,7 @@ function whCbAddPreset(type) {
           checked: true,
           disabled: false,
           stock: 1,
+          min_stock: 0,
           cost_price: defaultCost > 0 ? defaultCost : null,
           sale_price: defaultPrice > 0 ? defaultPrice : null
         };
@@ -981,6 +992,7 @@ function whCbAddPreset(type) {
           checked: true,
           disabled: false,
           stock: 1,
+          min_stock: 0,
           cost_price: defaultCost > 0 ? defaultCost : null,
           sale_price: defaultPrice > 0 ? defaultPrice : null
         };
@@ -1025,6 +1037,7 @@ function whCbAddOption(cat) {
     checked: true,
     disabled: false,
     stock: 1,
+    min_stock: 0,
     cost_price: defaultCost > 0 ? defaultCost : null,
     sale_price: defaultPrice > 0 ? defaultPrice : null
   };
@@ -1056,6 +1069,12 @@ function whCbSetStock(cat, label, val) {
   const n = val === "" ? null : Math.max(0, parseInt(val, 10) || 0);
   o.stock = n;
   whCbUpdateTotalQty();
+}
+
+function whCbSetMinStock(cat, label, val) {
+  const o = whCbData[cat]?.[label];
+  if (!o) return;
+  o.min_stock = val === "" ? 0 : Math.max(0, parseInt(val, 10) || 0);
 }
 
 function whCbSetCost(cat, label, val) {
@@ -1112,6 +1131,7 @@ function whCbRender() {
     const optRows = labels.map(label => {
       const o = opts[label];
       const stockVal = o.stock !== null && o.stock !== undefined ? o.stock : "";
+      const minVal = o.min_stock !== null && o.min_stock !== undefined && o.min_stock > 0 ? o.min_stock : "";
       const costVal = o.cost_price !== null && o.cost_price !== undefined ? o.cost_price : "";
       const saleVal = o.sale_price !== null && o.sale_price !== undefined ? o.sale_price : "";
 
@@ -1131,6 +1151,14 @@ function whCbRender() {
               <input type="number" min="0" placeholder="0" value="${stockVal}"
                 oninput="whCbSetStock('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}', this.value)"
                 class="w-14 border border-gray-300 rounded px-1.5 py-0.5 text-xs text-center font-black font-mono focus:ring-1 focus:ring-blue-400 bg-white"/>
+            </div>
+
+            <!-- Min Stock per variant (carries to shop on transfer) -->
+            <div class="flex items-center gap-1 bg-rose-50/70 border border-rose-200 rounded-lg px-2 py-1" title="الحد الأدنى لهذا المقاس (يتنقل تلقائياً للمحل عند التحويل)">
+              <span class="text-[11px] text-rose-700 font-bold">حد أدنى:</span>
+              <input type="number" min="0" placeholder="0" value="${minVal}"
+                onchange="whCbSetMinStock('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}', this.value)"
+                class="w-14 border border-rose-300 rounded px-1.5 py-0.5 text-xs text-center font-bold font-mono text-rose-800 bg-white focus:ring-1 focus:ring-rose-400"/>
             </div>
 
             <!-- Cost Price -->
@@ -1195,6 +1223,8 @@ function openAddWarehouseModal() {
   document.getElementById('aw-cost').value = '0.00';
   document.getElementById('aw-price').value = '0.00';
   document.getElementById('aw-qty').value = '1';
+  const awMinEl = document.getElementById('aw-min-stock');
+  if (awMinEl) awMinEl.value = '0';
   document.getElementById('aw-desc').value = '';
   document.getElementById('aw-expiry').value = '';
   document.getElementById('aw-notes').value = '';
@@ -1306,6 +1336,8 @@ function selectShopProduct(p) {
   document.getElementById('aw-category').value = p.category || '';
   document.getElementById('aw-price').value = p.sale_price || 0;
   document.getElementById('aw-desc').value = p.description || p.details || '';
+  const awMinEl = document.getElementById('aw-min-stock');
+  if (awMinEl) awMinEl.value = parseInt(p.min_stock || 0, 10);
   if (p.purchase_price && parseFloat(p.purchase_price) > 0) {
     document.getElementById('aw-cost').value = p.purchase_price;
   }
@@ -1325,7 +1357,7 @@ function selectShopProduct(p) {
     
     // Check if nested by group: { "الحجم": { "A1": {...} } } or flat: { "A1": {...} }
     const topKeys = Object.keys(cbv);
-    const isNested = topKeys.some(k => cbv[k] && typeof cbv[k] === 'object' && !('stock' in cbv[k]) && !('checked' in cbv[k]));
+    const isNested = topKeys.some(k => cbv[k] && typeof cbv[k] === 'object' && !('stock' in cbv[k]) && !('checked' in cbv[k]) && !('min_stock' in cbv[k]));
 
     if (isNested) {
       hasVariants = true;
@@ -1341,16 +1373,22 @@ function selectShopProduct(p) {
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2" id="grp-grid-${CSS.escape(grpName)}">
               ${optKeys.map(opt => {
                 const shopStock = subOpts[opt].stock != null ? subOpts[opt].stock : '—';
+                const shopMin = subOpts[opt].min_stock != null && subOpts[opt].min_stock > 0 ? subOpts[opt].min_stock : '';
                 return `
-                  <div class="bg-gray-50/80 p-2 rounded-xl border border-gray-200 flex items-center justify-between gap-2">
+                  <div class="bg-gray-50/80 p-2 rounded-xl border border-gray-200 flex items-center justify-between gap-2 flex-wrap">
                     <div>
                       <span class="text-xs font-bold text-gray-800 block">${opt}</span>
                       <span class="text-[10px] text-gray-400">بالمحل: ${shopStock}</span>
                     </div>
-                    <div class="flex items-center gap-1.5">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <span class="text-[10px] text-rose-700 font-bold">حد أدنى:</span>
+                      <input type="number" min="0" placeholder="0" value="${shopMin}"
+                        class="aw-var-min-input w-12 text-center font-bold text-xs border border-rose-200 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-rose-300 font-mono bg-rose-50/30 text-rose-800"
+                        data-group-name="${grpName.replace(/"/g, '&quot;')}"
+                        data-opt-key="${opt.replace(/"/g, '&quot;')}"/>
                       <span class="text-[11px] text-blue-700 font-bold">وارد:</span>
                       <input type="number" min="0" value="0"
-                        class="aw-var-qty-input w-16 text-center font-bold text-xs border border-blue-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono bg-white"
+                        class="aw-var-qty-input w-14 text-center font-bold text-xs border border-blue-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono bg-white"
                         data-group-name="${grpName.replace(/"/g, '&quot;')}"
                         data-opt-key="${opt.replace(/"/g, '&quot;')}"
                         oninput="onAwVariantQtyChange()"/>
@@ -1373,16 +1411,22 @@ function selectShopProduct(p) {
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2" id="grp-grid-عام">
             ${topKeys.map(opt => {
               const shopStock = cbv[opt].stock != null ? cbv[opt].stock : '—';
+              const shopMin = cbv[opt].min_stock != null && cbv[opt].min_stock > 0 ? cbv[opt].min_stock : '';
               return `
-                <div class="bg-gray-50/80 p-2 rounded-xl border border-gray-200 flex items-center justify-between gap-2">
+                <div class="bg-gray-50/80 p-2 rounded-xl border border-gray-200 flex items-center justify-between gap-2 flex-wrap">
                   <div>
                     <span class="text-xs font-bold text-gray-800 block">${opt}</span>
                     <span class="text-[10px] text-gray-400">بالمحل: ${shopStock}</span>
                   </div>
-                  <div class="flex items-center gap-1.5">
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <span class="text-[10px] text-rose-700 font-bold">حد أدنى:</span>
+                    <input type="number" min="0" placeholder="0" value="${shopMin}"
+                      class="aw-var-min-input w-12 text-center font-bold text-xs border border-rose-200 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-rose-300 font-mono bg-rose-50/30 text-rose-800"
+                      data-group-name="عام"
+                      data-opt-key="${opt.replace(/"/g, '&quot;')}"/>
                     <span class="text-[11px] text-blue-700 font-bold">وارد:</span>
                     <input type="number" min="0" value="0"
-                      class="aw-var-qty-input w-16 text-center font-bold text-xs border border-blue-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono bg-white"
+                      class="aw-var-qty-input w-14 text-center font-bold text-xs border border-blue-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono bg-white"
                       data-group-name="عام"
                       data-opt-key="${opt.replace(/"/g, '&quot;')}"
                       oninput="onAwVariantQtyChange()"/>
@@ -1473,16 +1517,21 @@ function addNewAwVariant() {
 
   // Create new card
   const card = document.createElement('div');
-  card.className = 'bg-emerald-50/70 p-2.5 rounded-xl border border-emerald-300 flex items-center justify-between gap-2 shadow-sm animate-in fade-in duration-150';
+  card.className = 'bg-emerald-50/70 p-2.5 rounded-xl border border-emerald-300 flex items-center justify-between gap-2 flex-wrap shadow-sm animate-in fade-in duration-150';
   card.innerHTML = `
     <div>
       <span class="text-xs font-bold text-emerald-900 block flex items-center gap-1">✨ ${optName}</span>
       <span class="text-[10px] text-emerald-700 font-semibold">مضاف حديثاً</span>
     </div>
-    <div class="flex items-center gap-1.5">
+    <div class="flex items-center gap-1.5 flex-wrap">
+      <span class="text-[10px] text-rose-700 font-bold">حد أدنى:</span>
+      <input type="number" min="0" placeholder="0" value=""
+        class="aw-var-min-input w-12 text-center font-bold text-xs border border-rose-200 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-rose-300 font-mono bg-white text-rose-800"
+        data-group-name="${targetGroup.replace(/"/g, '&quot;')}"
+        data-opt-key="${optName.replace(/"/g, '&quot;')}"/>
       <span class="text-[11px] text-blue-700 font-bold">وارد:</span>
       <input type="number" min="0" value="${optQty}"
-        class="aw-var-qty-input w-16 text-center font-bold text-xs border border-emerald-400 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-emerald-400 font-mono bg-white"
+        class="aw-var-qty-input w-14 text-center font-bold text-xs border border-emerald-400 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-emerald-400 font-mono bg-white"
         data-group-name="${targetGroup.replace(/"/g, '&quot;')}"
         data-opt-key="${optName.replace(/"/g, '&quot;')}"
         oninput="onAwVariantQtyChange()"/>
@@ -1529,6 +1578,7 @@ async function submitAddWarehouseItem(e) {
   const cost = document.getElementById('aw-cost').value;
   const price = document.getElementById('aw-price').value;
   const qty = parseInt(document.getElementById('aw-qty').value || 0, 10);
+  const minStock = parseInt(document.getElementById('aw-min-stock')?.value || 0, 10);
   const desc = document.getElementById('aw-desc').value;
   const expiry = document.getElementById('aw-expiry').value;
   const notes = document.getElementById('aw-notes').value;
@@ -1551,6 +1601,12 @@ async function submitAddWarehouseItem(e) {
       if (_selectedShopProd && _selectedShopProd.checkbox_values) {
         baseCbv = typeof _selectedShopProd.checkbox_values === 'string' ? JSON.parse(_selectedShopProd.checkbox_values) : { ..._selectedShopProd.checkbox_values };
       }
+      const minMap = {};
+      document.querySelectorAll('.aw-var-min-input').forEach(mInp => {
+        const key = `${mInp.dataset.groupName || 'عام'}:::${mInp.dataset.optKey}`;
+        const mv = mInp.value === '' ? null : Math.max(0, parseInt(mInp.value, 10) || 0);
+        if (mv !== null) minMap[key] = mv;
+      });
       const isGrouped = Array.from(varInputs).some(i => i.dataset.groupName && i.dataset.groupName !== 'عام');
       
       if (isGrouped) {
@@ -1558,14 +1614,18 @@ async function submitAddWarehouseItem(e) {
           const grp = inp.dataset.groupName || 'عام';
           const k = inp.dataset.optKey;
           const q = parseInt(inp.value || 0, 10);
+          const mv = minMap[`${grp}:::${k}`];
           if (!baseCbv[grp] || typeof baseCbv[grp] !== 'object') baseCbv[grp] = {};
-          baseCbv[grp][k] = { ...(baseCbv[grp][k] || { checked: true }), stock: q, disabled: false };
+          const prev = baseCbv[grp][k] || { checked: true };
+          baseCbv[grp][k] = { ...prev, stock: q, disabled: false, ...(mv != null && mv > 0 ? { min_stock: mv } : (mv === 0 ? { min_stock: 0 } : {})) };
         });
       } else {
         varInputs.forEach(inp => {
           const k = inp.dataset.optKey;
           const q = parseInt(inp.value || 0, 10);
-          baseCbv[k] = { ...(baseCbv[k] || { checked: true }), stock: q, disabled: false };
+          const mv = minMap[`عام:::${k}`];
+          const prev = baseCbv[k] || { checked: true };
+          baseCbv[k] = { ...prev, stock: q, disabled: false, ...(mv != null && mv > 0 ? { min_stock: mv } : (mv === 0 ? { min_stock: 0 } : {})) };
         });
       }
       checkboxValuesJson = JSON.stringify(baseCbv);
@@ -1584,6 +1644,7 @@ async function submitAddWarehouseItem(e) {
         cost_price: parseFloat(cost || 0),
         sale_price: parseFloat(price || 0),
         quantity: qty,
+        min_stock: Math.max(0, minStock),
         variants_json: null,
         checkbox_values_json: checkboxValuesJson,
         description: desc,
@@ -1618,6 +1679,8 @@ function openEditWarehouseModal(itemId) {
   document.getElementById('ew-cost').value = parseFloat(item.cost_price || 0).toFixed(2);
   document.getElementById('ew-price').value = parseFloat(item.sale_price || 0).toFixed(2);
   document.getElementById('ew-qty').value = parseInt(item.quantity || 0, 10);
+  const ewMinEl = document.getElementById('ew-min-stock');
+  if (ewMinEl) ewMinEl.value = parseInt(item.min_stock || 0, 10);
   document.getElementById('ew-expiry').value = item.expiry_date || '';
   document.getElementById('ew-desc').value = item.description || '';
   document.getElementById('ew-notes').value = item.notes || '';
@@ -1730,9 +1793,16 @@ function syncActiveBatchToMemory() {
   b.expiry_date = document.getElementById('ew-ab-exp').value;
   b.notes = document.getElementById('ew-ab-notes').value.trim();
 
-  // Package variant values for this batch
+  // Package variant values & min_stock for this batch and parent item
   const varInputs = document.querySelectorAll('.ew-ab-var-inp');
   if (varInputs.length > 0) {
+    const varMinMap = {};
+    document.querySelectorAll('.ew-ab-var-min-inp').forEach(mInp => {
+      const mKey = `${mInp.dataset.groupName || 'عام'}:::${mInp.dataset.optKey}`;
+      const mv = Math.max(0, parseInt(mInp.value || 0, 10) || 0);
+      varMinMap[mKey] = mv;
+    });
+
     let cbvObj = {};
     const isGrouped = Array.from(varInputs).some(i => i.dataset.groupName && i.dataset.groupName !== 'عام');
     if (isGrouped) {
@@ -1740,17 +1810,37 @@ function syncActiveBatchToMemory() {
         const grp = inp.dataset.groupName || 'عام';
         const k = inp.dataset.optKey;
         const q = parseInt(inp.value || 0, 10);
+        const mv = varMinMap[`${grp}:::${k}`] || 0;
         if (!cbvObj[grp]) cbvObj[grp] = {};
-        cbvObj[grp][k] = { checked: true, stock: q, disabled: false };
+        cbvObj[grp][k] = { checked: true, stock: q, disabled: false, ...(mv > 0 ? { min_stock: mv } : {}) };
       });
     } else {
       varInputs.forEach(inp => {
         const k = inp.dataset.optKey;
         const q = parseInt(inp.value || 0, 10);
-        cbvObj[k] = { checked: true, stock: q, disabled: false };
+        const mv = varMinMap[`عام:::${k}`] || 0;
+        cbvObj[k] = { checked: true, stock: q, disabled: false, ...(mv > 0 ? { min_stock: mv } : {}) };
       });
     }
     b.checkbox_values = cbvObj;
+
+    // Also update parent item's checkbox_values min_stock in memory
+    if (_currentEditingWhItem && _currentEditingWhItem.checkbox_values) {
+      let pCbv = typeof _currentEditingWhItem.checkbox_values === 'string'
+        ? JSON.parse(_currentEditingWhItem.checkbox_values)
+        : JSON.parse(JSON.stringify(_currentEditingWhItem.checkbox_values));
+      Object.entries(varMinMap).forEach(([composite, mv]) => {
+        const [grp, k] = composite.split(':::');
+        if (pCbv[grp] && typeof pCbv[grp] === 'object' && pCbv[grp][k]) {
+          pCbv[grp][k].min_stock = mv;
+        } else if (pCbv[k] && typeof pCbv[k] === 'object') {
+          pCbv[k].min_stock = mv;
+        } else if (pCbv[`${grp}::${k}`] && typeof pCbv[`${grp}::${k}`] === 'object') {
+          pCbv[`${grp}::${k}`].min_stock = mv;
+        }
+      });
+      _currentEditingWhItem.checkbox_values = pCbv;
+    }
   }
 
   // Update tab pill UI in real time
@@ -1842,19 +1932,27 @@ function selectActiveWhBatch(batchId) {
       const rawKey = itemObj.rawKey || displayKey;
       const grp = itemObj.groupName || 'عام';
       const vStock = (batchFlat[displayKey] && batchFlat[displayKey].stock != null) ? batchFlat[displayKey].stock : 0;
+      const vMin = (batchFlat[displayKey] && batchFlat[displayKey].min_stock != null && batchFlat[displayKey].min_stock > 0)
+        ? batchFlat[displayKey].min_stock
+        : (itemObj.min_stock != null && itemObj.min_stock > 0 ? itemObj.min_stock : '');
 
       return `
-        <div class="bg-white p-2 rounded-xl border border-indigo-200 flex items-center justify-between gap-1.5 shadow-xs group">
+        <div class="bg-white p-2 rounded-xl border border-indigo-200 flex items-center justify-between gap-1.5 shadow-xs group flex-wrap">
           <div class="flex items-center gap-1 min-w-0">
             ${grp !== 'عام' ? `<span class="px-1.5 py-0.5 bg-indigo-100 text-indigo-900 rounded text-[9px] font-black">${grp}</span>` : ''}
             <span class="text-xs font-bold text-gray-800 truncate">${rawKey}</span>
           </div>
-          <div class="flex items-center gap-1.5 flex-shrink-0">
-            <input type="number" min="0" value="${vStock}"
-              class="ew-ab-var-inp w-16 text-center font-bold text-xs border border-indigo-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-indigo-400 font-mono bg-white flex-shrink-0"
+          <div class="flex items-center gap-1 flex-shrink-0">
+            <input type="number" min="0" value="${vStock}" title="الكمية بالشحنة"
+              class="ew-ab-var-inp w-14 text-center font-bold text-xs border border-indigo-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-indigo-400 font-mono bg-white flex-shrink-0"
               data-group-name="${grp.replace(/"/g, '&quot;')}"
               data-opt-key="${rawKey.replace(/"/g, '&quot;')}"
               oninput="onActiveBatchVarQtyChange()"/>
+            <input type="number" min="0" placeholder="أدنى" value="${vMin}" title="الحد الأدنى لهذا المقاس (يتنقل للمحل)"
+              class="ew-ab-var-min-inp w-12 text-center font-bold text-[11px] border border-rose-200 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-rose-300 font-mono bg-rose-50/40 text-rose-800 flex-shrink-0"
+              data-group-name="${grp.replace(/"/g, '&quot;')}"
+              data-opt-key="${rawKey.replace(/"/g, '&quot;')}"
+              oninput="syncActiveBatchToMemory()"/>
             <button type="button" onclick="deleteVariantFromItem('${grp.replace(/'/g, "\\'")}', '${rawKey.replace(/'/g, "\\'")}')"
               class="w-6 h-6 rounded-lg text-gray-300 hover:text-red-600 hover:bg-red-50 flex items-center justify-center font-bold text-xs transition-all cursor-pointer"
               title="حذف هذا المقاس (${rawKey})">✕</button>
@@ -2194,6 +2292,7 @@ async function submitEditWarehouseItem(e) {
   const barcode = document.getElementById('ew-barcode').value;
   const category = document.getElementById('ew-category').value;
   const price = document.getElementById('ew-price').value;
+  const minStock = parseInt(document.getElementById('ew-min-stock')?.value || 0, 10);
   const desc = document.getElementById('ew-desc').value;
   const expiry = document.getElementById('ew-expiry').value || _currentEditingWhItem.expiry_date;
   const notes = _currentEditingWhItem.notes || '';
@@ -2207,6 +2306,8 @@ async function submitEditWarehouseItem(e) {
         barcode,
         category,
         sale_price: parseFloat(price || 0),
+        min_stock: Math.max(0, minStock),
+        checkbox_values_json: _currentEditingWhItem.checkbox_values || undefined,
         description: desc,
         expiry_date: expiry || null,
         notes
@@ -2251,10 +2352,15 @@ function flattenCbv(cbv) {
     const out = {};
     Object.keys(parsed).forEach(k => {
       const val = parsed[k];
-      if (val && typeof val === 'object' && !('stock' in val) && !('checked' in val)) {
+      if (val && typeof val === 'object' && !('stock' in val) && !('checked' in val) && !('min_stock' in val)) {
         Object.keys(val).forEach(subK => {
           out[`[${k}] ${subK}`] = { ...val[subK], groupName: k, rawKey: subK };
         });
+      } else if (k.includes('::') && val && typeof val === 'object') {
+        const sep = k.indexOf('::');
+        const g = k.slice(0, sep);
+        const subK = k.slice(sep + 2);
+        out[`[${g}] ${subK}`] = { ...val, groupName: g, rawKey: subK };
       } else {
         out[k] = { ...val, groupName: 'عام', rawKey: k };
       }
