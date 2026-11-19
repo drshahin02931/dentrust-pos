@@ -503,10 +503,10 @@ function renderSummaryCards() {
     document.getElementById("c-revenue-note").textContent = `مبيعات نقدية: ${(d.sales_cash_collected || 0).toFixed(2)} | سداد ديون: ${(d.debt_collected || 0).toFixed(2)}`;
 
     document.getElementById("c-gross-title").textContent = "الربح المحقق";
-    document.getElementById("c-gross-note").textContent = "= أرباح المبالغ المحصلة فعلياً";
+    document.getElementById("c-gross-note").textContent = "= أرباح المبالغ المحصلة فعلياً" + (parseFloat(d.debt_discounts || 0) > 0 ? ` − خصم آجل (${parseFloat(d.debt_discounts).toFixed(2)})` : "");
 
     document.getElementById("c-net-title").textContent = "صافي الربح الفعلي";
-    document.getElementById("c-net-note").textContent = "= الربح المحقق − المصروفات";
+    document.getElementById("c-net-note").textContent = "= الربح المحقق − المصروفات" + (parseFloat(d.debt_discounts || 0) > 0 ? ` | خصم تسوية آجل: −${parseFloat(d.debt_discounts).toFixed(2)} ج` : "");
   } else {
     banner.className = "bg-purple-50/90 border border-purple-200 rounded-2xl p-3 text-xs flex flex-wrap items-center justify-between gap-2";
     icon.textContent = "📋";
@@ -519,10 +519,10 @@ function renderSummaryCards() {
     document.getElementById("c-revenue-note").textContent = "إجمالي كافة الفواتير الصادرة";
 
     document.getElementById("c-gross-title").textContent = "الربح الإجمالي";
-    document.getElementById("c-gross-note").textContent = "= الصافي − التكلفة";
+    document.getElementById("c-gross-note").textContent = "= الصافي − التكلفة" + (parseFloat(d.debt_discounts || 0) > 0 ? ` − خصم آجل (${parseFloat(d.debt_discounts).toFixed(2)})` : "");
 
     document.getElementById("c-net-title").textContent = "صافي الربح التقديري";
-    document.getElementById("c-net-note").textContent = "= إجمالي الربح − المصروفات";
+    document.getElementById("c-net-note").textContent = "= إجمالي الربح − المصروفات" + (parseFloat(d.debt_discounts || 0) > 0 ? ` | خصم تسوية آجل: −${parseFloat(d.debt_discounts).toFixed(2)} ج` : "");
   }
 
   const grossVal = parseFloat(d.gross_profit || 0);

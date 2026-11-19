@@ -624,7 +624,8 @@ function renderFinancialCards(data) {
     // Card 1: Cash In
     document.getElementById('fin-card1-title').textContent = 'المقبوضات النقدية (Cash In)';
     document.getElementById('fin-gross-sales').textContent = (finCash.total_cash_in || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
-    document.getElementById('fin-discounts-note').textContent = `مبيعات نقدية: ${(finCash.cash_sales_collected || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م | سداد ديون: ${(finCash.debt_collected || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م`;
+    const debtDiscCash = parseFloat(finCash.debt_discounts || 0);
+    document.getElementById('fin-discounts-note').textContent = `مبيعات نقدية: ${(finCash.cash_sales_collected || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م | سداد ديون: ${(finCash.debt_collected || 0).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م` + (debtDiscCash > 0 ? ` | خصم آجل: −${debtDiscCash.toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م` : '');
 
     // Card 2: Expenses
     document.getElementById('fin-expenses').textContent = expTotal.toLocaleString('ar-EG', { minimumFractionDigits: 2 }) + ' ج.م';
@@ -813,18 +814,25 @@ function renderReport(data) {
       const cAmt = parseFloat(cp.cash_amount || 0);
       const iAmt = parseFloat(cp.instapay_amount || 0);
       const vAmt = parseFloat(cp.vodafone_amount || 0);
+      const discAmt = parseFloat(cp.discount_amount || 0);
       const parts = [];
       if (cAmt > 0) parts.push(`كاش: ${cAmt}`);
       if (iAmt > 0) parts.push(`InstaPay: ${iAmt}`);
       if (vAmt > 0) parts.push(`Vodafone: ${vAmt}`);
       let methodBadge = '<span class="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold text-[11px]">💵 كاش</span>';
-      if (parts.length > 1) {
+      if (parts.length === 0 && discAmt > 0) {
+        methodBadge = '<span class="bg-amber-100 text-amber-800 px-2 py-0.5 rounded font-bold text-[11px]">🏷️ خصم تسوية</span>';
+      } else if (parts.length > 1) {
         methodBadge = `<span class="bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-bold text-[11px]">متعدد (${parts.join(' | ')})</span>`;
       } else if (vAmt > 0) {
         methodBadge = '<span class="bg-red-100 text-red-700 px-2 py-0.5 rounded font-bold text-[11px]">📲 Vodafone Cash</span>';
       } else if (iAmt > 0) {
         methodBadge = '<span class="bg-teal-100 text-teal-800 px-2 py-0.5 rounded font-bold text-[11px]">📱 InstaPay</span>';
       }
+
+      const discBadge = discAmt > 0
+        ? `<div class="text-[10px] font-bold text-amber-700 mt-0.5">+ 🏷️ خصم: ${discAmt.toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م</div>`
+        : '';
 
       return `
         <tr class="hover:bg-amber-50/40">
@@ -833,7 +841,7 @@ function renderReport(data) {
             <div class="font-bold text-gray-900">${cp.customer_name || '—'}</div>
             ${cp.customer_phone ? `<div class="text-[10px] text-gray-500 font-mono">${cp.customer_phone}</div>` : ''}
           </td>
-          <td class="p-2.5 text-center font-black text-amber-900">${parseFloat(cp.amount).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م</td>
+          <td class="p-2.5 text-center font-black text-amber-900">${parseFloat(cp.amount).toLocaleString('ar-EG', { minimumFractionDigits: 2 })} ج.م${discBadge}</td>
           <td class="p-2.5 text-center">${methodBadge}</td>
           <td class="p-2.5 text-center text-gray-500 font-mono text-[11px]">${(cp.date || '').replace('T', ' ').slice(0, 16)}</td>
           <td class="p-2.5 text-gray-600 text-xs">${cp.note || '—'}</td>

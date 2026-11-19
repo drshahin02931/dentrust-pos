@@ -247,6 +247,15 @@
         <div id="payVodaFeeHint" class="hidden text-[11px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1 font-semibold"></div>
         <div id="payVodaFullHint" class="text-[10px] text-gray-500 px-1"></div>
       </div>
+      <% if (typeof isMgr !== 'undefined' && isMgr) { %>
+      <div class="flex items-center gap-2 pt-1.5 border-t border-green-200/70">
+        <span class="flex items-center gap-1.5 text-xs font-bold text-amber-800 w-28 shrink-0"><span>🏷️</span> خصم على الآجل</span>
+        <input id="payDiscount" type="number" min="0" step="0.01" value="0" oninput="updatePayTotalInfo()"
+          class="flex-1 bg-amber-50/60 border border-amber-300 rounded-lg px-2 py-1.5 text-sm font-mono font-bold text-amber-900 focus:outline-none focus:ring-2 focus:ring-amber-400"/>
+        <span class="text-xs text-gray-400">ج</span>
+      </div>
+      <div id="payDiscountHint" class="hidden text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 font-semibold"></div>
+      <% } %>
       <div id="payTotalSummary" class="text-xs font-bold text-emerald-800 pt-1.5 border-t border-green-200">إجمالي المخصوم من الدين: 0.00 ج</div>
     </div>
 
@@ -1033,7 +1042,8 @@ async function openDetail(cid) {
   fetch(`${BASE}/api/customers/${cid}/statement`).then(r=>r.json()).then(st => {
     if (!st.error && (st.total_invoiced > 0 || st.total_paid > 0)) {
       document.getElementById("stmtInvoiced").textContent  = st.net_invoiced.toLocaleString('ar-EG', {minimumFractionDigits:2}) + " ج";
-      document.getElementById("stmtPaid").textContent      = st.total_paid.toLocaleString('ar-EG', {minimumFractionDigits:2}) + " ج";
+      const discText = (st.total_discount > 0) ? ` (منها خصم ${st.total_discount.toLocaleString('ar-EG', {minimumFractionDigits:2})} ج)` : "";
+      document.getElementById("stmtPaid").textContent      = st.total_paid.toLocaleString('ar-EG', {minimumFractionDigits:2}) + " ج" + discText;
       document.getElementById("stmtRemaining").textContent = st.remaining.toLocaleString('ar-EG', {minimumFractionDigits:2}) + " ج";
       document.getElementById("statementStrip").classList.remove("hidden");
     }
@@ -1417,16 +1427,23 @@ async function switchTab(tab) {
     const payments = await res.json();
     if (!payments.length) { content.innerHTML = `<div class="text-center text-gray-400 py-8">لا توجد دفعات مسجّلة</div>`; return; }
 
-    content.innerHTML = payments.map(p => `
-      <div class="rounded-xl border border-green-200 bg-green-50 p-3.5 flex items-center justify-between">
+    content.innerHTML = payments.map(p => {
+      const paidVal = parseFloat(p.amount || 0);
+      const discVal = parseFloat(p.discount_amount || 0);
+      const totVal = paidVal + discVal;
+      return `
+      <div class="rounded-xl border ${discVal > 0 && paidVal <= 0 ? 'border-amber-200 bg-amber-50' : 'border-green-200 bg-green-50'} p-3.5 flex items-center justify-between gap-2">
         <div>
-          <div class="text-sm font-semibold text-green-700">دُفع: ${parseFloat(p.amount).toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه</div>
+          <div class="text-sm font-semibold ${discVal > 0 && paidVal <= 0 ? 'text-amber-800' : 'text-green-700'}">
+            ${paidVal > 0 ? `دُفع: ${paidVal.toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه` : 'تسوية بالخصم بدون تحصيل نقدي'}
+          </div>
+          ${discVal > 0 ? `<div class="text-xs font-bold text-amber-800 mt-0.5">🏷️ خصم تسوية: ${discVal.toLocaleString('ar-EG', {minimumFractionDigits:2})} جنيه (إجمالي المخصوم من الدين: ${totVal.toLocaleString('ar-EG', {minimumFractionDigits:2})} ج)</div>` : ''}
           ${p.note ? `<div class="text-xs text-gray-500 mt-0.5">${p.note}</div>` : ''}
           <div class="text-xs text-gray-400 mt-0.5">${p.date?.slice(0,16)||''}</div>
         </div>
-        <div class="text-2xl">✅</div>
-      </div>
-    `).join("");
+        <div class="text-2xl">${discVal > 0 && paidVal <= 0 ? '🏷️' : '✅'}</div>
+      </div>`;
+    }).join("");
   }
 
   if (tab === 'debts') {
@@ -1598,6 +1615,10 @@ async function openPayModal() {
   document.getElementById("payCash").value  = "0";
   document.getElementById("payInsta").value = "0";
   document.getElementById("payVodafone").value = "0";
+  const discEl = document.getElementById("payDiscount");
+  if (discEl) discEl.value = "0";
+  const discHintEl = document.getElementById("payDiscountHint");
+  if (discHintEl) discHintEl.classList.add("hidden");
   document.getElementById("payNote").value  = "";
   document.getElementById("payAutoFifo").checked = true;
   document.getElementById("payVodaFeeHint").classList.add("hidden");
@@ -1671,11 +1692,13 @@ function togglePayFifoMode() {
 }
 
 function updatePayTotalInfo() {
-  const cash  = parseFloat(document.getElementById("payCash").value) || 0;
-  const insta = parseFloat(document.getElementById("payInsta").value) || 0;
-  const vodaGross = parseFloat(document.getElementById("payVodafone").value) || 0;
+  const cash  = Math.max(0, parseFloat(document.getElementById("payCash").value) || 0);
+  const insta = Math.max(0, parseFloat(document.getElementById("payInsta").value) || 0);
+  const vodaGross = Math.max(0, parseFloat(document.getElementById("payVodafone").value) || 0);
+  const discount = Math.max(0, parseFloat(document.getElementById("payDiscount")?.value) || 0);
   const custDebt = parseFloat(currentCustomer?.total_debt || 0);
-  const { net: vodaNet, fee: vodaFee } = _calcVodaNetFromGross(vodaGross, Math.max(0, custDebt - cash - insta));
+  const remBeforeVoda = Math.max(0, custDebt - cash - insta - discount);
+  const { net: vodaNet, fee: vodaFee } = _calcVodaNetFromGross(vodaGross, remBeforeVoda);
 
   const feeEl = document.getElementById("payVodaFeeHint");
   if (feeEl) {
@@ -1687,22 +1710,49 @@ function updatePayTotalInfo() {
     }
   }
 
-  const total = Math.round((cash + insta + vodaNet) * 100) / 100;
+  const fullHintEl = document.getElementById("payVodaFullHint");
+  if (fullHintEl) {
+    fullHintEl.textContent = remBeforeVoda > 0
+      ? `لتصفية الباقي (${remBeforeVoda.toFixed(2)} ج) فودافون كاش (+1%): ${(Math.round(remBeforeVoda * 1.01 * 100) / 100)} ج`
+      : "";
+  }
+
+  const discHintEl = document.getElementById("payDiscountHint");
+  if (discHintEl) {
+    if (discount > 0) {
+      discHintEl.textContent = `🏷️ سيتم خصم ${discount.toFixed(2)} ج من مديونية الدكتور ومن صافي الأرباح (لا يدخل الدرج)`;
+      discHintEl.classList.remove("hidden");
+    } else {
+      discHintEl.classList.add("hidden");
+    }
+  }
+
+  const paidNet = Math.round((cash + insta + vodaNet) * 100) / 100;
+  const totalSettled = Math.round((paidNet + discount) * 100) / 100;
   const sumEl = document.getElementById("payTotalSummary");
-  if (sumEl) sumEl.textContent = `إجمالي المخصوم من الدين: ${total.toFixed(2)} ج (نقدي: ${cash.toFixed(2)} + InstaPay: ${insta.toFixed(2)} + Vodafone صافي: ${vodaNet.toFixed(2)})`;
+  if (sumEl) {
+    sumEl.textContent = `إجمالي المخصوم من الدين: ${totalSettled.toFixed(2)} ج (مدفوع فعلي: ${paidNet.toFixed(2)} ج${discount > 0 ? ' + خصم: ' + discount.toFixed(2) + ' ج' : ''})`;
+  }
 }
 
 async function submitPayment() {
-  const cash  = parseFloat(document.getElementById("payCash").value) || 0;
-  const insta = parseFloat(document.getElementById("payInsta").value) || 0;
-  const vodaGross = parseFloat(document.getElementById("payVodafone").value) || 0;
+  const cash  = Math.max(0, parseFloat(document.getElementById("payCash").value) || 0);
+  const insta = Math.max(0, parseFloat(document.getElementById("payInsta").value) || 0);
+  const vodaGross = Math.max(0, parseFloat(document.getElementById("payVodafone").value) || 0);
+  const discount = Math.max(0, parseFloat(document.getElementById("payDiscount")?.value) || 0);
   const custDebt = parseFloat(currentCustomer?.total_debt || 0);
-  const { net: vodaNet, fee: vodaFee } = _calcVodaNetFromGross(vodaGross, Math.max(0, custDebt - cash - insta));
+  const remBeforeVoda = Math.max(0, custDebt - cash - insta - discount);
+  const { net: vodaNet, fee: vodaFee } = _calcVodaNetFromGross(vodaGross, remBeforeVoda);
   const amount = Math.round((cash + insta + vodaNet) * 100) / 100;
+  const totalSettled = Math.round((amount + discount) * 100) / 100;
   const note = document.getElementById("payNote").value.trim();
   const autoFifo = document.getElementById("payAutoFifo").checked;
 
-  if (amount <= 0) { alert("أدخل مبلغاً نقدي أو InstaPay أو Vodafone Cash أكبر من صفر"); return; }
+  if (totalSettled <= 0) { alert("أدخل مبلغاً للدفع أو خصماً أكبر من صفر"); return; }
+  if (custDebt > 0 && totalSettled > custDebt + 0.01) {
+    alert(`إجمالي المخصوم من الدين (${totalSettled.toFixed(2)} ج) أكبر من مديونية الدكتور الحالية (${custDebt.toFixed(2)} ج)!`);
+    return;
+  }
 
   let allocations = [];
   if (!autoFifo) {
@@ -1717,8 +1767,8 @@ async function submitPayment() {
       }
     });
 
-    if (allocSum > amount + 0.01) {
-      alert(`مجموع المبالغ الموزعة على الفواتير (${allocSum.toFixed(2)} ج) أكبر من الصافي المخصوم من الدين (${amount.toFixed(2)} ج)!`);
+    if (allocSum > totalSettled + 0.01) {
+      alert(`مجموع المبالغ الموزعة على الفواتير (${allocSum.toFixed(2)} ج) أكبر من إجمالي المخصوم من الدين (${totalSettled.toFixed(2)} ج)!`);
       return;
     }
   }
@@ -1733,6 +1783,7 @@ async function submitPayment() {
         instapay_amount: insta,
         vodafone_amount: vodaNet,
         vodafone_fee: vodaFee,
+        discount_amount: discount > 0 ? discount : undefined,
         note,
         allocations: allocations.length > 0 ? allocations : undefined
       })

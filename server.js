@@ -3514,23 +3514,24 @@ async function clearManualDebtsIfZero(db, customerId, userName = 'الكاشير
   }
 }
 
-async function safeInsertCustomerPayment(db, customerId, amount, cashAmount, instapayAmount, note, vodafoneAmount = 0, vodafoneFee = 0, realizedProfit = null) {
+async function safeInsertCustomerPayment(db, customerId, amount, cashAmount, instapayAmount, note, vodafoneAmount = 0, vodafoneFee = 0, realizedProfit = null, discountAmount = 0) {
   try {
     await db.query(
-      'INSERT INTO customer_payments (customer_id, amount, cash_amount, instapay_amount, vodafone_amount, vodafone_fee, realized_profit, note) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-      [customerId, amount, cashAmount, instapayAmount, vodafoneAmount, vodafoneFee, realizedProfit, note || '']
+      'INSERT INTO customer_payments (customer_id, amount, cash_amount, instapay_amount, vodafone_amount, vodafone_fee, realized_profit, discount_amount, note) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+      [customerId, amount, cashAmount, instapayAmount, vodafoneAmount, vodafoneFee, realizedProfit, discountAmount, note || '']
     );
   } catch (err) {
-    if (err.message && (err.message.includes('column') || err.message.includes('cash_amount') || err.message.includes('instapay_amount') || err.message.includes('vodafone') || err.message.includes('realized_profit'))) {
+    if (err.message && (err.message.includes('column') || err.message.includes('cash_amount') || err.message.includes('instapay_amount') || err.message.includes('vodafone') || err.message.includes('realized_profit') || err.message.includes('discount_amount'))) {
       await db.query('ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS cash_amount NUMERIC DEFAULT 0').catch(() => {});
       await db.query('ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS instapay_amount NUMERIC DEFAULT 0').catch(() => {});
       await db.query('ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS vodafone_amount NUMERIC DEFAULT 0').catch(() => {});
       await db.query('ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS vodafone_fee NUMERIC DEFAULT 0').catch(() => {});
       await db.query('ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS realized_profit NUMERIC').catch(() => {});
+      await db.query('ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0').catch(() => {});
       try {
         await db.query(
-          'INSERT INTO customer_payments (customer_id, amount, cash_amount, instapay_amount, vodafone_amount, vodafone_fee, realized_profit, note) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-          [customerId, amount, cashAmount, instapayAmount, vodafoneAmount, vodafoneFee, realizedProfit, note || '']
+          'INSERT INTO customer_payments (customer_id, amount, cash_amount, instapay_amount, vodafone_amount, vodafone_fee, realized_profit, discount_amount, note) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+          [customerId, amount, cashAmount, instapayAmount, vodafoneAmount, vodafoneFee, realizedProfit, discountAmount, note || '']
         );
       } catch (_) {
         await db.query(
@@ -3547,19 +3548,31 @@ async function safeInsertCustomerPayment(db, customerId, amount, cashAmount, ins
 app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
   const cid = parseInt(req.params.cid, 10);
   const d = req.body;
-  let cashAmt = parseFloat(d.cash_amount || 0);
-  let instaAmt = parseFloat(d.instapay_amount || 0);
-  let vodaAmt = parseFloat(d.vodafone_amount || 0);
-  const vodaFee = parseFloat(d.vodafone_fee || 0);
-  let amount = parseFloat(d.amount != null ? d.amount : (cashAmt + instaAmt + vodaAmt));
-  if (cashAmt + instaAmt + vodaAmt === 0 && amount > 0) cashAmt = amount;
+  let cashAmt = r2(Math.max(0, parseFloat(d.cash_amount || 0)));
+  let instaAmt = r2(Math.max(0, parseFloat(d.instapay_amount || 0)));
+  let vodaAmt = r2(Math.max(0, parseFloat(d.vodafone_amount || 0)));
+  const vodaFee = r2(Math.max(0, parseFloat(d.vodafone_fee || 0)));
+  const discAmt = r2(Math.max(0, parseFloat(d.discount_amount || 0)));
+
+  if (discAmt > 0 && !isMgr(req)) {
+    return res.status(403).json({ error: 'إضافة خصم على الآجل مسموحة للمدير فقط' });
+  }
+
+  let paidAmount = r2(Math.max(0, parseFloat(d.amount != null ? d.amount : (cashAmt + instaAmt + vodaAmt))));
+  if (cashAmt + instaAmt + vodaAmt === 0 && paidAmount > 0) cashAmt = paidAmount;
+  const totalSettled = r2(paidAmount + discAmt);
+  if (totalSettled <= 0) {
+    return res.status(400).json({ error: 'أدخل مبلغ دفع أو خصم أكبر من صفر' });
+  }
   const allocations = Array.isArray(d.allocations) ? d.allocations : null;
 
   try {
-    // 1. Update customer total debt
-    await posDb.query('UPDATE customers SET total_debt = GREATEST(0, COALESCE(total_debt, 0) - $1) WHERE id=$2', [amount, cid]);
+    const { rows: [custRow] } = await posDb.query('SELECT id, name, COALESCE(total_debt, 0) AS total_debt FROM customers WHERE id=$1', [cid]);
 
-    // 2. Allocate to open invoices (oldest first FIFO) & compute exact realized profit
+    // 1. Update customer total debt (includes both paid money and settlement discount)
+    await posDb.query('UPDATE customers SET total_debt = GREATEST(0, COALESCE(total_debt, 0) - $1) WHERE id=$2', [totalSettled, cid]);
+
+    // 2. Allocate to open invoices (oldest first FIFO) & compute exact realized profit on settled portions
     let totalRealizedProfit = 0;
     if (allocations && allocations.length > 0) {
       // Manual Allocation specified by cashier
@@ -3584,7 +3597,7 @@ app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
           }
         }
       }
-    } else if (amount > 0) {
+    } else if (totalSettled > 0) {
       // Automatic FIFO Allocation across open credit invoices (oldest first)
       let openSales = [];
       try {
@@ -3612,7 +3625,7 @@ app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
         }
       }
 
-      let remToAllocate = amount;
+      let remToAllocate = totalSettled;
       for (const sale of openSales) {
         if (remToAllocate <= 0) break;
         let origDebt = 0;
@@ -3635,11 +3648,19 @@ app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
       }
     }
 
-    // 3. Insert payment record with exact realized profit & Vodafone details
+    // 3. Insert payment record with exact realized profit, Vodafone details, & manager discount
     await safeInsertCustomerPayment(
-      posDb, cid, amount, cashAmt, instaAmt, d.note || '',
-      vodaAmt, vodaFee, r2(totalRealizedProfit)
+      posDb, cid, paidAmount, cashAmt, instaAmt, d.note || '',
+      vodaAmt, vodaFee, r2(totalRealizedProfit), discAmt
     );
+
+    if (discAmt > 0) {
+      await posDb.query(
+        `INSERT INTO customer_audit_logs (customer_id, customer_code, customer_name, action_type, details, current_phones, user_name)
+         VALUES ($1, '', $2, 'debt_discount', $3, '', $4)`,
+        [cid, custRow?.name || '', `خصم تسوية على الآجل: ${discAmt} ج (مدفوع فعلي: ${paidAmount} ج — إجمالي مخصوم من الدين: ${totalSettled} ج)${d.note ? ' — ' + d.note : ''}`, req.session?.username || 'المدير']
+      ).catch(() => {});
+    }
 
     // 4. Clear manual debts automatically if customer's remaining debt reached 0
     const clearedCount = await clearManualDebtsIfZero(posDb, cid, req.session?.username || 'الكاشير');
@@ -3647,10 +3668,12 @@ app.post(`${BASE}/api/customers/:cid/pay`, async (req, res) => {
     res.json({
       ok: true,
       realized_profit: r2(totalRealizedProfit),
+      discount_amount: discAmt,
+      total_settled: totalSettled,
       manual_debts_cleared: clearedCount,
       message: clearedCount > 0
-        ? `تم تسجيل الدفعة وتصفية ${clearedCount} سلفة تلقائياً لوصول الدين لصفر!`
-        : 'تم تسجيل الدفعة وتسوية الفواتير بنجاح!'
+        ? `تم تسجيل العملية${discAmt > 0 ? ` (شامل خصم ${discAmt} ج)` : ''} وتصفية ${clearedCount} سلفة تلقائياً لوصول الدين لصفر!`
+        : (discAmt > 0 ? `تم تسجيل الدفعة وخصم التسوية (${discAmt} ج) بنجاح!` : 'تم تسجيل الدفعة وتسوية الفواتير بنجاح!')
     });
   } catch (err) {
     console.error('[POST /api/customers/:cid/pay Error]:', err);
@@ -3755,18 +3778,28 @@ app.get(`${BASE}/api/customers/:cid/statement`, async (req, res) => {
         totalInvoiced += parseFloat(s.total_amount || 0) - parseFloat(s.amount_received || 0);
       }
     }
-    const { rows: [tp] } = await posDb.query("SELECT COALESCE(SUM(amount),0) as t FROM customer_payments WHERE customer_id=$1", [cid]);
+    const { rows: [tp] } = await posDb.query(
+      "SELECT COALESCE(SUM(amount),0) as paid, COALESCE(SUM(COALESCE(discount_amount,0)),0) as disc FROM customer_payments WHERE customer_id=$1",
+      [cid]
+    ).catch(async () => {
+      const fb = await posDb.query("SELECT COALESCE(SUM(amount),0) as paid, 0 as disc FROM customer_payments WHERE customer_id=$1", [cid]);
+      return fb;
+    });
     const { rows: [tr] } = await posDb.query("SELECT COALESCE(SUM(r.total_refund),0) as t FROM returns r JOIN sales s ON s.id=r.sale_id WHERE s.customer_id=$1 AND s.payment_method IN ('credit','split')", [cid]);
     const { rows: [md] } = await posDb.query("SELECT COALESCE(SUM(amount),0) as t FROM customer_manual_debts WHERE customer_id=$1", [cid]);
     const totalManualDebt = Math.round(parseFloat(md?.t || 0) * 100) / 100;
     totalInvoiced += totalManualDebt;
     const totalReturned = Math.round(parseFloat(tr.t) * 100) / 100;
     const netInvoiced   = Math.round(Math.max(0, totalInvoiced - totalReturned) * 100) / 100;
+    const actualPaid    = Math.round(parseFloat(tp?.paid || 0) * 100) / 100;
+    const totalDisc     = Math.round(parseFloat(tp?.disc || 0) * 100) / 100;
     res.json({
       total_invoiced: Math.round(totalInvoiced * 100) / 100,
       total_returned: totalReturned,
       net_invoiced:   netInvoiced,
-      total_paid: Math.round(parseFloat(tp.t) * 100) / 100,
+      total_paid:     Math.round((actualPaid + totalDisc) * 100) / 100,
+      actual_paid:    actualPaid,
+      total_discount: totalDisc,
       remaining: Math.round(parseFloat(c.total_debt) * 100) / 100,
     });
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
@@ -4204,6 +4237,29 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
       `SELECT COALESCE(SUM(amount),0) as t FROM extra_profits ${pf}`
     );
 
+    // Customer Debt Payments in this period (exact FIFO realized_profit on new payments, legacy estimate for older rows, plus manager settlement discounts)
+    const { rows: cpRows } = await posDb.query(`
+      SELECT 
+        COALESCE(SUM(amount), 0) AS debt_total,
+        COALESCE(SUM(cash_amount), 0) AS debt_cash_sum,
+        COALESCE(SUM(instapay_amount), 0) AS debt_insta_sum,
+        COALESCE(SUM(vodafone_amount), 0) AS debt_voda_sum,
+        COALESCE(SUM(COALESCE(discount_amount, 0)), 0) AS debt_discount_sum,
+        COALESCE(SUM(CASE WHEN realized_profit IS NOT NULL THEN realized_profit ELSE 0 END), 0) AS exact_realized_profit,
+        COALESCE(SUM(CASE WHEN realized_profit IS NULL THEN amount ELSE 0 END), 0) AS legacy_debt_total,
+        COUNT(*) AS cnt
+      FROM customer_payments cp
+      WHERE ${cpf}
+    `).catch(async () => {
+      const fb = await posDb.query(`
+        SELECT COALESCE(SUM(amount), 0) AS debt_total, COALESCE(SUM(cash_amount), 0) AS debt_cash_sum,
+               COALESCE(SUM(instapay_amount), 0) AS debt_insta_sum, 0 AS debt_voda_sum, 0 AS debt_discount_sum,
+               0 AS exact_realized_profit, COALESCE(SUM(amount), 0) AS legacy_debt_total, COUNT(*) AS cnt
+        FROM customer_payments cp WHERE ${cpf}
+      `).catch(() => ({ rows: [{ debt_total: 0, debt_cash_sum: 0, debt_insta_sum: 0, debt_voda_sum: 0, debt_discount_sum: 0, exact_realized_profit: 0, legacy_debt_total: 0, cnt: 0 }] }));
+      return fb;
+    });
+
     const rev = parseFloat(sdR.r || 0);
     const refunds = parseFloat(rt.t || 0);
     const netRev = Math.max(0, rev - refunds);
@@ -4213,8 +4269,11 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
     const { rows: [discR] } = await posDb.query(
       `SELECT COALESCE(SUM(s.discount_amount), 0) as total_discounts FROM sales s WHERE ${df}`
     );
-    const totalDiscounts = parseFloat(discR?.total_discounts || 0);
-    const gross = salesProfit - returnProfit - totalDiscounts;
+    const debtDiscounts = parseFloat(cpRows[0]?.debt_discount_sum || 0);
+    const salesDiscounts = parseFloat(discR?.total_discounts || 0);
+    const totalDiscounts = salesDiscounts + debtDiscounts;
+    const grossSalesBeforeDebtDisc = salesProfit - returnProfit - salesDiscounts;
+    const gross = grossSalesBeforeDebtDisc - debtDiscounts;
     const cost = netRev - gross;
     const exp = parseFloat(et.t || 0);
     const extraProfit = parseFloat(epR.t || 0);
@@ -4264,28 +4323,6 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
       }
     }
 
-    // Customer Debt Payments in this period (exact FIFO realized_profit on new payments, legacy estimate for older rows)
-    const { rows: cpRows } = await posDb.query(`
-      SELECT 
-        COALESCE(SUM(amount), 0) AS debt_total,
-        COALESCE(SUM(cash_amount), 0) AS debt_cash_sum,
-        COALESCE(SUM(instapay_amount), 0) AS debt_insta_sum,
-        COALESCE(SUM(vodafone_amount), 0) AS debt_voda_sum,
-        COALESCE(SUM(CASE WHEN realized_profit IS NOT NULL THEN realized_profit ELSE 0 END), 0) AS exact_realized_profit,
-        COALESCE(SUM(CASE WHEN realized_profit IS NULL THEN amount ELSE 0 END), 0) AS legacy_debt_total,
-        COUNT(*) AS cnt
-      FROM customer_payments cp
-      WHERE ${cpf}
-    `).catch(async () => {
-      const fb = await posDb.query(`
-        SELECT COALESCE(SUM(amount), 0) AS debt_total, COALESCE(SUM(cash_amount), 0) AS debt_cash_sum,
-               COALESCE(SUM(instapay_amount), 0) AS debt_insta_sum, 0 AS debt_voda_sum,
-               0 AS exact_realized_profit, COALESCE(SUM(amount), 0) AS legacy_debt_total, COUNT(*) AS cnt
-        FROM customer_payments cp WHERE ${cpf}
-      `).catch(() => ({ rows: [{ debt_total: 0, debt_cash_sum: 0, debt_insta_sum: 0, debt_voda_sum: 0, exact_realized_profit: 0, legacy_debt_total: 0, cnt: 0 }] }));
-      return fb;
-    });
-
     const debtTotal = parseFloat(cpRows[0]?.debt_total || 0);
     let debtCash = parseFloat(cpRows[0]?.debt_cash_sum || 0);
     let debtInsta = parseFloat(cpRows[0]?.debt_insta_sum || 0);
@@ -4294,13 +4331,13 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
       debtCash = debtTotal;
     }
 
-    const avgMarginRatio = netRev > 0 ? Math.max(0.05, Math.min(0.40, gross / netRev)) : 0.20;
+    const avgMarginRatio = netRev > 0 ? Math.max(0.05, Math.min(0.40, grossSalesBeforeDebtDisc / netRev)) : 0.20;
     const exactRealized = parseFloat(cpRows[0]?.exact_realized_profit || 0);
     const legacyDebtAmt = parseFloat(cpRows[0]?.legacy_debt_total || 0);
     const debtRealizedProfit = exactRealized + (legacyDebtAmt * avgMarginRatio);
 
     const totalCashIn = Math.max(0, cashSalesCollected + debtTotal - refunds);
-    const cashGrossProfit = realizedProfitFromSales + debtRealizedProfit - returnProfit;
+    const cashGrossProfit = realizedProfitFromSales + debtRealizedProfit - returnProfit - debtDiscounts;
     const cashNetProfit = cashGrossProfit - exp + extraProfit;
 
     const cashDrawerTotal = Math.max(0, payCash + debtCash);
@@ -4320,6 +4357,7 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
       accrual: {
         revenue: r2(rev), refunds: r2(refunds), net_revenue: r2(netRev),
         cost: r2(cost), gross_profit: r2(gross), expenses: r2(exp), extra_profit: r2(extraProfit), net_profit: r2(netProfit),
+        debt_discounts: r2(debtDiscounts),
         sales_count: parseInt(sc.cnt, 10),
         payment_breakdown: payRows.map(r => ({ ...r, cnt: parseInt(r.cnt, 10), total: parseFloat(r.total || 0) })),
         cash_revenue: r2(payCash), instapay_revenue: r2(payInstapay), vodafone_revenue: r2(payVodafone),
@@ -4328,6 +4366,7 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
         revenue: r2(totalCashIn), refunds: r2(refunds), net_revenue: r2(totalCashIn),
         cost: r2(Math.max(0, totalCashIn - cashGrossProfit)), gross_profit: r2(cashGrossProfit),
         expenses: r2(exp), extra_profit: r2(extraProfit), net_profit: r2(cashNetProfit),
+        debt_discounts: r2(debtDiscounts),
         sales_cash_collected: r2(cashSalesCollected),
         debt_collected: r2(debtTotal),
         sales_count: parseInt(sc.cnt, 10),
@@ -4342,6 +4381,7 @@ app.get(`${BASE}/api/reports/summary`, async (req, res) => {
       gross_profit: basis === 'accrual' ? r2(gross) : r2(cashGrossProfit),
       expenses: r2(exp),
       extra_profit: r2(extraProfit),
+      debt_discounts: r2(debtDiscounts),
       net_profit: basis === 'accrual' ? r2(netProfit) : r2(cashNetProfit),
       sales_count: parseInt(sc.cnt, 10),
       payment_breakdown: basis === 'accrual' ? payRows.map(r => ({ ...r, cnt: parseInt(r.cnt, 10), total: parseFloat(r.total || 0) })) : cashPaymentBreakdown,
@@ -4684,7 +4724,7 @@ async function computeCapitalSummary(forceRefresh = false) {
   }
   const ymSet = new Map(months.map(m => [m.ym, m]));
 
-  const [salesProfRows, salesDiscRows, retProfRows, expMonthRows, extraMonthRows, snapRows] = await Promise.all([
+  const [salesProfRows, salesDiscRows, debtDiscRows, retProfRows, expMonthRows, extraMonthRows, snapRows] = await Promise.all([
     posDb.query(`
       SELECT TO_CHAR(s.date::date, 'YYYY-MM') AS ym,
              COALESCE(SUM(si.quantity * (si.unit_price - COALESCE(NULLIF(si.snapshot_purchase_price,0), p.purchase_price, 0))), 0) AS gross
@@ -4697,6 +4737,12 @@ async function computeCapitalSummary(forceRefresh = false) {
     posDb.query(`
       SELECT TO_CHAR(date::date, 'YYYY-MM') AS ym, COALESCE(SUM(discount_amount),0) AS disc
       FROM sales
+      WHERE date::date >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months')
+      GROUP BY 1
+    `).catch(() => ({ rows: [] })),
+    posDb.query(`
+      SELECT TO_CHAR(date::date, 'YYYY-MM') AS ym, COALESCE(SUM(COALESCE(discount_amount,0)),0) AS disc
+      FROM customer_payments
       WHERE date::date >= (DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '5 months')
       GROUP BY 1
     `).catch(() => ({ rows: [] })),
@@ -4729,6 +4775,7 @@ async function computeCapitalSummary(forceRefresh = false) {
 
   for (const row of salesProfRows.rows) if (ymSet.has(row.ym)) ymSet.get(row.ym).net_profit += parseFloat(row.gross || 0);
   for (const row of salesDiscRows.rows) if (ymSet.has(row.ym)) ymSet.get(row.ym).net_profit -= parseFloat(row.disc || 0);
+  for (const row of debtDiscRows.rows)  if (ymSet.has(row.ym)) ymSet.get(row.ym).net_profit -= parseFloat(row.disc || 0);
   for (const row of retProfRows.rows)   if (ymSet.has(row.ym)) ymSet.get(row.ym).net_profit -= parseFloat(row.ret_prof || 0);
   for (const row of expMonthRows.rows)  if (ymSet.has(row.ym)) ymSet.get(row.ym).net_profit -= parseFloat(row.exp || 0);
   for (const row of extraMonthRows.rows) if (ymSet.has(row.ym)) ymSet.get(row.ym).net_profit += parseFloat(row.extra || 0);
@@ -5080,12 +5127,11 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
     `, [startDate, endDate]).catch(() => ({ rows: [{ total_refunds: 0 }] }));
 
     const grossSales = parseFloat(salesSummary?.gross_sales || 0);
-    const totalDiscounts = parseFloat(salesSummary?.total_discounts || 0);
+    const salesDiscounts = parseFloat(salesSummary?.total_discounts || 0);
     const netSales = parseFloat(salesSummary?.net_sales || 0);
     const totalCogs = parseFloat(cogsSummary?.total_cogs || 0);
     const rawProfit = parseFloat(spRow?.raw_sales_profit || 0);
-    const accrualGrossProfit = rawProfit - totalDiscounts;
-    const accrualNetProfit = accrualGrossProfit - totalExpenses;
+    const accrualGrossProfitSalesOnly = rawProfit - salesDiscounts;
     const refunds = parseFloat(refundsSummary?.total_refunds || 0);
 
     // ── CASH BASIS CALCULATIONS ──────────────────────────────────────────
@@ -5135,7 +5181,9 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
     const { rows: customerPaymentsList } = await posDb.query(`
       SELECT 
         cp.id, cp.customer_id, cp.amount, cp.cash_amount, cp.instapay_amount,
-        cp.vodafone_amount, cp.vodafone_fee, cp.realized_profit, cp.note, cp.date,
+        cp.vodafone_amount, cp.vodafone_fee, cp.realized_profit,
+        COALESCE(cp.discount_amount, 0) AS discount_amount,
+        cp.note, cp.date,
         COALESCE(c.name, 'عميل #' || cp.customer_id) AS customer_name,
         c.phone AS customer_phone
       FROM customer_payments cp
@@ -5144,7 +5192,7 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
       ORDER BY cp.date DESC
     `, [startDate, endDate]).catch(async () => {
       const fb = await posDb.query(`
-        SELECT cp.id, cp.customer_id, cp.amount, cp.cash_amount, cp.instapay_amount, cp.note, cp.date,
+        SELECT cp.id, cp.customer_id, cp.amount, cp.cash_amount, cp.instapay_amount, 0 AS discount_amount, cp.note, cp.date,
                COALESCE(c.name, 'عميل #' || cp.customer_id) AS customer_name, c.phone AS customer_phone
         FROM customer_payments cp LEFT JOIN customers c ON c.id = cp.customer_id
         WHERE cp.date::date >= $1::date AND cp.date::date <= $2::date ORDER BY cp.date DESC
@@ -5156,6 +5204,7 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
     let debtCash = 0;
     let debtInstapay = 0;
     let debtVodafone = 0;
+    let debtDiscountsTotal = 0;
     let exactDebtProfit = 0;
     let legacyDebtTotal = 0;
 
@@ -5164,6 +5213,7 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
       const cAmt = parseFloat(cp.cash_amount || 0);
       const iAmt = parseFloat(cp.instapay_amount || 0);
       const vAmt = parseFloat(cp.vodafone_amount || 0);
+      debtDiscountsTotal += parseFloat(cp.discount_amount || 0);
       debtCollectionsTotal += amt;
       if (cp.realized_profit !== null && cp.realized_profit !== undefined) {
         exactDebtProfit += parseFloat(cp.realized_profit || 0);
@@ -5174,17 +5224,21 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
         debtCash += cAmt;
         debtInstapay += iAmt;
         debtVodafone += vAmt;
-      } else {
+      } else if (amt > 0) {
         debtCash += amt;
       }
     }
 
+    const totalDiscounts = salesDiscounts + debtDiscountsTotal;
+    const accrualGrossProfit = accrualGrossProfitSalesOnly - debtDiscountsTotal;
+    const accrualNetProfit = accrualGrossProfit - totalExpenses;
+
     // Exact FIFO profit for new payments + average margin ratio only for historical rows where realized_profit IS NULL
-    const avgMarginRatio = netSales > 0 ? Math.max(0.05, Math.min(0.40, accrualGrossProfit / netSales)) : 0.20;
+    const avgMarginRatio = netSales > 0 ? Math.max(0.05, Math.min(0.40, accrualGrossProfitSalesOnly / netSales)) : 0.20;
     const debtRealizedProfit = exactDebtProfit + (legacyDebtTotal * avgMarginRatio);
 
     const totalCashIn = cashSalesCollected + debtCollectionsTotal;
-    const cashGrossProfit = realizedProfitFromSales + debtRealizedProfit;
+    const cashGrossProfit = realizedProfitFromSales + debtRealizedProfit - debtDiscountsTotal;
     const cashNetProfit = cashGrossProfit - totalExpenses;
 
     const cashPaymentBreakdown = [
@@ -5297,6 +5351,7 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
         invoices_count: parseInt(salesSummary?.invoices_count || 0, 10),
         gross_sales: grossSales,
         total_discounts: totalDiscounts,
+        debt_discounts: r2(debtDiscountsTotal),
         net_sales: netSales,
         cogs: totalCogs,
         gross_profit: accrualGrossProfit,
@@ -5311,6 +5366,7 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
           invoices_count: parseInt(salesSummary?.invoices_count || 0, 10),
           gross_sales: grossSales,
           total_discounts: totalDiscounts,
+          debt_discounts: r2(debtDiscountsTotal),
           net_sales: netSales,
           cogs: totalCogs,
           gross_profit: accrualGrossProfit,
@@ -5324,6 +5380,7 @@ app.get(`${BASE}/api/reports/daily-comprehensive`, async (req, res) => {
           invoices_count: parseInt(salesSummary?.invoices_count || 0, 10),
           cash_sales_collected: cashSalesCollected,
           debt_collected: debtCollectionsTotal,
+          debt_discounts: r2(debtDiscountsTotal),
           debt_collections_count: customerPaymentsList.length,
           total_cash_in: totalCashIn,
           realized_gross_profit: cashGrossProfit,
