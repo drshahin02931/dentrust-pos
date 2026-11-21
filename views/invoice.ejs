@@ -468,8 +468,8 @@ const _creditOrderRem = sale.payment_method === 'credit'
     <div class="bold" style="margin-bottom:3px;">💳 طرق سداد الآجل المتاحة:</div>
     <div style="font-size:10px;margin-bottom:4px;">
       <strong>⚡ InstaPay (<%= fmt(prevBal + _creditOrderRem) %> <%= currencyLabel %>):</strong><br/>
-      <a href="https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI" target="_blank" style="color:#000;text-decoration:underline;overflow-wrap:anywhere;">https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI</a><br/>
-      <span>اضغط الرابط لارسال نقود الي <strong>ahlamanwar72@instapay</strong> (Powered by InstaPay)</span>
+      <span class="no-print"><a href="https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI" target="_blank" style="color:#000;text-decoration:underline;overflow-wrap:anywhere;">https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI</a><br/></span>
+      <span><span class="no-print">اضغط الرابط لارسال نقود الي </span><strong>ahlamanwar72@instapay</strong><span class="no-print"> (Powered by InstaPay)</span></span>
     </div>
     <div style="font-size:10px;border-top:1px dashed #000;padding-top:4px;">
       <strong>📲 فودافون كاش (<%= fmt(Math.round((prevBal + _creditOrderRem) * 1.01 * 100) / 100) %> <%= currencyLabel %>):</strong><br/>
@@ -490,9 +490,9 @@ const _creditOrderRem = sale.payment_method === 'credit'
     <div class="balance-box" style="margin-top:6px;line-height:1.5;word-break:break-word;">
       <div class="bold">⚡ الدفع عبر InstaPay:</div>
       <div style="font-size:10px;margin-top:2px;">
-        <a href="https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI" target="_blank" style="color:#000;text-decoration:underline;overflow-wrap:anywhere;">https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI</a><br/>
-        <span>اضغط الرابط لارسال نقود الي <strong>ahlamanwar72@instapay</strong></span><br/>
-        <span>Powered by InstaPay</span>
+        <span class="no-print"><a href="https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI" target="_blank" style="color:#000;text-decoration:underline;overflow-wrap:anywhere;">https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI</a><br/></span>
+        <span><span class="no-print">اضغط الرابط لارسال نقود الي </span><strong>ahlamanwar72@instapay</strong></span><br class="no-print"/>
+        <span class="no-print">Powered by InstaPay</span>
       </div>
     </div>
     <% } %>
