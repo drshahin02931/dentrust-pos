@@ -237,6 +237,18 @@
           <input id="f-min-stock" type="number" min="0" class="w-full border rounded-xl px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-200" placeholder="0"/>
         </div>
 
+        <!-- Wholesale Pricing Settings (Optional) -->
+        <div class="col-span-2 bg-purple-50/70 border border-purple-200 rounded-2xl p-3 grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-bold text-purple-900">📦 أقل عدد لبيع الجملة (اختياري)</label>
+            <input id="f-wholesale-min-qty" type="number" min="0" class="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm mt-1 bg-white focus:outline-none focus:ring-2 focus:ring-purple-300 font-mono font-bold text-purple-900" placeholder="اتركه فارغاً أو 0 لو بدون جملة"/>
+          </div>
+          <div>
+            <label class="text-xs font-bold text-purple-900">💰 سعر الجملة العام (جنيه - اختياري)</label>
+            <input id="f-wholesale-price" type="number" step="0.01" min="0" class="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm mt-1 bg-white focus:outline-none focus:ring-2 focus:ring-purple-300 font-mono font-bold text-purple-900" placeholder="0.00"/>
+          </div>
+        </div>
+
         <!-- Warehouse Quick Action & Batches Preview -->
         <div id="whQuickSection" class="col-span-2 hidden bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-4 space-y-3">
           <div class="flex items-center justify-between">
@@ -624,12 +636,17 @@ function renderTable(products) {
            <span>⏳</span><span>${formatOfferRemainingTime(p.offer_expires_at)}</span>
          </div>`
       : '';
-    const priceCell = isOffer && p.original_price && parseFloat(p.original_price) > parseFloat(p.sale_price)
+    const wMin = parseInt(p.wholesale_min_qty || 0, 10);
+    const wPriceVal = (p.wholesale_price != null && parseFloat(p.wholesale_price) > 0) ? parseFloat(p.wholesale_price) : null;
+    const wholesaleBadge = wMin > 0
+      ? `<span class="mt-0.5 inline-block text-[10px] font-bold text-purple-800 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded-md">📦 جملة (${wMin}+ ق)${wPriceVal ? ': ' + wPriceVal.toFixed(2) + ' ج' : ''}</span>`
+      : '';
+    const priceCell = (isOffer && p.original_price && parseFloat(p.original_price) > parseFloat(p.sale_price)
       ? `<div>
            <span class="text-[11px] text-gray-400 line-through block font-normal">${parseFloat(p.original_price).toFixed(2)}</span>
            <span class="text-red-600 font-black text-sm">${parseFloat(p.sale_price||0).toFixed(2)}</span>
          </div>`
-      : `<span class="text-blue-700 font-semibold">${parseFloat(p.sale_price||0).toFixed(2)}</span>`;
+      : `<span class="text-blue-700 font-semibold">${parseFloat(p.sale_price||0).toFixed(2)}</span>`) + (wholesaleBadge ? `<div>${wholesaleBadge}</div>` : '');
 
     const offerQuickBtn = `
       <button onclick="quickToggleOffer(${p.id}, event)" title="${isOffer ? 'إلغاء تفعيل العرض' : 'تفعيل سريع كـ عرض خاص'}"
@@ -929,6 +946,8 @@ function openModal() {
   document.getElementById("modalError").classList.add("hidden");
   document.getElementById("whQuickSection").classList.add("hidden");
   document.getElementById("f-is-hidden-website").checked = false;
+  document.getElementById("f-wholesale-min-qty").value = "";
+  document.getElementById("f-wholesale-price").value = "";
   document.getElementById("f-is-offer").checked = false;
   document.getElementById("f-original-price").value = "";
   document.getElementById("f-offer-expires-at").value = "";
@@ -962,6 +981,8 @@ function editProduct(id) {
   document.getElementById("f-expiry").value = p.expiry_date || "";
   document.getElementById("f-category").value = p.category || "";
   document.getElementById("f-min-stock").value = p.min_stock || 0;
+  document.getElementById("f-wholesale-min-qty").value = (p.wholesale_min_qty && parseInt(p.wholesale_min_qty, 10) > 0) ? parseInt(p.wholesale_min_qty, 10) : "";
+  document.getElementById("f-wholesale-price").value = (p.wholesale_price != null && parseFloat(p.wholesale_price) > 0) ? parseFloat(p.wholesale_price) : "";
   document.getElementById("f-description").value = p.description || "";
   document.getElementById("f-is-hidden-website").checked = p.is_hidden_from_website === true || p.is_hidden_from_website === 'true' || p.is_hidden_from_website === 1 || p.is_hidden === true || p.hidden === true;
   document.getElementById("modalError").classList.add("hidden");
@@ -1410,6 +1431,8 @@ async function saveProduct(e) {
       expiry_date: document.getElementById("f-expiry").value || null,
       category: document.getElementById("f-category").value.trim() || null,
       min_stock: parseInt(document.getElementById("f-min-stock").value) || 0,
+      wholesale_min_qty: parseInt(document.getElementById("f-wholesale-min-qty").value, 10) || 0,
+      wholesale_price: document.getElementById("f-wholesale-price").value ? parseFloat(document.getElementById("f-wholesale-price").value) : null,
       description: document.getElementById("f-description").value.trim() || null,
       variants: variantItems.length > 0 ? { items: variantItems } : null,
       section: secVal,
@@ -1767,13 +1790,16 @@ function cbLoad(raw) {
       if (!cbData[cat]) cbData[cat] = {};
       Object.entries(val).forEach(([subLabel, subVal]) => {
         if (typeof subVal === 'object' && subVal !== null) {
-          const checked    = subVal.checked ?? true;
-          const disabled   = subVal.disabled ?? false;
-          const reason     = subVal.reason ?? "";
-          const stock      = subVal.stock !== undefined ? subVal.stock : null;
-          const cost_price = subVal.cost_price != null ? parseFloat(subVal.cost_price) : null;
-          const sale_price = subVal.sale_price != null ? parseFloat(subVal.sale_price) : null;
-          cbData[cat][subLabel] = { checked, disabled, reason, stock, cost_price, sale_price };
+          const checked           = subVal.checked ?? true;
+          const disabled          = subVal.disabled ?? false;
+          const reason            = subVal.reason ?? "";
+          const stock             = subVal.stock !== undefined ? subVal.stock : null;
+          const min_stock         = subVal.min_stock != null ? parseInt(subVal.min_stock, 10) : null;
+          const cost_price        = subVal.cost_price != null ? parseFloat(subVal.cost_price) : null;
+          const sale_price        = subVal.sale_price != null ? parseFloat(subVal.sale_price) : null;
+          const wholesale_price   = (subVal.wholesale_price != null && parseFloat(subVal.wholesale_price) > 0) ? parseFloat(subVal.wholesale_price) : null;
+          const exclude_from_bulk = !!subVal.exclude_from_bulk;
+          cbData[cat][subLabel] = { checked, disabled, reason, stock, min_stock, cost_price, sale_price, wholesale_price, exclude_from_bulk };
         }
       });
       return;
@@ -1783,14 +1809,16 @@ function cbLoad(raw) {
     const cat = key.slice(0, sep);
     const label = key.slice(sep + 2);
     if (!cbData[cat]) cbData[cat] = {};
-    const checked    = typeof val === 'boolean' ? val : (val?.checked ?? false);
-    const disabled   = typeof val === 'object' ? (val?.disabled ?? false) : false;
-    const reason     = typeof val === 'object' ? (val?.reason ?? "") : "";
-    const stock      = typeof val === 'object' && val?.stock !== undefined ? val.stock : null;
-    const min_stock  = typeof val === 'object' && val?.min_stock != null ? parseInt(val.min_stock, 10) : null;
-    const cost_price = typeof val === 'object' && val?.cost_price != null ? parseFloat(val.cost_price) : null;
-    const sale_price = typeof val === 'object' && val?.sale_price != null ? parseFloat(val.sale_price) : null;
-    cbData[cat][label] = { checked, disabled, reason, stock, min_stock, cost_price, sale_price };
+    const checked           = typeof val === 'boolean' ? val : (val?.checked ?? false);
+    const disabled          = typeof val === 'object' ? (val?.disabled ?? false) : false;
+    const reason            = typeof val === 'object' ? (val?.reason ?? "") : "";
+    const stock             = typeof val === 'object' && val?.stock !== undefined ? val.stock : null;
+    const min_stock         = typeof val === 'object' && val?.min_stock != null ? parseInt(val.min_stock, 10) : null;
+    const cost_price        = typeof val === 'object' && val?.cost_price != null ? parseFloat(val.cost_price) : null;
+    const sale_price        = typeof val === 'object' && val?.sale_price != null ? parseFloat(val.sale_price) : null;
+    const wholesale_price   = (typeof val === 'object' && val?.wholesale_price != null && parseFloat(val.wholesale_price) > 0) ? parseFloat(val.wholesale_price) : null;
+    const exclude_from_bulk = typeof val === 'object' ? !!val?.exclude_from_bulk : false;
+    cbData[cat][label] = { checked, disabled, reason, stock, min_stock, cost_price, sale_price, wholesale_price, exclude_from_bulk };
   });
   cbRender();
   cbUpdateTotalQty();
@@ -1801,12 +1829,14 @@ function cbGetValues() {
   Object.entries(cbData).forEach(([cat, opts]) => {
     Object.entries(opts).forEach(([label, v]) => {
       const key = `${cat}::${label}`;
-      const hasStock = v.stock !== null && v.stock !== undefined;
-      const hasMin   = v.min_stock !== null && v.min_stock !== undefined && !isNaN(v.min_stock) && parseInt(v.min_stock, 10) > 0;
-      const hasCost  = v.cost_price !== null && v.cost_price !== undefined && !isNaN(v.cost_price);
-      const hasPrice = v.sale_price !== null && v.sale_price !== undefined && !isNaN(v.sale_price);
+      const hasStock       = v.stock !== null && v.stock !== undefined;
+      const hasMin         = v.min_stock !== null && v.min_stock !== undefined && !isNaN(v.min_stock) && parseInt(v.min_stock, 10) > 0;
+      const hasCost        = v.cost_price !== null && v.cost_price !== undefined && !isNaN(v.cost_price);
+      const hasPrice       = v.sale_price !== null && v.sale_price !== undefined && !isNaN(v.sale_price);
+      const hasWholesale   = v.wholesale_price !== null && v.wholesale_price !== undefined && !isNaN(v.wholesale_price) && parseFloat(v.wholesale_price) > 0;
+      const hasExcludeBulk = !!v.exclude_from_bulk;
 
-      if (!v.disabled && !hasStock && !hasMin && !hasCost && !hasPrice) {
+      if (!v.disabled && !hasStock && !hasMin && !hasCost && !hasPrice && !hasWholesale && !hasExcludeBulk) {
         out[key] = v.checked;
       } else {
         const obj = { checked: v.checked };
@@ -1815,6 +1845,8 @@ function cbGetValues() {
         if (hasMin) obj.min_stock = parseInt(v.min_stock, 10);
         if (hasCost) obj.cost_price = parseFloat(v.cost_price);
         if (hasPrice) obj.sale_price = parseFloat(v.sale_price);
+        if (hasWholesale) obj.wholesale_price = parseFloat(v.wholesale_price);
+        if (hasExcludeBulk) obj.exclude_from_bulk = true;
         out[key] = obj;
       }
     });
@@ -1837,6 +1869,19 @@ function cbSetCost(cat, label, val) {
 function cbSetSalePrice(cat, label, val) {
   if (cbData[cat]?.[label]) {
     cbData[cat][label].sale_price = val === "" ? null : Math.max(0, parseFloat(val) || 0);
+  }
+}
+
+function cbSetWholesalePrice(cat, label, val) {
+  if (cbData[cat]?.[label]) {
+    cbData[cat][label].wholesale_price = val === "" ? null : Math.max(0, parseFloat(val) || 0);
+  }
+}
+
+function cbToggleExcludeBulk(cat, label, checked) {
+  if (cbData[cat]?.[label]) {
+    cbData[cat][label].exclude_from_bulk = !!checked;
+    cbRender();
   }
 }
 
@@ -1866,7 +1911,7 @@ function cbAddOption(cat) {
   if (!label) { inp.focus(); return; }
   if (!cbData[cat]) cbData[cat] = {};
   if (cbData[cat][label]) { inp.value = ""; return; }
-  cbData[cat][label] = { checked: true, disabled: false, reason: "", stock: null, min_stock: null, cost_price: null, sale_price: null };
+  cbData[cat][label] = { checked: true, disabled: false, reason: "", stock: null, min_stock: null, cost_price: null, sale_price: null, wholesale_price: null, exclude_from_bulk: false };
   inp.value = "";
   cbRender();
   setTimeout(() => { const el = document.getElementById(`cb-opt-inp-${CSS.escape(cat)}`); if (el) el.focus(); }, 30);
@@ -1941,10 +1986,12 @@ function cbRender() {
       const o = opts[label];
       const isSoldOut = o.stock !== null && o.stock <= 0;
       const isDisabled = o.disabled || isSoldOut;
-      const stockVal = o.stock !== null ? o.stock : "";
-      const minVal = o.min_stock !== null && o.min_stock !== undefined ? o.min_stock : "";
-      const costVal = o.cost_price !== null && o.cost_price !== undefined ? o.cost_price : "";
-      const saleVal = o.sale_price !== null && o.sale_price !== undefined ? o.sale_price : "";
+      const stockVal     = o.stock !== null ? o.stock : "";
+      const minVal       = o.min_stock !== null && o.min_stock !== undefined ? o.min_stock : "";
+      const costVal      = o.cost_price !== null && o.cost_price !== undefined ? o.cost_price : "";
+      const saleVal      = o.sale_price !== null && o.sale_price !== undefined ? o.sale_price : "";
+      const wholesaleVal = (o.wholesale_price !== null && o.wholesale_price !== undefined && o.wholesale_price > 0) ? o.wholesale_price : "";
+      const isExclBulk   = !!o.exclude_from_bulk;
       return `<div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl border ${isDisabled ? 'border-red-200 bg-red-50/50' : 'border-gray-200 bg-white shadow-xs'}">
         <div class="flex items-center gap-2 min-w-[120px]">
           <input type="checkbox" ${o.checked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''}
@@ -1988,6 +2035,23 @@ function cbRender() {
               class="w-16 border border-blue-300 rounded px-1 py-0.5 text-xs text-center font-mono font-bold text-blue-900 bg-white focus:ring-1 focus:ring-blue-400"/>
             <span class="text-[10px] text-blue-700 font-bold">ج</span>
           </div>
+
+          <!-- Wholesale Price per variant -->
+          <div class="flex items-center gap-1 bg-purple-50/80 border border-purple-200 rounded-lg px-2 py-1" title="سعر جملة خاص بهذا المقاس (اختياري — لو تركته فارغاً يظل بسعره الأساسي)">
+            <span class="text-[11px] text-purple-800 font-bold">جملة:</span>
+            <input type="number" min="0" step="0.01" placeholder="بدون" value="${wholesaleVal}"
+              onchange="cbSetWholesalePrice('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}',this.value)"
+              class="w-16 border border-purple-300 rounded px-1 py-0.5 text-xs text-center font-mono font-bold text-purple-900 bg-white focus:ring-1 focus:ring-purple-400"/>
+            <span class="text-[10px] text-purple-700 font-bold">ج</span>
+          </div>
+
+          <!-- Exclude from Bulk -->
+          <label class="flex items-center gap-1 px-2 py-1 rounded-lg border cursor-pointer select-none ${isExclBulk ? 'bg-orange-100 border-orange-300 text-orange-900 font-bold' : 'bg-gray-50 border-gray-200 text-gray-600'}" title="استثناء هذا المقاس من بيع الجملة وعدّاد التشكيل">
+            <input type="checkbox" ${isExclBulk ? 'checked' : ''}
+              onchange="cbToggleExcludeBulk('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}',this.checked)"
+              class="w-3.5 h-3.5 accent-orange-600 cursor-pointer"/>
+            <span class="text-[11px]">استثناء جملة</span>
+          </label>
 
           <button type="button" title="${isDisabled ? 'تفعيل' : 'تعطيل'}"
             onclick="cbToggleDisabled('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}')"

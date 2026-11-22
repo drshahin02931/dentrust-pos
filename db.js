@@ -384,6 +384,8 @@ const MIGRATIONS = [
   "ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS realized_profit NUMERIC",
   "ALTER TABLE customer_payments ADD COLUMN IF NOT EXISTS discount_amount NUMERIC DEFAULT 0",
   "ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0",
+  "ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS wholesale_min_qty INTEGER DEFAULT 0",
+  "ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC",
   `CREATE TABLE IF NOT EXISTS company_assets (
     id SERIAL PRIMARY KEY,
     asset_type TEXT NOT NULL,
@@ -482,6 +484,8 @@ const PUBLIC_PRODUCTS_MIGRATIONS = [
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS orig_section TEXT",
   "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS gender TEXT DEFAULT 'unisex'",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS wholesale_min_qty INTEGER DEFAULT 0",
+  "ALTER TABLE public.products ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC",
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS paid_amount NUMERIC DEFAULT 0",
   "ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS paid_amount NUMERIC DEFAULT 0",
   "ALTER TABLE public.products DISABLE ROW LEVEL SECURITY",
@@ -525,7 +529,9 @@ SELECT
   COALESCE(p.is_hidden, false)                                     AS is_hidden,
   COALESCE(p.hidden, false)                                        AS hidden,
   COALESCE(p.orig_section, p.section, 'dental')                    AS orig_section,
-  COALESCE(p.gender, 'unisex')                                    AS gender
+  COALESCE(p.gender, 'unisex')                                    AS gender,
+  COALESCE(p.wholesale_min_qty, 0)                                AS wholesale_min_qty,
+  p.wholesale_price                                               AS wholesale_price
 FROM public.products p
 LEFT JOIN public.categories c ON c.id = p.category_id
 `;
@@ -571,7 +577,8 @@ BEGIN
     expiry_date, photos, category_id, min_stock, supplier_id,
     details, variants, section, checkbox_values, is_offer, is_sold_out,
     original_price, offer_expires_at, is_best_seller, gender,
-    is_hidden_from_website, is_hidden, hidden, orig_section
+    is_hidden_from_website, is_hidden, hidden, orig_section,
+    wholesale_min_qty, wholesale_price
   ) VALUES (
     NEW.barcode,
     NEW.product_name,
@@ -596,7 +603,9 @@ BEGIN
     COALESCE(NEW.is_hidden_from_website, false),
     COALESCE(NEW.is_hidden_from_website, false),
     COALESCE(NEW.is_hidden_from_website, false),
-    COALESCE(NULLIF(NEW.section, 'hidden'), 'dental')
+    COALESCE(NULLIF(NEW.section, 'hidden'), 'dental'),
+    COALESCE(NEW.wholesale_min_qty, 0),
+    NEW.wholesale_price
   ) RETURNING id INTO v_new_id;
 
   NEW.id         := v_new_id;
@@ -684,7 +693,9 @@ BEGIN
     is_hidden_from_website = COALESCE(NEW.is_hidden_from_website, is_hidden_from_website),
     is_hidden      = COALESCE(NEW.is_hidden_from_website, is_hidden),
     hidden         = COALESCE(NEW.is_hidden_from_website, hidden),
-    gender         = COALESCE(NEW.gender, gender, 'unisex')
+    gender         = COALESCE(NEW.gender, gender, 'unisex'),
+    wholesale_min_qty = COALESCE(NEW.wholesale_min_qty, wholesale_min_qty, 0),
+    wholesale_price   = NEW.wholesale_price
   WHERE id = NEW.id;
 
   RETURN NEW;

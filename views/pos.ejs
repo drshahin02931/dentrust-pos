@@ -1253,10 +1253,16 @@ function parseVariants(p) {
               if (!checked || disabled) return;
               const stock = subVal.stock != null ? parseInt(subVal.stock) : (p.quantity || 0);
               const costPrice = (subVal.cost_price != null && parseFloat(subVal.cost_price) > 0)
+                ? parseFloat(subVal.cost_price)
+                : parseFloat(p.purchase_price || 0);
               const salePrice = (subVal.sale_price != null && parseFloat(subVal.sale_price) > 0)
                 ? parseFloat(subVal.sale_price)
                 : parseFloat(p.sale_price || 0);
-              sizes.push({ label: subKey, qty: stock, cost_price: costPrice, sale_price: salePrice, _cbKey: `${key}::${subKey}`, group: key });
+              const wholesalePrice = (subVal.wholesale_price != null && parseFloat(subVal.wholesale_price) > 0)
+                ? parseFloat(subVal.wholesale_price)
+                : null;
+              const excludeFromBulk = !!subVal.exclude_from_bulk;
+              sizes.push({ label: subKey, qty: stock, cost_price: costPrice, sale_price: salePrice, wholesale_price: wholesalePrice, exclude_from_bulk: excludeFromBulk, _cbKey: `${key}::${subKey}`, group: key });
             }
           });
           return;
@@ -1277,7 +1283,11 @@ function parseVariants(p) {
         const salePrice = (typeof val === 'object' && val?.sale_price != null && parseFloat(val.sale_price) > 0)
           ? parseFloat(val.sale_price)
           : parseFloat(p.sale_price || 0);
-        sizes.push({ label, qty: stock, cost_price: costPrice, sale_price: salePrice, _cbKey: key, group });
+        const wholesalePrice = (typeof val === 'object' && val?.wholesale_price != null && parseFloat(val.wholesale_price) > 0)
+          ? parseFloat(val.wholesale_price)
+          : null;
+        const excludeFromBulk = typeof val === 'object' ? !!val?.exclude_from_bulk : false;
+        sizes.push({ label, qty: stock, cost_price: costPrice, sale_price: salePrice, wholesale_price: wholesalePrice, exclude_from_bulk: excludeFromBulk, _cbKey: key, group });
       });
       if (sizes.length > 0) return { sizes };
     } catch(e) {}
@@ -1485,19 +1495,36 @@ function confirmVariantAdd() {
     const variantCost = (sizeObj && sizeObj.cost_price != null && parseFloat(sizeObj.cost_price) > 0)
       ? parseFloat(sizeObj.cost_price)
       : parseFloat(_vpProduct.purchase_price || 0);
+    const retailPrice = (sizeObj && sizeObj.sale_price != null && parseFloat(sizeObj.sale_price) > 0)
+      ? parseFloat(sizeObj.sale_price)
+      : parseFloat(_vpProduct.sale_price || 0);
+    const anyVarHasWholesale = (_vpVariants.sizes || []).some(x => x.wholesale_price != null && parseFloat(x.wholesale_price) > 0);
+    const isExcludedBulk = !!(sizeObj && sizeObj.exclude_from_bulk);
+    let variantWholesalePrice = null;
+    if (!isExcludedBulk) {
+      if (sizeObj && sizeObj.wholesale_price != null && parseFloat(sizeObj.wholesale_price) > 0) {
+        variantWholesalePrice = parseFloat(sizeObj.wholesale_price);
+      } else if (!anyVarHasWholesale && _vpProduct.wholesale_price != null && parseFloat(_vpProduct.wholesale_price) > 0) {
+        variantWholesalePrice = parseFloat(_vpProduct.wholesale_price);
+      }
+    }
     cart.push({
-      _cartKey:      cartKey,
-      product_id:    _vpProduct.id,
-      product_name:  `${_vpProduct.product_name} — ${label}`,
-      _baseName:     _vpProduct.product_name,
-      _size:         _vpSelSize,
-      selected_size: _vpSelSize,
-      selected_option: _vpSelCbKey || null,
-      _color:        _vpSelColor || null,
-      unit_price:    (sizeObj && sizeObj.sale_price != null && parseFloat(sizeObj.sale_price) > 0) ? parseFloat(sizeObj.sale_price) : _vpProduct.sale_price,
-      purchase_price: variantCost,
-      quantity:      qty,
-      max_qty:       maxQty
+      _cartKey:          cartKey,
+      product_id:        _vpProduct.id,
+      product_name:      `${_vpProduct.product_name} — ${label}`,
+      _baseName:         _vpProduct.product_name,
+      _size:             _vpSelSize,
+      selected_size:     _vpSelSize,
+      selected_option:   _vpSelCbKey || null,
+      _color:            _vpSelColor || null,
+      unit_price:        retailPrice,
+      retail_price:      retailPrice,
+      purchase_price:    variantCost,
+      wholesale_min_qty: parseInt(_vpProduct.wholesale_min_qty || 0, 10) || 0,
+      wholesale_price:   variantWholesalePrice,
+      exclude_from_bulk: isExcludedBulk,
+      quantity:          qty,
+      max_qty:           maxQty
     });
   }
   closeVariantPicker();
@@ -1515,14 +1542,98 @@ function addToCart(product) {
     existing.quantity++;
   } else {
     cart.push({
-      product_id:    product.id,
-      product_name:  product.product_name,
-      unit_price:    product.sale_price,
-      purchase_price: product.purchase_price || 0,
-      quantity:      1,
-      max_qty:       product.quantity
+      product_id:        product.id,
+      product_name:      product.product_name,
+      unit_price:        product.sale_price,
+      retail_price:      parseFloat(product.sale_price || 0),
+      purchase_price:    product.purchase_price || 0,
+      wholesale_min_qty: parseInt(product.wholesale_min_qty || 0, 10) || 0,
+      wholesale_price:   (product.wholesale_price != null && parseFloat(product.wholesale_price) > 0) ? parseFloat(product.wholesale_price) : null,
+      exclude_from_bulk: false,
+      quantity:          1,
+      max_qty:           product.quantity
     });
   }
+  renderCart();
+}
+
+function getItemResolvedBulkMeta(item) {
+  const prod = (_posCatProducts || []).find(p => p.id === item.product_id);
+  const minQty = prod ? (parseInt(prod.wholesale_min_qty || 0, 10) || 0) : (parseInt(item.wholesale_min_qty || 0, 10) || 0);
+  const costPrice = parseFloat(item.purchase_price || prod?.purchase_price || 0) || 0;
+  let whPrice = (item.wholesale_price != null && parseFloat(item.wholesale_price) > 0) ? parseFloat(item.wholesale_price) : null;
+  let retailPrice = (item.retail_price != null && parseFloat(item.retail_price) > 0) ? parseFloat(item.retail_price) : null;
+  let excludeFromBulk = !!item.exclude_from_bulk;
+
+  if (prod) {
+    const pv = parseVariants(prod);
+    const szKey = item.selected_option || item._size || item.selected_size;
+    if (szKey && pv && Array.isArray(pv.sizes)) {
+      const anyVarW = pv.sizes.some(x => x.wholesale_price != null && parseFloat(x.wholesale_price) > 0);
+      const match = pv.sizes.find(s => (s._cbKey && s._cbKey === szKey) || s.label === szKey);
+      if (match) {
+        excludeFromBulk = !!match.exclude_from_bulk;
+        if (!excludeFromBulk) {
+          if (match.wholesale_price != null && parseFloat(match.wholesale_price) > 0) {
+            whPrice = parseFloat(match.wholesale_price);
+          } else if (!anyVarW && prod.wholesale_price != null && parseFloat(prod.wholesale_price) > 0) {
+            whPrice = parseFloat(prod.wholesale_price);
+          } else {
+            whPrice = null;
+          }
+        } else {
+          whPrice = null;
+        }
+        if (retailPrice === null) {
+          retailPrice = (match.sale_price != null && parseFloat(match.sale_price) > 0) ? parseFloat(match.sale_price) : parseFloat(prod.sale_price || 0);
+        }
+      }
+    } else {
+      if (prod.wholesale_price != null && parseFloat(prod.wholesale_price) > 0) {
+        whPrice = parseFloat(prod.wholesale_price);
+      }
+      if (retailPrice === null) retailPrice = parseFloat(prod.sale_price || 0);
+    }
+  }
+  return { minQty, costPrice, whPrice, retailPrice: retailPrice ?? item.unit_price, excludeFromBulk };
+}
+
+function getProductBulkStatus(item) {
+  const meta = getItemResolvedBulkMeta(item);
+  const eligibleItems = cart.filter(i => i.product_id === item.product_id && !i.is_gift && !getItemResolvedBulkMeta(i).excludeFromBulk);
+  const totalEligibleQty = eligibleItems.reduce((sum, i) => sum + (parseInt(i.quantity || 0, 10) || 0), 0);
+  const qualifies = meta.minQty > 0 && totalEligibleQty >= meta.minQty;
+  return { ...meta, eligibleItems, totalEligibleQty, qualifies };
+}
+
+function applyWholesaleToProduct(productId) {
+  cart.forEach(item => {
+    if (item.product_id !== productId || item.is_gift) return;
+    const meta = getItemResolvedBulkMeta(item);
+    if (!meta.excludeFromBulk && meta.whPrice !== null && meta.whPrice > 0) {
+      if (item.retail_price == null) item.retail_price = meta.retailPrice;
+      item.wholesale_price = meta.whPrice;
+      item.wholesale_min_qty = meta.minQty;
+      item.exclude_from_bulk = false;
+      item.unit_price = meta.whPrice;
+      item._wholesaleApplied = true;
+      item._priceEdited = true;
+    }
+  });
+  renderCart();
+}
+
+function revertRetailToProduct(productId) {
+  cart.forEach(item => {
+    if (item.product_id !== productId || item.is_gift) return;
+    const meta = getItemResolvedBulkMeta(item);
+    const restorePrice = (item.retail_price != null && parseFloat(item.retail_price) > 0) ? parseFloat(item.retail_price) : meta.retailPrice;
+    if (restorePrice != null) {
+      item.unit_price = restorePrice;
+      item._wholesaleApplied = false;
+      item._priceEdited = false;
+    }
+  });
   renderCart();
 }
 
@@ -1546,20 +1657,62 @@ function renderCart() {
                <span class="text-xs text-gray-400">جنيه</span>
              </div>`
           : `<div class="text-xs text-gray-500">${item.unit_price.toFixed(2)} جنيه</div>`);
-    return `<div class="flex items-center gap-3 px-4 py-3 ${isGiftItem ? 'bg-emerald-50/40 border-r-4 border-emerald-500' : (item._priceEdited ? 'bg-orange-50/30' : '')}">
-      <div class="flex-1 min-w-0">
-        <div class="font-medium text-gray-800 text-sm truncate">${item.product_name}${item._priceEdited ? ' <span class="text-xs text-orange-500">✏️</span>' : ''}</div>
-        ${priceHtml}
+
+    let alertsHtml = '';
+    if (!isGiftItem) {
+      const bulkSt = getProductBulkStatus(item);
+      if (bulkSt.minQty > 0 && bulkSt.excludeFromBulk) {
+        alertsHtml += `<span class="inline-block mt-1 text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">🚫 هذا المقاس مستثنى من الجملة</span>`;
+      } else if (bulkSt.qualifies && !bulkSt.excludeFromBulk && bulkSt.whPrice !== null && item.unit_price > bulkSt.whPrice + 0.001) {
+        alertsHtml += `<div class="mt-1.5 flex items-center justify-between gap-2 bg-purple-50 border border-purple-300 text-purple-900 px-2.5 py-1.5 rounded-xl text-[11px] font-bold">
+          <span>📦 وصل للحد الأدنى للجملة (${bulkSt.totalEligibleQty}/${bulkSt.minQty}) — تحب تغيّر لسعر الجملة (${bulkSt.whPrice.toFixed(2)} ج)؟</span>
+          <button type="button" onclick="applyWholesaleToProduct(${item.product_id})"
+            class="bg-purple-700 hover:bg-purple-800 text-white px-2.5 py-1 rounded-lg text-[11px] font-black shadow-2xs whitespace-nowrap cursor-pointer">
+            ✅ تطبيق الجملة
+          </button>
+        </div>`;
+      } else if (item._wholesaleApplied && bulkSt.whPrice !== null && Math.abs(item.unit_price - bulkSt.whPrice) < 0.01) {
+        if (bulkSt.qualifies) {
+          alertsHtml += `<div class="mt-1 flex items-center justify-between gap-2 bg-emerald-50 border border-emerald-200 text-emerald-800 px-2 py-1 rounded-lg text-[10px] font-bold">
+            <span>✅ مطبّق سعر الجملة (${bulkSt.whPrice.toFixed(2)} ج • إجمالي التشكيل: ${bulkSt.totalEligibleQty})</span>
+            <button type="button" onclick="revertRetailToProduct(${item.product_id})" class="text-gray-500 hover:text-red-600 underline cursor-pointer">إلغاء الجملة</button>
+          </div>`;
+        } else {
+          alertsHtml += `<div class="mt-1 flex items-center justify-between gap-2 bg-amber-50 border border-amber-300 text-amber-900 px-2 py-1 rounded-lg text-[11px] font-bold">
+            <span>⚠️ الكمية (${bulkSt.totalEligibleQty}) أقل من حد الجملة (${bulkSt.minQty})!</span>
+            <button type="button" onclick="revertRetailToProduct(${item.product_id})" class="bg-amber-600 hover:bg-amber-700 text-white px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer">إرجاع للسعر الأساسي</button>
+          </div>`;
+        }
+      }
+
+      if (bulkSt.costPrice > 0 && item.unit_price < bulkSt.costPrice - 0.001) {
+        alertsHtml += `<div class="mt-1 flex items-center gap-1 bg-red-50 border border-red-300 text-red-700 px-2 py-1 rounded-lg text-[11px] font-black">
+          <span>🚨 تحذير: السعر أقل من سعر التكلفة (${bulkSt.costPrice.toFixed(2)} ج)!</span>
+        </div>`;
+      } else if (bulkSt.whPrice !== null && item.unit_price < bulkSt.whPrice - 0.001) {
+        alertsHtml += `<div class="mt-1 flex items-center gap-1 bg-amber-50 border border-amber-300 text-amber-800 px-2 py-1 rounded-lg text-[11px] font-bold">
+          <span>⚠️ تنبيه: السعر أقل من سعر الجملة (${bulkSt.whPrice.toFixed(2)} ج)</span>
+        </div>`;
+      }
+    }
+
+    return `<div class="px-4 py-3 ${isGiftItem ? 'bg-emerald-50/40 border-r-4 border-emerald-500' : (item._priceEdited ? 'bg-orange-50/30' : '')}">
+      <div class="flex items-center gap-3">
+        <div class="flex-1 min-w-0">
+          <div class="font-medium text-gray-800 text-sm truncate">${item.product_name}${item._priceEdited ? ' <span class="text-xs text-orange-500">✏️</span>' : ''}</div>
+          ${priceHtml}
+        </div>
+        <div class="flex items-center gap-1">
+          <button onclick="changeQty(${idx},-1)" class="w-7 h-7 rounded-lg bg-gray-100 hover:bg-red-100 text-gray-600 font-bold text-lg flex items-center justify-center leading-none">−</button>
+          <input type="number" min="1" max="${getEffectiveItemMax(item)}" value="${item.quantity}"
+            onchange="setCartQty(${idx}, this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}" onfocus="this.select()"
+            class="w-14 h-7 text-center font-bold text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono bg-white" />
+          <button onclick="changeQty(${idx},1)"  class="w-7 h-7 rounded-lg bg-gray-100 hover:bg-green-100 text-gray-600 font-bold text-lg flex items-center justify-center leading-none">+</button>
+        </div>
+        <div class="font-bold text-blue-700 w-20 text-left text-sm">${(item.unit_price*item.quantity).toFixed(2)}</div>
+        <button onclick="removeItem(${idx})" class="text-red-400 hover:text-red-600 text-xl leading-none">×</button>
       </div>
-      <div class="flex items-center gap-1">
-        <button onclick="changeQty(${idx},-1)" class="w-7 h-7 rounded-lg bg-gray-100 hover:bg-red-100 text-gray-600 font-bold text-lg flex items-center justify-center leading-none">−</button>
-        <input type="number" min="1" max="${getEffectiveItemMax(item)}" value="${item.quantity}"
-          onchange="setCartQty(${idx}, this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}" onfocus="this.select()"
-          class="w-14 h-7 text-center font-bold text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono bg-white" />
-        <button onclick="changeQty(${idx},1)"  class="w-7 h-7 rounded-lg bg-gray-100 hover:bg-green-100 text-gray-600 font-bold text-lg flex items-center justify-center leading-none">+</button>
-      </div>
-      <div class="font-bold text-blue-700 w-20 text-left text-sm">${(item.unit_price*item.quantity).toFixed(2)}</div>
-      <button onclick="removeItem(${idx})" class="text-red-400 hover:text-red-600 text-xl leading-none">×</button>
+      ${alertsHtml}
     </div>`;
   }).join("");
   updateTotal();
@@ -1677,12 +1830,8 @@ function editPrice(idx, val) {
   if (!isNaN(v) && v >= 0) {
     cart[idx].unit_price = v;
     cart[idx]._priceEdited = true;
-    updateTotal();
-    setTimeout(() => {
-      const body = document.getElementById("cartBody");
-      const totalEls = body.querySelectorAll('.text-blue-700.w-20');
-      cart.forEach((item,i) => { if (totalEls[i]) totalEls[i].textContent = (item.unit_price*item.quantity).toFixed(2); });
-    }, 0);
+    cart[idx]._wholesaleApplied = false;
+    renderCart();
   }
 }
 

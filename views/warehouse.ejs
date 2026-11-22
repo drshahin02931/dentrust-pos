@@ -306,6 +306,18 @@
               class="w-full border rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300"/>
           </div>
         </div>
+        <div class="grid grid-cols-2 gap-2 pt-2 border-t border-gray-200/70">
+          <div>
+            <label class="text-xs font-bold text-purple-900 block mb-1">📦 أقل عدد جملة (اختياري)</label>
+            <input id="aw-wholesale-min-qty" type="number" min="0" value="" placeholder="بدون جملة"
+              class="w-full border border-purple-200 rounded-xl px-3 py-1.5 text-sm text-center font-mono font-bold text-purple-900 bg-purple-50/40 focus:outline-none focus:ring-2 focus:ring-purple-300"/>
+          </div>
+          <div>
+            <label class="text-xs font-bold text-purple-900 block mb-1">💰 سعر الجملة (اختياري)</label>
+            <input id="aw-wholesale-price" type="number" min="0" step="0.01" value="" placeholder="0.00"
+              class="w-full border border-purple-200 rounded-xl px-3 py-1.5 text-sm text-center font-mono font-bold text-purple-900 bg-purple-50/40 focus:outline-none focus:ring-2 focus:ring-purple-300"/>
+          </div>
+        </div>
       </div>
 
       <!-- Description & Notes -->
@@ -378,6 +390,19 @@
           <label class="text-xs font-bold text-rose-700 block mb-1">الحد الأدنى بالمستودع</label>
           <input id="ew-min-stock" type="number" min="0" value="0"
             class="w-full border border-rose-200 rounded-xl px-3 py-2 text-sm font-mono font-bold text-rose-800 bg-rose-50/40 focus:outline-none focus:ring-2 focus:ring-rose-400"/>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 bg-purple-50/60 border border-purple-200 rounded-2xl p-3">
+        <div>
+          <label class="text-xs font-bold text-purple-900 block mb-1">📦 أقل عدد جملة (يتنقل للمحل)</label>
+          <input id="ew-wholesale-min-qty" type="number" min="0" value="" placeholder="بدون جملة"
+            class="w-full border border-purple-200 rounded-xl px-3 py-1.5 text-sm font-mono font-bold text-purple-900 bg-white focus:outline-none focus:ring-2 focus:ring-purple-400"/>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-purple-900 block mb-1">💰 سعر الجملة العام (EGP)</label>
+          <input id="ew-wholesale-price" type="number" min="0" step="0.01" value="" placeholder="0.00"
+            class="w-full border border-purple-200 rounded-xl px-3 py-1.5 text-sm font-mono font-bold text-purple-900 bg-white focus:outline-none focus:ring-2 focus:ring-purple-400"/>
         </div>
       </div>
 
@@ -979,7 +1004,9 @@ function whCbAddPreset(type) {
           stock: 1,
           min_stock: 0,
           cost_price: defaultCost > 0 ? defaultCost : null,
-          sale_price: defaultPrice > 0 ? defaultPrice : null
+          sale_price: defaultPrice > 0 ? defaultPrice : null,
+          wholesale_price: null,
+          exclude_from_bulk: false
         };
       }
     });
@@ -994,7 +1021,9 @@ function whCbAddPreset(type) {
           stock: 1,
           min_stock: 0,
           cost_price: defaultCost > 0 ? defaultCost : null,
-          sale_price: defaultPrice > 0 ? defaultPrice : null
+          sale_price: defaultPrice > 0 ? defaultPrice : null,
+          wholesale_price: null,
+          exclude_from_bulk: false
         };
       }
     });
@@ -1039,7 +1068,9 @@ function whCbAddOption(cat) {
     stock: 1,
     min_stock: 0,
     cost_price: defaultCost > 0 ? defaultCost : null,
-    sale_price: defaultPrice > 0 ? defaultPrice : null
+    sale_price: defaultPrice > 0 ? defaultPrice : null,
+    wholesale_price: null,
+    exclude_from_bulk: false
   };
   inp.value = "";
   whCbRender();
@@ -1089,6 +1120,19 @@ function whCbSetSalePrice(cat, label, val) {
   o.sale_price = val === "" ? null : parseFloat(val) || 0;
 }
 
+function whCbSetWholesalePrice(cat, label, val) {
+  const o = whCbData[cat]?.[label];
+  if (!o) return;
+  o.wholesale_price = val === "" ? null : Math.max(0, parseFloat(val) || 0);
+}
+
+function whCbToggleExcludeBulk(cat, label, checked) {
+  const o = whCbData[cat]?.[label];
+  if (!o) return;
+  o.exclude_from_bulk = !!checked;
+  whCbRender();
+}
+
 function whCbUpdateTotalQty() {
   let total = 0;
   let count = 0;
@@ -1130,10 +1174,12 @@ function whCbRender() {
 
     const optRows = labels.map(label => {
       const o = opts[label];
-      const stockVal = o.stock !== null && o.stock !== undefined ? o.stock : "";
-      const minVal = o.min_stock !== null && o.min_stock !== undefined && o.min_stock > 0 ? o.min_stock : "";
-      const costVal = o.cost_price !== null && o.cost_price !== undefined ? o.cost_price : "";
-      const saleVal = o.sale_price !== null && o.sale_price !== undefined ? o.sale_price : "";
+      const stockVal     = o.stock !== null && o.stock !== undefined ? o.stock : "";
+      const minVal       = o.min_stock !== null && o.min_stock !== undefined && o.min_stock > 0 ? o.min_stock : "";
+      const costVal      = o.cost_price !== null && o.cost_price !== undefined ? o.cost_price : "";
+      const saleVal      = o.sale_price !== null && o.sale_price !== undefined ? o.sale_price : "";
+      const wholesaleVal = (o.wholesale_price !== null && o.wholesale_price !== undefined && o.wholesale_price > 0) ? o.wholesale_price : "";
+      const isExclBulk   = !!o.exclude_from_bulk;
 
       return `
         <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl border border-blue-100 bg-white shadow-2xs">
@@ -1178,6 +1224,23 @@ function whCbRender() {
                 class="w-16 border border-blue-300 rounded px-1 py-0.5 text-xs text-center font-mono font-bold text-blue-900 bg-white focus:ring-1 focus:ring-blue-400"/>
               <span class="text-[10px] text-blue-700 font-bold">ج</span>
             </div>
+
+            <!-- Wholesale Price per variant (carries to shop on transfer) -->
+            <div class="flex items-center gap-1 bg-purple-50/80 border border-purple-200 rounded-lg px-2 py-1" title="سعر الجملة الخاص بهذا الخيار (اختياري)">
+              <span class="text-[11px] text-purple-800 font-bold">جملة:</span>
+              <input type="number" min="0" step="0.01" placeholder="بدون" value="${wholesaleVal}"
+                onchange="whCbSetWholesalePrice('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}', this.value)"
+                class="w-16 border border-purple-300 rounded px-1 py-0.5 text-xs text-center font-mono font-bold text-purple-900 bg-white focus:ring-1 focus:ring-purple-400"/>
+              <span class="text-[10px] text-purple-700 font-bold">ج</span>
+            </div>
+
+            <!-- Exclude from Bulk -->
+            <label class="flex items-center gap-1 px-2 py-1 rounded-lg border cursor-pointer select-none ${isExclBulk ? 'bg-orange-100 border-orange-300 text-orange-900 font-bold' : 'bg-gray-50 border-gray-200 text-gray-600'}" title="استثناء هذا المقاس من بيع الجملة">
+              <input type="checkbox" ${isExclBulk ? 'checked' : ''}
+                onchange="whCbToggleExcludeBulk('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}', this.checked)"
+                class="w-3.5 h-3.5 accent-orange-600 cursor-pointer"/>
+              <span class="text-[11px]">استثناء جملة</span>
+            </label>
 
             <button type="button" title="حذف هذا الخيار"
               onclick="whCbRemoveOption('${cat.replace(/'/g,"\\'")}','${label.replace(/'/g,"\\'")}')"
@@ -1225,6 +1288,10 @@ function openAddWarehouseModal() {
   document.getElementById('aw-qty').value = '1';
   const awMinEl = document.getElementById('aw-min-stock');
   if (awMinEl) awMinEl.value = '0';
+  const awWMinEl = document.getElementById('aw-wholesale-min-qty');
+  if (awWMinEl) awWMinEl.value = '';
+  const awWPriceEl = document.getElementById('aw-wholesale-price');
+  if (awWPriceEl) awWPriceEl.value = '';
   document.getElementById('aw-desc').value = '';
   document.getElementById('aw-expiry').value = '';
   document.getElementById('aw-notes').value = '';
@@ -1338,6 +1405,10 @@ function selectShopProduct(p) {
   document.getElementById('aw-desc').value = p.description || p.details || '';
   const awMinEl = document.getElementById('aw-min-stock');
   if (awMinEl) awMinEl.value = parseInt(p.min_stock || 0, 10);
+  const awWMinEl = document.getElementById('aw-wholesale-min-qty');
+  if (awWMinEl) awWMinEl.value = (p.wholesale_min_qty && parseInt(p.wholesale_min_qty, 10) > 0) ? parseInt(p.wholesale_min_qty, 10) : '';
+  const awWPriceEl = document.getElementById('aw-wholesale-price');
+  if (awWPriceEl) awWPriceEl.value = (p.wholesale_price != null && parseFloat(p.wholesale_price) > 0) ? parseFloat(p.wholesale_price) : '';
   if (p.purchase_price && parseFloat(p.purchase_price) > 0) {
     document.getElementById('aw-cost').value = p.purchase_price;
   }
@@ -1579,6 +1650,9 @@ async function submitAddWarehouseItem(e) {
   const price = document.getElementById('aw-price').value;
   const qty = parseInt(document.getElementById('aw-qty').value || 0, 10);
   const minStock = parseInt(document.getElementById('aw-min-stock')?.value || 0, 10);
+  const wholesaleMinQty = parseInt(document.getElementById('aw-wholesale-min-qty')?.value || 0, 10) || 0;
+  const wholesalePriceRaw = document.getElementById('aw-wholesale-price')?.value;
+  const wholesalePrice = (wholesalePriceRaw && parseFloat(wholesalePriceRaw) > 0) ? parseFloat(wholesalePriceRaw) : null;
   const desc = document.getElementById('aw-desc').value;
   const expiry = document.getElementById('aw-expiry').value;
   const notes = document.getElementById('aw-notes').value;
@@ -1645,6 +1719,8 @@ async function submitAddWarehouseItem(e) {
         sale_price: parseFloat(price || 0),
         quantity: qty,
         min_stock: Math.max(0, minStock),
+        wholesale_min_qty: Math.max(0, wholesaleMinQty),
+        wholesale_price: wholesalePrice,
         variants_json: null,
         checkbox_values_json: checkboxValuesJson,
         description: desc,
@@ -1681,6 +1757,10 @@ function openEditWarehouseModal(itemId) {
   document.getElementById('ew-qty').value = parseInt(item.quantity || 0, 10);
   const ewMinEl = document.getElementById('ew-min-stock');
   if (ewMinEl) ewMinEl.value = parseInt(item.min_stock || 0, 10);
+  const ewWMinEl = document.getElementById('ew-wholesale-min-qty');
+  if (ewWMinEl) ewWMinEl.value = (item.wholesale_min_qty && parseInt(item.wholesale_min_qty, 10) > 0) ? parseInt(item.wholesale_min_qty, 10) : '';
+  const ewWPriceEl = document.getElementById('ew-wholesale-price');
+  if (ewWPriceEl) ewWPriceEl.value = (item.wholesale_price != null && parseFloat(item.wholesale_price) > 0) ? parseFloat(item.wholesale_price) : '';
   document.getElementById('ew-expiry').value = item.expiry_date || '';
   document.getElementById('ew-desc').value = item.description || '';
   document.getElementById('ew-notes').value = item.notes || '';
@@ -1804,6 +1884,16 @@ function syncActiveBatchToMemory() {
     });
 
     let cbvObj = {};
+    const existingFlat = flattenCbv(_currentEditingWhItem?.checkbox_values);
+    const preserveExtras = (grp, k) => {
+      const ex = existingFlat[`[${grp}] ${k}`] || existingFlat[k] || {};
+      return {
+        ...(ex.wholesale_price > 0 ? { wholesale_price: parseFloat(ex.wholesale_price) } : {}),
+        ...(ex.sale_price > 0 ? { sale_price: parseFloat(ex.sale_price) } : {}),
+        ...(ex.cost_price > 0 ? { cost_price: parseFloat(ex.cost_price) } : {}),
+        ...(ex.exclude_from_bulk ? { exclude_from_bulk: true } : {}),
+      };
+    };
     const isGrouped = Array.from(varInputs).some(i => i.dataset.groupName && i.dataset.groupName !== 'عام');
     if (isGrouped) {
       varInputs.forEach(inp => {
@@ -1812,14 +1902,14 @@ function syncActiveBatchToMemory() {
         const q = parseInt(inp.value || 0, 10);
         const mv = varMinMap[`${grp}:::${k}`] || 0;
         if (!cbvObj[grp]) cbvObj[grp] = {};
-        cbvObj[grp][k] = { checked: true, stock: q, disabled: false, ...(mv > 0 ? { min_stock: mv } : {}) };
+        cbvObj[grp][k] = { checked: true, stock: q, disabled: false, ...preserveExtras(grp, k), ...(mv > 0 ? { min_stock: mv } : {}) };
       });
     } else {
       varInputs.forEach(inp => {
         const k = inp.dataset.optKey;
         const q = parseInt(inp.value || 0, 10);
         const mv = varMinMap[`عام:::${k}`] || 0;
-        cbvObj[k] = { checked: true, stock: q, disabled: false, ...(mv > 0 ? { min_stock: mv } : {}) };
+        cbvObj[k] = { checked: true, stock: q, disabled: false, ...preserveExtras('عام', k), ...(mv > 0 ? { min_stock: mv } : {}) };
       });
     }
     b.checkbox_values = cbvObj;
@@ -2293,6 +2383,9 @@ async function submitEditWarehouseItem(e) {
   const category = document.getElementById('ew-category').value;
   const price = document.getElementById('ew-price').value;
   const minStock = parseInt(document.getElementById('ew-min-stock')?.value || 0, 10);
+  const wholesaleMinQty = parseInt(document.getElementById('ew-wholesale-min-qty')?.value || 0, 10) || 0;
+  const wholesalePriceRaw = document.getElementById('ew-wholesale-price')?.value;
+  const wholesalePrice = (wholesalePriceRaw && parseFloat(wholesalePriceRaw) > 0) ? parseFloat(wholesalePriceRaw) : null;
   const desc = document.getElementById('ew-desc').value;
   const expiry = document.getElementById('ew-expiry').value || _currentEditingWhItem.expiry_date;
   const notes = _currentEditingWhItem.notes || '';
@@ -2307,6 +2400,8 @@ async function submitEditWarehouseItem(e) {
         category,
         sale_price: parseFloat(price || 0),
         min_stock: Math.max(0, minStock),
+        wholesale_min_qty: Math.max(0, wholesaleMinQty),
+        wholesale_price: wholesalePrice,
         checkbox_values_json: _currentEditingWhItem.checkbox_values || undefined,
         description: desc,
         expiry_date: expiry || null,

@@ -934,6 +934,8 @@ function flattenCbvOptions(cbvRaw) {
           min_stock: subV.min_stock != null ? Math.max(0, parseInt(subV.min_stock || 0, 10)) : 0,
           cost_price: subV.cost_price != null ? parseFloat(subV.cost_price || 0) : null,
           sale_price: subV.sale_price != null ? parseFloat(subV.sale_price || 0) : null,
+          wholesale_price: (subV.wholesale_price != null && parseFloat(subV.wholesale_price) > 0) ? parseFloat(subV.wholesale_price) : null,
+          exclude_from_bulk: !!subV.exclude_from_bulk,
           disabled: !!subV.disabled,
         });
       }
@@ -950,6 +952,8 @@ function flattenCbvOptions(cbvRaw) {
         min_stock: val.min_stock != null ? Math.max(0, parseInt(val.min_stock || 0, 10)) : 0,
         cost_price: val.cost_price != null ? parseFloat(val.cost_price || 0) : null,
         sale_price: val.sale_price != null ? parseFloat(val.sale_price || 0) : null,
+        wholesale_price: (val.wholesale_price != null && parseFloat(val.wholesale_price) > 0) ? parseFloat(val.wholesale_price) : null,
+        exclude_from_bulk: !!val.exclude_from_bulk,
         disabled: !!val.disabled,
       });
     }
@@ -967,6 +971,8 @@ function extractCbvMetaMap(cbvRaw) {
       min_stock: opt.min_stock > 0 ? opt.min_stock : (existing.min_stock || 0),
       cost_price: opt.cost_price != null && opt.cost_price > 0 ? opt.cost_price : (existing.cost_price || null),
       sale_price: opt.sale_price != null && opt.sale_price > 0 ? opt.sale_price : (existing.sale_price || null),
+      wholesale_price: opt.wholesale_price != null && opt.wholesale_price > 0 ? opt.wholesale_price : (existing.wholesale_price || null),
+      exclude_from_bulk: !!(opt.exclude_from_bulk || existing.exclude_from_bulk),
     };
   }
   return map;
@@ -984,6 +990,8 @@ function applyMetaToCbv(cbvRaw, metaMap = {}, overwriteMin = false) {
         if (m.min_stock > 0 && (overwriteMin || !subV.min_stock || parseInt(subV.min_stock, 10) === 0)) subV.min_stock = m.min_stock;
         if (m.cost_price != null && m.cost_price > 0 && (!subV.cost_price || parseFloat(subV.cost_price) === 0)) subV.cost_price = m.cost_price;
         if (m.sale_price != null && m.sale_price > 0 && (!subV.sale_price || parseFloat(subV.sale_price) === 0)) subV.sale_price = m.sale_price;
+        if (m.wholesale_price != null && m.wholesale_price > 0 && (!subV.wholesale_price || parseFloat(subV.wholesale_price) === 0)) subV.wholesale_price = m.wholesale_price;
+        if (m.exclude_from_bulk === true && !subV.exclude_from_bulk) subV.exclude_from_bulk = true;
       }
     } else if (val && typeof val === 'object') {
       const sep = k.indexOf('::');
@@ -993,6 +1001,8 @@ function applyMetaToCbv(cbvRaw, metaMap = {}, overwriteMin = false) {
       if (m.min_stock > 0 && (overwriteMin || !val.min_stock || parseInt(val.min_stock, 10) === 0)) val.min_stock = m.min_stock;
       if (m.cost_price != null && m.cost_price > 0 && (!val.cost_price || parseFloat(val.cost_price) === 0)) val.cost_price = m.cost_price;
       if (m.sale_price != null && m.sale_price > 0 && (!val.sale_price || parseFloat(val.sale_price) === 0)) val.sale_price = m.sale_price;
+      if (m.wholesale_price != null && m.wholesale_price > 0 && (!val.wholesale_price || parseFloat(val.wholesale_price) === 0)) val.wholesale_price = m.wholesale_price;
+      if (m.exclude_from_bulk === true && !val.exclude_from_bulk) val.exclude_from_bulk = true;
     }
   }
   return cbv;
@@ -1023,11 +1033,15 @@ function mergeWhBatchCbv(batches, fallbackCbvRaw) {
                 if (!merged[k][subK]) merged[k][subK] = { ...subV, stock: 0 };
                 merged[k][subK].stock = Math.max(0, parseInt(merged[k][subK].stock || 0, 10)) + Math.max(0, parseInt(subV.stock || 0, 10));
                 if (subV.min_stock > 0) merged[k][subK].min_stock = parseInt(subV.min_stock, 10);
+                if (subV.wholesale_price > 0) merged[k][subK].wholesale_price = parseFloat(subV.wholesale_price);
+                if (subV.exclude_from_bulk) merged[k][subK].exclude_from_bulk = true;
               }
             } else if (v && typeof v === 'object') {
               if (!merged[k]) merged[k] = { ...v, stock: 0 };
               merged[k].stock = Math.max(0, parseInt(merged[k].stock || 0, 10)) + Math.max(0, parseInt(v.stock || 0, 10));
               if (v.min_stock > 0) merged[k].min_stock = parseInt(v.min_stock, 10);
+              if (v.wholesale_price > 0) merged[k].wholesale_price = parseFloat(v.wholesale_price);
+              if (v.exclude_from_bulk) merged[k].exclude_from_bulk = true;
             }
           }
         }
@@ -1327,6 +1341,7 @@ app.get(`${BASE}/api/products/search`, async (req, res) => {
 
 // Columns for list endpoints — excludes heavy base64 image_url, adds has_image flag
 const PRODUCT_LIST_COLS = `id, barcode, product_name, quantity, purchase_price, sale_price,
+  COALESCE(wholesale_min_qty, 0) AS wholesale_min_qty, wholesale_price,
   expiry_date, category, min_stock, description, variants, section, checkbox_values, gender,
   is_offer, original_price, offer_expires_at, is_best_seller,
   COALESCE(is_hidden_from_website, false) AS is_hidden_from_website,
@@ -1438,20 +1453,28 @@ app.post(`${BASE}/api/products`, async (req, res) => {
     const offerExpiresAt = (d.offer_expires_at && typeof d.offer_expires_at === 'string' && d.offer_expires_at.trim() !== '')
       ? new Date(d.offer_expires_at).toISOString()
       : null;
+    const wholesaleMinQty = !isNaN(parseInt(d.wholesale_min_qty, 10)) ? Math.max(0, parseInt(d.wholesale_min_qty, 10)) : 0;
+    const wholesalePrice = (d.wholesale_price !== undefined && d.wholesale_price !== null && d.wholesale_price !== '' && !isNaN(parseFloat(d.wholesale_price)) && parseFloat(d.wholesale_price) > 0)
+      ? parseFloat(d.wholesale_price)
+      : null;
+
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS wholesale_min_qty INTEGER DEFAULT 0').catch(() => {});
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC').catch(() => {});
 
     const prodDesc = (d.description || '').trim() || (d.product_name || '');
     let ins = null;
     try {
       const res = await posDb.query(
-        `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values, gender, is_hidden_from_website, is_offer, original_price, offer_expires_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+        `INSERT INTO products (barcode, product_name, quantity, purchase_price, sale_price, expiry_date, image_url, category, min_stock, description, variants, section, checkbox_values, gender, is_hidden_from_website, is_offer, original_price, offer_expires_at, wholesale_min_qty, wholesale_price)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`,
         [d.barcode || null, d.product_name, qty,
          pPrice, sPrice,
          d.expiry_date || null, mainPhoto,
          d.category || null, minStock,
          prodDesc, variantsJson, effectiveSec, cbJson, genderVal,
          isHidden,
-         isOffer, origPrice, offerExpiresAt]
+         isOffer, origPrice, offerExpiresAt,
+         wholesaleMinQty, wholesalePrice]
       );
       ins = res.rows[0];
     } catch (insertErr) {
@@ -1467,15 +1490,16 @@ app.post(`${BASE}/api/products`, async (req, res) => {
         }
       }
       const pRes = await posDb.query(
-        `INSERT INTO public.products (barcode, name, stock, purchase_price, price, expiry_date, photos, category_id, min_stock, details, variants, section, checkbox_values, gender, is_hidden_from_website, is_hidden, hidden, orig_section, is_offer, original_price, offer_expires_at, is_sold_out)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING id`,
+        `INSERT INTO public.products (barcode, name, stock, purchase_price, price, expiry_date, photos, category_id, min_stock, details, variants, section, checkbox_values, gender, is_hidden_from_website, is_hidden, hidden, orig_section, is_offer, original_price, offer_expires_at, is_sold_out, wholesale_min_qty, wholesale_price)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) RETURNING id`,
         [d.barcode || null, d.product_name, qty,
          pPrice, sPrice,
          d.expiry_date || null, mainPhoto ? [mainPhoto] : [],
          v_cat_id, minStock,
          prodDesc, variantsJson, effectiveSec, cbJson, genderVal,
          isHidden, isHidden, isHidden, origSec,
-         isOffer, origPrice, offerExpiresAt, qty <= 0]
+         isOffer, origPrice, offerExpiresAt, qty <= 0,
+         wholesaleMinQty, wholesalePrice]
       );
       ins = pRes.rows[0];
     }
@@ -1484,10 +1508,10 @@ app.post(`${BASE}/api/products`, async (req, res) => {
       throw new Error('فشل إنشاء وحفظ المنتج في قاعدة البيانات');
     }
 
-    // Explicitly ensure offer fields in public.products
+    // Explicitly ensure offer and wholesale fields in public.products
     posDb.query(
-      'UPDATE public.products SET is_offer=$1, original_price=$2, offer_expires_at=$3 WHERE id=$4',
-      [isOffer, origPrice, offerExpiresAt, ins.id]
+      'UPDATE public.products SET is_offer=$1, original_price=$2, offer_expires_at=$3, wholesale_min_qty=$4, wholesale_price=$5 WHERE id=$6',
+      [isOffer, origPrice, offerExpiresAt, wholesaleMinQty, wholesalePrice, ins.id]
     ).catch(() => {});
     // حفظ كل الصور (حتى 5) مباشرة في public.products.photos
     if (d.photos && d.photos.length > 0) {
@@ -1605,6 +1629,8 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
     await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
     await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS wholesale_min_qty INTEGER DEFAULT 0').catch(() => {});
+    await posDb.query('ALTER TABLE public.products ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC').catch(() => {});
 
     const variantsJson = d.variants ? (typeof d.variants === 'string' ? d.variants : JSON.stringify(d.variants)) : null;
     const cbJson = d.checkbox_values ? (typeof d.checkbox_values === 'string' ? d.checkbox_values : JSON.stringify(d.checkbox_values)) : null;
@@ -1628,6 +1654,10 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
     const offerExpiresAt = (d.offer_expires_at && typeof d.offer_expires_at === 'string' && d.offer_expires_at.trim() !== '')
       ? new Date(d.offer_expires_at).toISOString()
       : null;
+    const wholesaleMinQty = !isNaN(parseInt(d.wholesale_min_qty, 10)) ? Math.max(0, parseInt(d.wholesale_min_qty, 10)) : 0;
+    const wholesalePrice = (d.wholesale_price !== undefined && d.wholesale_price !== null && d.wholesale_price !== '' && !isNaN(parseFloat(d.wholesale_price)) && parseFloat(d.wholesale_price) > 0)
+      ? parseFloat(d.wholesale_price)
+      : null;
 
     const params = [
       d.barcode || null,
@@ -1648,25 +1678,29 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
       origPrice,
       offerExpiresAt,
       pid,
-      origSec
+      origSec,
+      wholesaleMinQty,
+      wholesalePrice
     ];
 
     const updateQuery = `UPDATE products SET barcode=$1, product_name=$2, quantity=$3,
       purchase_price=$4, sale_price=$5,
       expiry_date=$6, category=$7, min_stock=$8, description=$9, variants=$10,
       section=$11, checkbox_values=$12, is_hidden_from_website=$13, gender=$14,
-      is_offer=$15, original_price=$16, offer_expires_at=$17 WHERE id=$18`;
+      is_offer=$15, original_price=$16, offer_expires_at=$17,
+      wholesale_min_qty=$19, wholesale_price=$20 WHERE id=$18`;
 
     try {
-      await posDb.query(updateQuery, params.slice(0, 18));
+      await posDb.query(updateQuery, [...params.slice(0, 18), wholesaleMinQty, wholesalePrice]);
       await posDb.query(
         `UPDATE public.products SET 
           is_hidden=$1, hidden=$1, is_hidden_from_website=$1, is_active=NOT $1,
           section=$2,
           orig_section=CASE WHEN $1 THEN COALESCE(NULLIF(orig_section, 'hidden'), NULLIF(section, 'hidden'), $3) ELSE COALESCE(orig_section, $3) END,
-          is_offer=$4, original_price=$5, offer_expires_at=$6
+          is_offer=$4, original_price=$5, offer_expires_at=$6,
+          wholesale_min_qty=$8, wholesale_price=$9
          WHERE id=$7`,
-        [isHidden, effectiveSec, origSec, isOffer, origPrice, offerExpiresAt, pid]
+        [isHidden, effectiveSec, origSec, isOffer, origPrice, offerExpiresAt, pid, wholesaleMinQty, wholesalePrice]
       ).catch(() => {});
     } catch (viewErr) {
       // Fallback: update on public.products directly if view trigger has issue
@@ -1676,6 +1710,7 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
          expiry_date=$6, category_id=$7, min_stock=$8, details=$9, variants=$10,
          section=$11, checkbox_values=$12, is_hidden_from_website=$13, gender=$14,
          is_offer=$15, original_price=$16, offer_expires_at=$17,
+         wholesale_min_qty=$20, wholesale_price=$21,
          is_hidden=$13, hidden=$13, is_active=NOT $13,
          orig_section=CASE WHEN $13 THEN COALESCE(NULLIF(orig_section, 'hidden'), NULLIF(section, 'hidden'), $19) ELSE COALESCE(orig_section, $19) END
          WHERE id=$18`,
@@ -1685,8 +1720,9 @@ app.put(`${BASE}/api/products/:pid`, async (req, res) => {
           `UPDATE public.products SET barcode=$1, name=$2, stock=$3,
            purchase_price=$4, price=$5,
            expiry_date=$6, details=$7, min_stock=$8, variants=$9,
-           section=$10, checkbox_values=$11, is_offer=$12, original_price=$13, offer_expires_at=$14 WHERE id=$15`,
-          [d.barcode || null, d.product_name, qty, pPrice, sPrice, d.expiry_date || null, d.description || null, minStock, variantsJson, effectiveSec, cbJson, isOffer, origPrice, offerExpiresAt, pid]
+           section=$10, checkbox_values=$11, is_offer=$12, original_price=$13, offer_expires_at=$14,
+           wholesale_min_qty=$16, wholesale_price=$17 WHERE id=$15`,
+          [d.barcode || null, d.product_name, qty, pPrice, sPrice, d.expiry_date || null, d.description || null, minStock, variantsJson, effectiveSec, cbJson, isOffer, origPrice, offerExpiresAt, pid, wholesaleMinQty, wholesalePrice]
         );
       });
     }
@@ -7229,18 +7265,26 @@ async function syncNewProductToDentrust(posId, d) {
     const effectiveSection = isHidden ? 'hidden' : (d.section || 'dental');
     const origSection = d.orig_section || d.section || 'dental';
 
+    const wholesaleMinQty = !isNaN(parseInt(d.wholesale_min_qty, 10)) ? Math.max(0, parseInt(d.wholesale_min_qty, 10)) : 0;
+    const wholesalePrice = (d.wholesale_price !== undefined && d.wholesale_price !== null && d.wholesale_price !== '' && !isNaN(parseFloat(d.wholesale_price)) && parseFloat(d.wholesale_price) > 0)
+      ? parseFloat(d.wholesale_price)
+      : null;
+
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS orig_section TEXT').catch(() => {});
+    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_min_qty INTEGER DEFAULT 0').catch(() => {});
+    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC').catch(() => {});
 
     const { rows: [ins] } = await client.query(
-      `INSERT INTO products (name, price, purchase_price, stock, is_offer, photos, category_id, expiry_date, details, section, variants, checkbox_values, gender, is_hidden, hidden, is_hidden_from_website, is_active, orig_section)
-       VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
+      `INSERT INTO products (name, price, purchase_price, stock, is_offer, photos, category_id, expiry_date, details, section, variants, checkbox_values, gender, is_hidden, hidden, is_hidden_from_website, is_active, orig_section, wholesale_min_qty, wholesale_price)
+       VALUES ($1,$2,$3,$4,false,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id`,
       [d.product_name, sPrice, pPrice,
        qty, photosArr, catRow.id, d.expiry_date || null, details,
        effectiveSection, variantsJson, cbJson, genderVal,
-       isHidden, isHidden, isHidden, !isHidden, origSection]
+       isHidden, isHidden, isHidden, !isHidden, origSection,
+       wholesaleMinQty, wholesalePrice]
     );
     await posDb.query('UPDATE products SET dentrust_id=$1 WHERE id=$2', [ins.id, posId]);
     cacheDel('site_products');
@@ -7279,6 +7323,14 @@ async function syncUpdateProductToDentrust(pid, d) {
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
     await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_min_qty INTEGER DEFAULT 0').catch(() => {});
+    await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC').catch(() => {});
+
+    const wholesaleMinQty = !isNaN(parseInt(d.wholesale_min_qty, 10)) ? Math.max(0, parseInt(d.wholesale_min_qty, 10)) : 0;
+    const wholesalePrice = (d.wholesale_price !== undefined && d.wholesale_price !== null && d.wholesale_price !== '' && !isNaN(parseFloat(d.wholesale_price)) && parseFloat(d.wholesale_price) > 0)
+      ? parseFloat(d.wholesale_price)
+      : null;
+
     let catId = null;
     if (d.category && d.category.trim()) {
       const catName = d.category.trim();
@@ -7301,11 +7353,12 @@ async function syncUpdateProductToDentrust(pid, d) {
           name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, 
           variants=$6, checkbox_values=$7, is_hidden=true, hidden=true, is_hidden_from_website=true, 
           is_active=false, orig_section=COALESCE(NULLIF(section, 'hidden'), orig_section, $8), section='hidden',
-          category_id=COALESCE($11, category_id)
+          category_id=COALESCE($11, category_id),
+          wholesale_min_qty=$12, wholesale_price=$13
          WHERE id=$9 OR id=$10 OR LOWER(TRIM(name))=LOWER(TRIM($1))`,
         [d.product_name, sPrice, qty, d.expiry_date || null,
          pPrice, variantsJson,
-         cbJson, d.section || 'dental', targetWebId, pid, catId]);
+         cbJson, d.section || 'dental', targetWebId, pid, catId, wholesaleMinQty, wholesalePrice]);
     } else {
       const genderVal = d.gender || (d.section === 'medical' ? 'unisex' : null);
       await client.query(
@@ -7313,11 +7366,12 @@ async function syncUpdateProductToDentrust(pid, d) {
           name=$1, price=$2, stock=$3, expiry_date=$4, purchase_price=$5, 
           variants=$6, section=$7, checkbox_values=$8, is_hidden=false, hidden=false, 
           is_hidden_from_website=false, is_active=true, gender=COALESCE($11, gender, 'unisex'),
-          category_id=COALESCE($12, category_id)
+          category_id=COALESCE($12, category_id),
+          wholesale_min_qty=$13, wholesale_price=$14
          WHERE id=$9 OR id=$10 OR LOWER(TRIM(name))=LOWER(TRIM($1))`,
         [d.product_name, sPrice, qty, d.expiry_date || null,
          pPrice, variantsJson,
-         d.section || 'dental', cbJson, targetWebId, pid, genderVal, catId]);
+         d.section || 'dental', cbJson, targetWebId, pid, genderVal, catId, wholesaleMinQty, wholesalePrice]);
     }
     cacheDel('site_products');
   } finally { client.release(); }
@@ -8404,9 +8458,12 @@ app.get('/api/products', webCors, async (req, res) => {
       await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT FALSE').catch(() => {});
       await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS hidden BOOLEAN DEFAULT FALSE').catch(() => {});
       await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_hidden_from_website BOOLEAN DEFAULT FALSE').catch(() => {});
+      await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_min_qty INTEGER DEFAULT 0').catch(() => {});
+      await client.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC').catch(() => {});
 
       const { rows } = await client.query(
         `SELECT p.id, p.name, p.price, p.stock,
+                COALESCE(p.wholesale_min_qty, 0) AS wholesale_min_qty, p.wholesale_price,
                 p.photos[1] AS image_url, p.expiry_date, p.description,
                 c.name AS category_name, p.category_id,
                 p.checkbox_values, p.variants
@@ -8416,24 +8473,32 @@ app.get('/api/products', webCors, async (req, res) => {
          ORDER BY p.name`
       );
       // Convert relative Supabase storage paths to full public URLs & sanitize for website
+      const sanitizeOpt = (v) => ({
+        checked: v.checked ?? true,
+        disabled: v.disabled ?? false,
+        stock: v.stock ?? null,
+        sale_price: v.sale_price ?? null,
+        wholesale_price: v.wholesale_price ?? null,
+        exclude_from_bulk: !!v.exclude_from_bulk
+      });
       for (const row of rows) {
         delete row.purchase_price;
         if (row.image_url) {
           row.image_url = `https://dentrust.site/products_opt/${row.id}.webp`;
         }
-        // Sanitize checkbox_values: strictly remove cost_price, preserve stock and sale_price
+        // Sanitize checkbox_values: strictly remove cost_price, preserve stock, sale_price, wholesale_price & exclude_from_bulk
         if (row.checkbox_values) {
           try {
             const cbv = typeof row.checkbox_values === 'string' ? JSON.parse(row.checkbox_values) : row.checkbox_values;
             const sanitized = {};
             for (const [k, v] of Object.entries(cbv)) {
-              if (typeof v === 'object' && v !== null) {
-                sanitized[k] = {
-                  checked: v.checked ?? true,
-                  disabled: v.disabled ?? false,
-                  stock: v.stock ?? null,
-                  sale_price: v.sale_price ?? null
-                };
+              if (typeof v === 'object' && v !== null && !('stock' in v) && !('checked' in v) && !('sale_price' in v) && !('cost_price' in v) && !('wholesale_price' in v)) {
+                sanitized[k] = {};
+                for (const [subK, subV] of Object.entries(v)) {
+                  sanitized[k][subK] = (typeof subV === 'object' && subV !== null) ? sanitizeOpt(subV) : subV;
+                }
+              } else if (typeof v === 'object' && v !== null) {
+                sanitized[k] = sanitizeOpt(v);
               } else {
                 sanitized[k] = v;
               }
@@ -12154,6 +12219,8 @@ app.get(`${BASE}/api/warehouse/products`, async (req, res) => {
     await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS expiry_date TEXT DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS wholesale_min_qty INTEGER DEFAULT 0`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC`).catch(() => {});
     await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_batches (
       id SERIAL PRIMARY KEY, warehouse_item_id INTEGER, product_id INTEGER, batch_number TEXT,
       quantity INTEGER NOT NULL DEFAULT 0, cost_price NUMERIC DEFAULT 0, expiry_date TEXT, notes TEXT,
@@ -12379,6 +12446,8 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
     await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS expiry_date TEXT DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT ''`).catch(() => {});
     await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS wholesale_min_qty INTEGER DEFAULT 0`).catch(() => {});
+    await posDb.query(`ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC`).catch(() => {});
     await posDb.query(`CREATE TABLE IF NOT EXISTS warehouse_batches (
       id SERIAL PRIMARY KEY, warehouse_item_id INTEGER, product_id INTEGER, batch_number TEXT,
       quantity INTEGER NOT NULL DEFAULT 0, cost_price NUMERIC DEFAULT 0, expiry_date TEXT, notes TEXT,
@@ -12386,7 +12455,7 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
     )`).catch(() => {});
     await posDb.query(`ALTER TABLE warehouse_batches ADD COLUMN IF NOT EXISTS checkbox_values JSONB`).catch(() => {});
 
-    const { product_id, product_name, barcode, category, cost_price, sale_price, quantity, min_stock, variants_json, checkbox_values_json, notes, description, expiry_date, batch_number } = req.body;
+    const { product_id, product_name, barcode, category, cost_price, sale_price, quantity, min_stock, wholesale_min_qty, wholesale_price, variants_json, checkbox_values_json, notes, description, expiry_date, batch_number } = req.body;
     if (!product_name || !product_name.trim()) {
       return res.status(400).json({ error: 'اسم الصنف مطلوب' });
     }
@@ -12394,6 +12463,10 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
     const cost = parseFloat(cost_price || 0);
     const price = parseFloat(sale_price || 0);
     let minStock = Math.max(0, parseInt(min_stock || 0, 10));
+    let wMinQty = Math.max(0, parseInt(wholesale_min_qty || 0, 10) || 0);
+    let wPrice = (wholesale_price !== undefined && wholesale_price !== null && wholesale_price !== '' && !isNaN(parseFloat(wholesale_price)) && parseFloat(wholesale_price) > 0)
+      ? parseFloat(wholesale_price)
+      : null;
 
     let finalDesc = description || '';
     let finalCategory = category || 'عام';
@@ -12401,7 +12474,7 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
     let finalCbv = checkbox_values_json ? (typeof checkbox_values_json === 'string' ? checkbox_values_json : JSON.stringify(checkbox_values_json)) : null;
     let finalVars = variants_json ? (typeof variants_json === 'string' ? variants_json : JSON.stringify(variants_json)) : null;
 
-    // If linked to a shop product, sync metadata (and inherit min_stock if not provided)
+    // If linked to a shop product, sync metadata (and inherit min_stock & wholesale if not provided)
     if (product_id) {
       try {
         const { rows: [p] } = await posDb.query('SELECT * FROM products WHERE id=$1', [product_id]);
@@ -12412,6 +12485,8 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
           if (!finalCategory || finalCategory === 'عام') finalCategory = p.category || 'عام';
           if (!finalBarcode) finalBarcode = p.barcode || '';
           if (minStock === 0 && parseInt(p.min_stock || 0, 10) > 0) minStock = parseInt(p.min_stock, 10);
+          if (wMinQty === 0 && parseInt(p.wholesale_min_qty || 0, 10) > 0) wMinQty = parseInt(p.wholesale_min_qty, 10);
+          if (wPrice === null && p.wholesale_price != null && parseFloat(p.wholesale_price) > 0) wPrice = parseFloat(p.wholesale_price);
           if (finalCbv && p.checkbox_values) {
             const pMeta = extractCbvMetaMap(p.checkbox_values);
             const enriched = applyMetaToCbv(finalCbv, pMeta, false);
@@ -12434,7 +12509,7 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
     }
 
     if (existingItem) {
-      // Preserve existing min_stock metadata across batches if adding a new batch
+      // Preserve existing min_stock & wholesale metadata across batches if adding a new batch
       let mergedItemCbv = finalCbv;
       if (existingItem.checkbox_values) {
         const oldMeta = extractCbvMetaMap(existingItem.checkbox_values);
@@ -12444,6 +12519,8 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
         }
       }
       const effMinStock = minStock > 0 ? minStock : Math.max(0, parseInt(existingItem.min_stock || 0, 10));
+      const effWMinQty = wMinQty > 0 ? wMinQty : Math.max(0, parseInt(existingItem.wholesale_min_qty || 0, 10));
+      const effWPrice = wPrice !== null ? wPrice : (existingItem.wholesale_price != null && parseFloat(existingItem.wholesale_price) > 0 ? parseFloat(existingItem.wholesale_price) : null);
       // Add quantity to existing item and update cost & metadata
       const { rows: [upd] } = await posDb.query(
         `UPDATE warehouse_items 
@@ -12453,16 +12530,17 @@ app.post(`${BASE}/api/warehouse/products`, async (req, res) => {
              expiry_date = CASE WHEN $7 != '' THEN $7 ELSE expiry_date END,
              category = CASE WHEN $8 != '' AND $8 != 'عام' THEN $8 ELSE category END,
              barcode = CASE WHEN $9 != '' THEN $9 ELSE barcode END,
-             notes = COALESCE($10, notes), min_stock = $11, updated_at = NOW()
-         WHERE id = $12 RETURNING *`,
-        [qty, cost, price, mergedItemCbv, finalVars, finalDesc, expiry_date || '', finalCategory, finalBarcode, notes || '', effMinStock, existingItem.id]
+             notes = COALESCE($10, notes), min_stock = $11,
+             wholesale_min_qty = $12, wholesale_price = $13, updated_at = NOW()
+         WHERE id = $14 RETURNING *`,
+        [qty, cost, price, mergedItemCbv, finalVars, finalDesc, expiry_date || '', finalCategory, finalBarcode, notes || '', effMinStock, effWMinQty, effWPrice, existingItem.id]
       );
       item = upd;
     } else {
       const { rows: [ins] } = await posDb.query(
-        `INSERT INTO warehouse_items (product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants, checkbox_values, description, expiry_date, notes, min_stock)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-        [product_id || null, product_name.trim(), finalBarcode, finalCategory, cost, price, qty, finalVars, finalCbv, finalDesc, expiry_date || '', notes || '', minStock]
+        `INSERT INTO warehouse_items (product_id, product_name, barcode, category, cost_price, sale_price, quantity, variants, checkbox_values, description, expiry_date, notes, min_stock, wholesale_min_qty, wholesale_price)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+        [product_id || null, product_name.trim(), finalBarcode, finalCategory, cost, price, qty, finalVars, finalCbv, finalDesc, expiry_date || '', notes || '', minStock, wMinQty, wPrice]
       );
       item = ins;
     }
@@ -12504,16 +12582,20 @@ app.put(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   try {
     await posDb.query('ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS min_stock INTEGER DEFAULT 0').catch(() => {});
-    const { product_name, barcode, category, cost_price, sale_price, quantity, min_stock, checkbox_values_json, variants_json, description, expiry_date, notes } = req.body;
+    await posDb.query('ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS wholesale_min_qty INTEGER DEFAULT 0').catch(() => {});
+    await posDb.query('ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS wholesale_price NUMERIC').catch(() => {});
+    const { product_name, barcode, category, cost_price, sale_price, quantity, min_stock, wholesale_min_qty, wholesale_price, checkbox_values_json, variants_json, description, expiry_date, notes } = req.body;
     const { rows: [curWh] } = await posDb.query('SELECT * FROM warehouse_items WHERE id=$1', [id]).catch(() => ({ rows: [] }));
     let qty = parseInt(quantity || curWh?.quantity || 0, 10);
     let cost = parseFloat(cost_price || curWh?.cost_price || 0);
     const price = parseFloat(sale_price || 0);
     const minStockVal = min_stock !== undefined && min_stock !== null && min_stock !== '' ? Math.max(0, parseInt(min_stock, 10) || 0) : null;
+    const wMinVal = wholesale_min_qty !== undefined && wholesale_min_qty !== null && wholesale_min_qty !== '' ? Math.max(0, parseInt(wholesale_min_qty, 10) || 0) : null;
+    const wPriceVal = wholesale_price !== undefined ? ((wholesale_price !== null && wholesale_price !== '' && parseFloat(wholesale_price) > 0) ? parseFloat(wholesale_price) : null) : curWh?.wholesale_price;
     let finalCbv = checkbox_values_json !== undefined ? (typeof checkbox_values_json === 'string' ? checkbox_values_json : JSON.stringify(checkbox_values_json)) : null;
     const finalVars = variants_json !== undefined ? (typeof variants_json === 'string' ? variants_json : JSON.stringify(variants_json)) : null;
 
-    // If batches exist, compute accurate quantity, cost, and checkbox_values from batches while preserving min_stock
+    // If batches exist, compute accurate quantity, cost, and checkbox_values from batches while preserving min_stock & wholesale
     const { rows: batches } = await posDb.query('SELECT * FROM warehouse_batches WHERE warehouse_item_id = $1', [id]).catch(() => ({ rows: [] }));
     if (batches && batches.length > 0) {
       qty = batches.reduce((sum, b) => sum + (parseInt(b.quantity || 0, 10)), 0);
@@ -12538,9 +12620,11 @@ app.put(`${BASE}/api/warehouse/products/:id`, async (req, res) => {
            expiry_date = $10,
            notes = $11,
            min_stock = COALESCE($12, min_stock),
+           wholesale_min_qty = COALESCE($13, wholesale_min_qty),
+           wholesale_price = $14,
            updated_at = NOW()
-       WHERE id = $13 RETURNING *`,
-      [product_name?.trim(), barcode || '', category || 'عام', cost, price, qty, finalCbv, finalVars, description || '', expiry_date || '', notes || '', minStockVal, id]
+       WHERE id = $15 RETURNING *`,
+      [product_name?.trim(), barcode || '', category || 'عام', cost, price, qty, finalCbv, finalVars, description || '', expiry_date || '', notes || '', minStockVal, wMinVal, wPriceVal, id]
     );
 
     if (!upd) return res.status(404).json({ error: 'الصنف غير موجود بالمستودع' });
@@ -12725,7 +12809,7 @@ app.delete(`${BASE}/api/warehouse/batches/:bid`, async (req, res) => {
   }
 });
 
-// Helper to update variant stock in checkbox_values (handles flat, cat::opt, and grouped structures while preserving min_stock)
+// Helper to update variant stock in checkbox_values (handles flat, cat::opt, and grouped structures while preserving min_stock & wholesale)
 function updateCbvStock(cbv, optKey, changeQty, extraMeta = {}) {
   const newOptObj = {
     checked: true,
@@ -12734,6 +12818,8 @@ function updateCbvStock(cbv, optKey, changeQty, extraMeta = {}) {
     ...(extraMeta.min_stock > 0 ? { min_stock: parseInt(extraMeta.min_stock, 10) } : {}),
     ...(extraMeta.cost_price > 0 ? { cost_price: parseFloat(extraMeta.cost_price) } : {}),
     ...(extraMeta.sale_price > 0 ? { sale_price: parseFloat(extraMeta.sale_price) } : {}),
+    ...(extraMeta.wholesale_price > 0 ? { wholesale_price: parseFloat(extraMeta.wholesale_price) } : {}),
+    ...(extraMeta.exclude_from_bulk ? { exclude_from_bulk: true } : {}),
   };
   if (!cbv || typeof cbv !== 'object') {
     if (changeQty > 0) {
@@ -12781,6 +12867,12 @@ function updateCbvStock(cbv, optKey, changeQty, extraMeta = {}) {
     matchedRef.checked = true;
     if (extraMeta.min_stock > 0 && (!matchedRef.min_stock || parseInt(matchedRef.min_stock, 10) === 0)) {
       matchedRef.min_stock = parseInt(extraMeta.min_stock, 10);
+    }
+    if (extraMeta.wholesale_price > 0 && (!matchedRef.wholesale_price || parseFloat(matchedRef.wholesale_price) === 0)) {
+      matchedRef.wholesale_price = parseFloat(extraMeta.wholesale_price);
+    }
+    if (extraMeta.exclude_from_bulk && !matchedRef.exclude_from_bulk) {
+      matchedRef.exclude_from_bulk = true;
     }
     if (extraMeta.cost_price > 0 && changeQty > 0) {
       matchedRef.cost_price = parseFloat(extraMeta.cost_price);
@@ -12912,18 +13004,20 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       await client.query('UPDATE warehouse_items SET quantity = $1 WHERE id = $2', [newTotalWhQty, whItem.id]);
     }
 
-    // 2. Add to Shop Products (and sync description, category, barcode, variants, and min_stock)
+    // 2. Add to Shop Products (and sync description, category, barcode, variants, min_stock, and wholesale)
     let shopProdId = whItem.product_id;
     let beforeShopQty = 0;
     let isBrandNewShopProd = false;
     const whItemMin = Math.max(0, parseInt(whItem.min_stock || 0, 10));
+    const whWholesaleMin = Math.max(0, parseInt(whItem.wholesale_min_qty || 0, 10));
+    const whWholesalePrice = (whItem.wholesale_price != null && parseFloat(whItem.wholesale_price) > 0) ? parseFloat(whItem.wholesale_price) : null;
 
     if (shopProdId) {
-      const { rows: [sp] } = await client.query('SELECT id, quantity, min_stock, variants, checkbox_values, purchase_price, expiry_date, description, category, barcode, dentrust_id FROM products WHERE id=$1', [shopProdId]);
+      const { rows: [sp] } = await client.query('SELECT id, quantity, min_stock, wholesale_min_qty, wholesale_price, variants, checkbox_values, purchase_price, expiry_date, description, category, barcode, dentrust_id FROM products WHERE id=$1', [shopProdId]);
       if (sp) {
         beforeShopQty = parseInt(sp.quantity || 0);
 
-        // If size option was transferred, increase or create that size in shop product and carry over variant min_stock
+        // If size option was transferred, increase or create that size in shop product and carry over variant min_stock & wholesale
         if (selected_option) {
           let scbv = parseCbvSafe(sp.checkbox_values) || {};
           const { newCbv } = updateCbvStock(scbv, selected_option, transferQty, { ...selOptMeta, cost_price: transferCost });
@@ -12940,9 +13034,15 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
           }
         }
 
-        // Carry over item-level min_stock from warehouse if shop product min_stock is currently 0
+        // Carry over item-level min_stock & wholesale from warehouse if shop product lacks them
         if (whItemMin > 0 && parseInt(sp.min_stock || 0, 10) === 0) {
           await client.query('UPDATE products SET min_stock = $1 WHERE id=$2', [whItemMin, shopProdId]);
+        }
+        if (whWholesaleMin > 0 && (!sp.wholesale_min_qty || parseInt(sp.wholesale_min_qty, 10) === 0)) {
+          await client.query('UPDATE products SET wholesale_min_qty = $1 WHERE id=$2', [whWholesaleMin, shopProdId]);
+        }
+        if (whWholesalePrice !== null && (!sp.wholesale_price || parseFloat(sp.wholesale_price) === 0)) {
+          await client.query('UPDATE products SET wholesale_price = $1 WHERE id=$2', [whWholesalePrice, shopProdId]);
         }
 
         // Sync description & category if shop product was missing them or warehouse has specific category
@@ -12971,9 +13071,9 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
       }
     }
 
-    // If no linked shop product, create or link by name with all metadata (category, barcode, variants, min_stock, etc.)
+    // If no linked shop product, create or link by name with all metadata (category, barcode, variants, min_stock, wholesale, etc.)
     if (!shopProdId) {
-      const { rows: [existingByName] } = await client.query('SELECT id, quantity, min_stock, category, description, variants, checkbox_values, barcode, dentrust_id FROM products WHERE LOWER(product_name)=LOWER($1) LIMIT 1', [whItem.product_name]);
+      const { rows: [existingByName] } = await client.query('SELECT id, quantity, min_stock, wholesale_min_qty, wholesale_price, category, description, variants, checkbox_values, barcode, dentrust_id FROM products WHERE LOWER(product_name)=LOWER($1) LIMIT 1', [whItem.product_name]);
       if (existingByName) {
         shopProdId = existingByName.id;
         beforeShopQty = parseInt(existingByName.quantity || 0);
@@ -12988,6 +13088,12 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
         }
         if (whItemMin > 0 && parseInt(existingByName.min_stock || 0, 10) === 0) {
           await client.query('UPDATE products SET min_stock = $1 WHERE id=$2', [whItemMin, shopProdId]);
+        }
+        if (whWholesaleMin > 0 && (!existingByName.wholesale_min_qty || parseInt(existingByName.wholesale_min_qty, 10) === 0)) {
+          await client.query('UPDATE products SET wholesale_min_qty = $1 WHERE id=$2', [whWholesaleMin, shopProdId]);
+        }
+        if (whWholesalePrice !== null && (!existingByName.wholesale_price || parseFloat(existingByName.wholesale_price) === 0)) {
+          await client.query('UPDATE products SET wholesale_price = $1 WHERE id=$2', [whWholesalePrice, shopProdId]);
         }
         if (whItem.category && whItem.category.trim() && whItem.category !== 'عام' && (!existingByName.category || existingByName.category === 'عام')) {
           await client.query('UPDATE products SET category = $1 WHERE id=$2', [whItem.category.trim(), shopProdId]);
@@ -13019,14 +13125,16 @@ app.post(`${BASE}/api/warehouse/transfer`, async (req, res) => {
           initialShopCbv = newCbv;
         }
         const { rows: [newProd] } = await client.query(
-          `INSERT INTO products (product_name, sale_price, purchase_price, quantity, min_stock, barcode, category, description, expiry_date, variants, checkbox_values, section)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+          `INSERT INTO products (product_name, sale_price, purchase_price, quantity, min_stock, wholesale_min_qty, wholesale_price, barcode, category, description, expiry_date, variants, checkbox_values, section)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
           [
             whItem.product_name,
             whItem.sale_price,
             transferCost,
             transferQty,
             whItemMin,
+            whWholesaleMin,
+            whWholesalePrice,
             whItem.barcode || '',
             (whItem.category || '').trim() || 'عام',
             whItem.description || '',
