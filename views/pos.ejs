@@ -658,7 +658,10 @@ function onDistrictChange(regionSelectId, customBoxId) {
 // ── Cart persistence ──────────────────────────────────────────────────────────
 const CART_SAVE_KEY = 'pos_cart_saved_v1';
 function saveCart() {
-  try { localStorage.setItem(CART_SAVE_KEY, JSON.stringify(cart)); } catch(_) {}
+  try {
+    if (!cart || cart.length === 0) localStorage.removeItem(CART_SAVE_KEY);
+    else localStorage.setItem(CART_SAVE_KEY, JSON.stringify(cart));
+  } catch(_) {}
 }
 function clearSavedCart() {
   try { localStorage.removeItem(CART_SAVE_KEY); } catch(_) {}
@@ -865,7 +868,6 @@ function loadStats() {
   });
 }
 loadStats();
-loadSavedCart();
 
 // ── Category filter bar ───────────────────────────────────────────────────────
 let _posCatProducts = null;
@@ -2668,6 +2670,9 @@ function addRewardToPosCart(rewardId) {
   closePosGiftRedeemModal();
   onCustomerSelectChange();
 }
+
+// Restore saved cart only after all script variables & helpers are initialized
+loadSavedCart();
 
 </script>
 
