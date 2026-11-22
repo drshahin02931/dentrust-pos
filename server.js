@@ -1929,6 +1929,50 @@ app.post(`${BASE}/api/products/:pid/toggle-website-visibility`, async (req, res)
   }
 });
 
+app.post(`${BASE}/api/products/:pid/toggle-recommended`, async (req, res) => {
+  const pid = parseInt(req.params.pid, 10);
+  try {
+    const { rows: [prod] } = await posDb.query(
+      'SELECT id, is_best_seller, dentrust_id FROM products WHERE id=$1',
+      [pid]
+    );
+    if (!prod) return res.status(404).json({ error: 'المنتج غير موجود' });
+    const nextState = !prod.is_best_seller;
+    await posDb.query('UPDATE public.products SET is_best_seller=$1 WHERE id=$2', [nextState, pid]);
+    if (HAS_WEBSITE_DB && prod.dentrust_id) {
+      await dentrustDb.query('UPDATE products SET is_best_seller=$1 WHERE id=$2', [nextState, prod.dentrust_id]).catch(() => {});
+    }
+    await updateSupabaseProductRest(prod.dentrust_id || pid, { is_best_seller: nextState });
+    cacheDel('site_products');
+    res.json({ ok: true, is_best_seller: nextState });
+  } catch (err) {
+    console.error('Toggle recommended error:', err);
+    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
+  }
+});
+
+app.get(`${BASE}/api/categories/images`, async (req, res) => {
+  try {
+    await posDb.query('ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS image_url TEXT').catch(() => {});
+    const { rows } = await posDb.query('SELECT id, name, section, image_url FROM public.categories ORDER BY name ASC');
+    res.json(rows || []);
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ داخلي' });
+  }
+});
+
+app.post(`${BASE}/api/categories/:cid/image`, async (req, res) => {
+  const cid = parseInt(req.params.cid, 10);
+  const imageUrl = (req.body?.image_url || '').trim() || null;
+  try {
+    await posDb.query('ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS image_url TEXT').catch(() => {});
+    await posDb.query('UPDATE public.categories SET image_url=$1 WHERE id=$2', [imageUrl, cid]);
+    res.json({ ok: true, id: cid, image_url: imageUrl });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ داخلي: ' + err.message });
+  }
+});
+
 app.post(`${BASE}/api/products/:pid/toggle-offer`, async (req, res) => {
   const pid = parseInt(req.params.pid, 10);
   try {

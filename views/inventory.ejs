@@ -135,6 +135,12 @@
           <span>🔥 العروض الخاصة</span>
           <span id="badge-offers-count" class="bg-red-100 text-red-700 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">0</span>
         </button>
+
+        <button type="button" onclick="openCatImagesModal()"
+          class="text-xs px-3 py-1.5 rounded-xl border font-bold transition-all bg-purple-50 text-purple-800 border-purple-200 hover:bg-purple-100 flex items-center gap-1.5"
+          title="تغيير صور التصنيفات التي تظهر على الموقع">
+          <span>🖼️ صور التصنيفات</span>
+        </button>
       </div>
 
       <!-- Filter count and Reset Button -->
@@ -178,6 +184,20 @@
       <tbody id="productTable" class="divide-y"></tbody>
     </table>
     <div id="noProducts" class="hidden text-center text-gray-400 py-12" data-ar="لا توجد منتجات" data-en="No products found">لا توجد منتجات</div>
+  </div>
+</div>
+
+<!-- Category Images Manager Modal -->
+<div id="catImagesModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col overflow-hidden">
+    <div class="p-4 border-b flex items-center justify-between bg-purple-50">
+      <div>
+        <h3 class="font-bold text-purple-950 text-base">🖼️ إدارة صور التصنيفات بالموقع</h3>
+        <p class="text-xs text-purple-700">ارفع صورة أو حط رابط صورة لأي تصنيف عشان يتحدّث على الموقع فوراً</p>
+      </div>
+      <button onclick="document.getElementById('catImagesModal').classList.add('hidden')" class="text-gray-500 hover:text-gray-700 text-2xl leading-none">×</button>
+    </div>
+    <div id="catImagesList" class="p-4 overflow-y-auto space-y-2.5 flex-1"></div>
   </div>
 </div>
 
@@ -655,6 +675,14 @@ function renderTable(products) {
         <span class="text-[11px]">${isOffer ? 'عرض' : 'عادي'}</span>
       </button>
     `;
+    const isRec = p.is_best_seller === true || p.is_best_seller === 'true' || p.is_best_seller === 1;
+    const recQuickBtn = `
+      <button onclick="quickToggleRecommended(${p.id}, event)" title="${isRec ? 'إزالة من Recommended بالموقع' : 'تثبيت في Recommended بالموقع'}"
+        class="text-xs px-2.5 py-2 rounded-xl font-bold transition-all flex items-center gap-1 shadow-xs min-h-[36px] ${isRec ? 'bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100' : 'bg-gray-50 text-gray-500 border border-gray-200 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200'}">
+        <span>⭐</span>
+        <span class="text-[11px]">${isRec ? 'مميز' : 'تمييز'}</span>
+      </button>
+    `;
 
     return `<tr class="hover:bg-gray-50 ${rowBg}">
       <td class="px-4 py-3">${thumbCell}</td>
@@ -679,6 +707,7 @@ function renderTable(products) {
         <div class="flex items-center gap-2 flex-nowrap">
           ${hideBtn}
           ${offerQuickBtn}
+          ${recQuickBtn}
           <button onclick="editProduct(${p.id})" class="text-xs bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 px-3.5 py-2 rounded-xl font-bold transition-all shadow-xs min-h-[36px]">تعديل</button>
           <button onclick="deleteProduct(${p.id})" class="text-xs bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 px-3.5 py-2 rounded-xl font-bold transition-all shadow-xs min-h-[36px]">حذف</button>
         </div>
@@ -2175,6 +2204,87 @@ async function downloadExcelFile(type, btn) {
       btn.disabled = false;
       btn.innerHTML = originalHtml;
     }
+  }
+}
+
+async function quickToggleRecommended(id, event) {
+  if (event) event.stopPropagation();
+  try {
+    const res = await fetch(`${BASE}/api/products/${id}/toggle-recommended`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'تعذر التحديث');
+    if (productMap[id]) productMap[id].is_best_seller = !!data.is_best_seller;
+    applyFilterAndRender();
+  } catch (err) {
+    alert('❌ ' + err.message);
+  }
+}
+
+async function openCatImagesModal() {
+  const modal = document.getElementById('catImagesModal');
+  const list = document.getElementById('catImagesList');
+  modal.classList.remove('hidden');
+  list.innerHTML = '<div class="text-center py-8 text-xs text-gray-400">جارٍ تحميل التصنيفات...</div>';
+  try {
+    const res = await fetch(`${BASE}/api/categories/images`);
+    const cats = await res.json();
+    list.innerHTML = (cats || []).map(c => `
+      <div class="flex items-center gap-3 p-2.5 rounded-xl border border-gray-200 bg-gray-50/50">
+        <img id="cat-prev-${c.id}" src="${c.image_url || 'https://placehold.co/80x60/ede9fe/521959?text=Auto'}" class="w-16 h-12 rounded-lg object-cover border bg-white flex-shrink-0"/>
+        <div class="flex-1 min-w-0">
+          <div class="font-bold text-xs text-gray-900 truncate">${c.name}</div>
+          <input id="cat-url-${c.id}" type="text" value="${(c.image_url || '').replace(/"/g, '&quot;')}" placeholder="رابط الصورة (أو ارفع ملف من الزرار)"
+            class="w-full mt-1 border rounded-lg px-2 py-1 text-[11px] bg-white"/>
+        </div>
+        <label class="cursor-pointer bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-2.5 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap">
+          📁 رفع
+          <input type="file" accept="image/*" class="hidden" onchange="uploadCatImageFile(${c.id}, this)"/>
+        </label>
+        <button type="button" onclick="saveCatImage(${c.id})" class="bg-purple-700 hover:bg-purple-800 text-white px-3 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap">
+          حفظ
+        </button>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="text-center py-6 text-xs text-red-600">${err.message}</div>`;
+  }
+}
+
+function uploadCatImageFile(cid, input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const maxDim = 480;
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      const compressed = canvas.toDataURL('image/webp', 0.82);
+      document.getElementById(`cat-url-${cid}`).value = compressed;
+      document.getElementById(`cat-prev-${cid}`).src = compressed;
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function saveCatImage(cid) {
+  const url = document.getElementById(`cat-url-${cid}`).value.trim();
+  try {
+    const res = await fetch(`${BASE}/api/categories/${cid}/image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_url: url })
+    });
+    if (!res.ok) throw new Error('فشل الحفظ');
+    document.getElementById(`cat-prev-${cid}`).src = url || 'https://placehold.co/80x60/ede9fe/521959?text=Auto';
+    alert('✅ تم تحديث صورة التصنيف بنجاح!');
+  } catch (err) {
+    alert('❌ ' + err.message);
   }
 }
 
