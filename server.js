@@ -8478,7 +8478,7 @@ const WEBSITE_ORIGINS = (process.env.WEBSITE_ORIGIN || 'https://dentrust.site,ht
 const webCors = cors({
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
-    if (WEBSITE_ORIGINS.some(o => origin === o) || /localhost/.test(origin)) return cb(null, true);
+    if (WEBSITE_ORIGINS.some(o => origin === o) || /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$/.test(origin)) return cb(null, true);
     cb(null, false);
   },
   credentials: false,
