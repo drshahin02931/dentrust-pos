@@ -1,0 +1,319 @@
+<%- include('partials/header', Object.assign({pageTitle: 'أكواد الخصم'}, locals)) %>
+<div class="max-w-6xl mx-auto space-y-5">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-2xl font-black text-gray-800">🏷️ إدارة أكواد الخصم (Promo Codes)</h1>
+      <p class="text-sm text-gray-500 mt-0.5">أنشئ وأدر كوبونات الموقع والكاشير من مكان واحد (عامة أو مخصصة لدكتور معين)</p>
+    </div>
+    <button onclick="openPromoModal()"
+      class="bg-blue-700 hover:bg-blue-800 text-white font-bold px-5 py-2.5 rounded-xl shadow flex items-center gap-2">
+      <span>➕ إنشاء برومو كود جديد</span>
+    </button>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div class="bg-white border rounded-2xl p-4">
+      <div class="text-xs text-gray-500 font-semibold">إجمالي الأكواد</div>
+      <div id="statTotal" class="text-2xl font-black text-blue-800 mt-1">—</div>
+    </div>
+    <div class="bg-white border rounded-2xl p-4">
+      <div class="text-xs text-gray-500 font-semibold">نشطة الآن</div>
+      <div id="statActive" class="text-2xl font-black text-emerald-600 mt-1">—</div>
+    </div>
+    <div class="bg-white border rounded-2xl p-4">
+      <div class="text-xs text-gray-500 font-semibold">مخصصة لدكاترة</div>
+      <div id="statPersonal" class="text-2xl font-black text-purple-700 mt-1">—</div>
+    </div>
+    <div class="bg-white border rounded-2xl p-4">
+      <div class="text-xs text-gray-500 font-semibold">إجمالي الاستخدامات</div>
+      <div id="statUses" class="text-2xl font-black text-amber-600 mt-1">—</div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="bg-white rounded-2xl border shadow-sm overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b text-right text-gray-600 font-bold">
+        <tr>
+          <th class="px-4 py-3">الكود</th>
+          <th class="px-4 py-3">الخصم</th>
+          <th class="px-4 py-3">الحد الأدنى</th>
+          <th class="px-4 py-3">النطاق / الدكتور</th>
+          <th class="px-4 py-3">الشروط</th>
+          <th class="px-4 py-3">الانتهاء</th>
+          <th class="px-4 py-3">الاستخدام</th>
+          <th class="px-4 py-3">الحالة</th>
+          <th class="px-4 py-3">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody id="promoTableBody" class="divide-y"></tbody>
+    </table>
+    <div id="noPromos" class="hidden text-center text-gray-400 py-12">لا توجد أكواد خصم بعد</div>
+  </div>
+</div>
+
+<!-- Create/Edit Modal -->
+<div id="promoModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+  <div class="bg-white rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden my-4">
+    <div class="p-5 border-b flex items-center justify-between bg-gradient-to-r from-[#10246b] to-[#521959] text-white">
+      <h3 id="promoModalTitle" class="font-bold text-lg">إنشاء برومو كود جديد</h3>
+      <button onclick="closePromoModal()" class="text-white/80 hover:text-white text-2xl leading-none">×</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <input type="hidden" id="editPromoId"/>
+
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">الكود *</label>
+        <div class="flex gap-2">
+          <input id="f-code" type="text" dir="ltr" placeholder="مثال: DENTRUST10 أو DT-7F3K9A"
+            class="flex-1 border rounded-xl px-3 py-2.5 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-200"/>
+          <button type="button" onclick="generateRandomCode()"
+            class="bg-purple-100 hover:bg-purple-200 text-purple-800 font-bold px-3.5 py-2 rounded-xl text-xs whitespace-nowrap">
+            🎲 توليد عشوائي
+          </button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <label class="text-xs font-bold text-gray-600 block mb-1">نوع الخصم</label>
+          <select id="f-type" class="w-full border rounded-xl px-3 py-2.5 text-sm bg-white">
+            <option value="percentage">نسبة مئوية (%)</option>
+            <option value="fixed">مبلغ ثابت (ج.م)</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-gray-600 block mb-1">قيمة الخصم *</label>
+          <input id="f-value" type="number" step="0.01" min="1" value="5" class="w-full border rounded-xl px-3 py-2.5 text-sm"/>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-gray-600 block mb-1">الحد الأدنى للطلب (ج.م)</label>
+          <input id="f-min" type="number" step="1" min="0" value="0" class="w-full border rounded-xl px-3 py-2.5 text-sm"/>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label class="text-xs font-bold text-gray-600 block mb-1">تاريخ الانتهاء (اتركه فارغاً لمفتوح)</label>
+          <div class="flex gap-1.5">
+            <input id="f-expires" type="date" dir="ltr" class="flex-1 border rounded-xl px-3 py-2 text-sm"/>
+            <button type="button" onclick="setExpiryDays(30)" class="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-2.5 rounded-xl text-xs whitespace-nowrap">+30 يوم</button>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-gray-600 block mb-1">أقصى عدد استخدام إجمالي (0 = مفتوح)</label>
+          <input id="f-max-uses" type="number" min="0" value="0" class="w-full border rounded-xl px-3 py-2.5 text-sm"/>
+        </div>
+      </div>
+
+      <div class="bg-slate-50 border rounded-xl p-3 space-y-2">
+        <div class="text-xs font-bold text-gray-700">👤 تخصيص لدكتور معين (اختياري — اتركه فارغاً ليصبح عام للكل)</div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input id="f-cust-phone" type="text" dir="ltr" placeholder="رقم هاتف الدكتور (مثال: 010...)" class="border rounded-xl px-3 py-2 text-sm bg-white"/>
+          <input id="f-cust-name" type="text" placeholder="اسم الدكتور (اختياري)" class="border rounded-xl px-3 py-2 text-sm bg-white"/>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <label class="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 cursor-pointer">
+          <input type="checkbox" id="f-exclude-bulk" checked class="rounded accent-blue-700"/>
+          <span class="text-xs font-bold text-amber-900">استثناء الجملة (Buy in Bulk) والشحن</span>
+        </label>
+        <label class="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2.5 cursor-pointer">
+          <input type="checkbox" id="f-once" checked class="rounded accent-blue-700"/>
+          <span class="text-xs font-bold text-blue-900">مرة واحدة فقط لكل عميل</span>
+        </label>
+      </div>
+
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">ملاحظة داخلية (اختياري)</label>
+        <input id="f-notes" type="text" placeholder="سبب الخصم أو الحملة..." class="w-full border rounded-xl px-3 py-2 text-sm"/>
+      </div>
+
+      <div id="promoError" class="hidden text-red-600 text-sm bg-red-50 rounded-xl px-3 py-2 font-semibold"></div>
+
+      <div class="flex gap-3 pt-1">
+        <button onclick="savePromo()" class="flex-1 bg-blue-700 hover:bg-blue-800 text-white font-bold py-2.5 rounded-xl">💾 حفظ الكود</button>
+        <button onclick="closePromoModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 rounded-xl">إلغاء</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = "<%- base %>";
+let _promos = [];
+
+function generateRandomCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let rnd = "";
+  for (let i = 0; i < 6; i++) rnd += chars[Math.floor(Math.random() * chars.length)];
+  document.getElementById("f-code").value = "DT-" + rnd;
+}
+
+function setExpiryDays(days) {
+  const d = new Date(Date.now() + days * 86400 * 1000);
+  document.getElementById("f-expires").value = d.toISOString().slice(0, 10);
+}
+
+async function loadPromos() {
+  const res = await fetch(`${BASE}/api/admin/promo-codes`);
+  _promos = await res.json();
+  document.getElementById("statTotal").textContent = _promos.length;
+  document.getElementById("statActive").textContent = _promos.filter(p => p.is_active && (!p.expires_at || new Date(p.expires_at) > new Date())).length;
+  document.getElementById("statPersonal").textContent = _promos.filter(p => p.customer_phone).length;
+  document.getElementById("statUses").textContent = _promos.reduce((s, p) => s + (p.usage_count || 0), 0);
+
+  const tbody = document.getElementById("promoTableBody");
+  if (!_promos.length) {
+    tbody.innerHTML = "";
+    document.getElementById("noPromos").classList.remove("hidden");
+    return;
+  }
+  document.getElementById("noPromos").classList.add("hidden");
+
+  tbody.innerHTML = _promos.map(p => {
+    const expired = p.expires_at && new Date(p.expires_at) < new Date();
+    const expStr = p.expires_at ? new Date(p.expires_at).toLocaleDateString("ar-EG") : "مفتوح";
+    const discLabel = p.discount_type === "percentage" ? `${p.discount_value}%` : `${p.discount_value} ج.م`;
+    const scope = p.customer_phone
+      ? `<div class="font-bold text-purple-700">${p.customer_name || "دكتور"}</div><div class="text-xs text-gray-500 font-mono" dir="ltr">${p.customer_phone}</div>`
+      : `<span class="text-xs font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">عام للكل</span>`;
+    const conds = [
+      p.exclude_bulk !== false ? "بدون جملة/شحن" : "يشمل الجملة",
+      p.once_per_customer !== false ? "مرة للعميل" : "متعدد للعميل"
+    ].join(" · ");
+    const statusBadge = !p.is_active
+      ? `<span class="text-xs font-bold px-2.5 py-1 rounded-full bg-red-100 text-red-700">موقوف</span>`
+      : expired
+        ? `<span class="text-xs font-bold px-2.5 py-1 rounded-full bg-gray-200 text-gray-600">منتهي</span>`
+        : `<span class="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700">نشط</span>`;
+
+    return `<tr class="hover:bg-gray-50">
+      <td class="px-4 py-3 font-mono font-black text-blue-800" dir="ltr">${p.code}</td>
+      <td class="px-4 py-3 font-bold text-gray-800">${discLabel}</td>
+      <td class="px-4 py-3 text-gray-600">${p.min_order > 0 ? p.min_order + " ج.م" : "—"}</td>
+      <td class="px-4 py-3">${scope}</td>
+      <td class="px-4 py-3 text-xs text-gray-600">${conds}</td>
+      <td class="px-4 py-3 text-xs ${expired ? "text-red-600 font-bold" : "text-gray-600"}">${expStr}</td>
+      <td class="px-4 py-3 text-xs font-bold">${p.usage_count || 0} / ${p.max_uses > 0 ? p.max_uses : "∞"}</td>
+      <td class="px-4 py-3">${statusBadge}</td>
+      <td class="px-4 py-3">
+        <div class="flex flex-wrap gap-1.5">
+          <button onclick="sendWhatsApp(${p.id})" class="text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-lg font-bold">📲 واتساب</button>
+          <button onclick="editPromo(${p.id})" class="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 px-2.5 py-1 rounded-lg font-bold">تعديل</button>
+          <button onclick="togglePromo(${p.id}, ${p.is_active})" class="text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 px-2.5 py-1 rounded-lg font-bold">${p.is_active ? "إيقاف" : "تفعيل"}</button>
+          <button onclick="deletePromo(${p.id})" class="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-2.5 py-1 rounded-lg font-bold">حذف</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+function sendWhatsApp(id) {
+  const p = _promos.find(x => x.id === id);
+  if (!p) return;
+  const disc = p.discount_type === "percentage" ? `${p.discount_value}%` : `${p.discount_value} جنيه`;
+  const expText = p.expires_at ? `⏳ صالح حتى: ${new Date(p.expires_at).toLocaleDateString("ar-EG")}\n` : "";
+  const bulkNote = p.exclude_bulk !== false ? " (على المنتجات غير شاملة الجملة والشحن)" : "";
+  const nameGreet = p.customer_name ? `د. ${p.customer_name}` : "دكتورنا العزيز";
+  const msg = `أهلاً بك يا ${nameGreet} 🌟\nهدية خاصة من DenTrust: كود خصم *${disc}*${bulkNote}:\n\n🎁 الكود: *${p.code}*\n${expText}🌐 الموقع: https://dentrust.site\n\nتقدر تستخدمه مباشرة في سلة الموقع أو في المحل.`;
+  const rawPh = (p.customer_phone || "").replace(/\D/g, "");
+  const waPhone = rawPh ? (rawPh.startsWith("0") ? "2" + rawPh : rawPh) : "";
+  window.open(`https://wa.me/${waPhone}?text=${encodeURIComponent(msg)}`, "_blank");
+}
+
+function openPromoModal() {
+  document.getElementById("promoModalTitle").textContent = "إنشاء برومو كود جديد";
+  document.getElementById("editPromoId").value = "";
+  document.getElementById("f-code").value = "";
+  document.getElementById("f-type").value = "percentage";
+  document.getElementById("f-value").value = "5";
+  document.getElementById("f-min").value = "0";
+  setExpiryDays(30);
+  document.getElementById("f-max-uses").value = "1";
+  document.getElementById("f-cust-phone").value = "";
+  document.getElementById("f-cust-name").value = "";
+  document.getElementById("f-exclude-bulk").checked = true;
+  document.getElementById("f-once").checked = true;
+  document.getElementById("f-notes").value = "";
+  document.getElementById("promoError").classList.add("hidden");
+  document.getElementById("promoModal").classList.remove("hidden");
+}
+
+function editPromo(id) {
+  const p = _promos.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById("promoModalTitle").textContent = `تعديل كود: ${p.code}`;
+  document.getElementById("editPromoId").value = p.id;
+  document.getElementById("f-code").value = p.code;
+  document.getElementById("f-type").value = p.discount_type;
+  document.getElementById("f-value").value = p.discount_value;
+  document.getElementById("f-min").value = p.min_order || 0;
+  document.getElementById("f-expires").value = p.expires_at ? new Date(p.expires_at).toISOString().slice(0, 10) : "";
+  document.getElementById("f-max-uses").value = p.max_uses || 0;
+  document.getElementById("f-cust-phone").value = p.customer_phone || "";
+  document.getElementById("f-cust-name").value = p.customer_name || "";
+  document.getElementById("f-exclude-bulk").checked = p.exclude_bulk !== false;
+  document.getElementById("f-once").checked = p.once_per_customer !== false;
+  document.getElementById("f-notes").value = p.notes || "";
+  document.getElementById("promoError").classList.add("hidden");
+  document.getElementById("promoModal").classList.remove("hidden");
+}
+
+function closePromoModal() {
+  document.getElementById("promoModal").classList.add("hidden");
+}
+
+async function savePromo() {
+  const id = document.getElementById("editPromoId").value;
+  const payload = {
+    code: document.getElementById("f-code").value.trim(),
+    discount_type: document.getElementById("f-type").value,
+    discount_value: parseFloat(document.getElementById("f-value").value || 0),
+    min_order: parseFloat(document.getElementById("f-min").value || 0),
+    expires_at: document.getElementById("f-expires").value || null,
+    max_uses: parseInt(document.getElementById("f-max-uses").value || 0, 10),
+    customer_phone: document.getElementById("f-cust-phone").value.trim(),
+    customer_name: document.getElementById("f-cust-name").value.trim(),
+    exclude_bulk: document.getElementById("f-exclude-bulk").checked,
+    once_per_customer: document.getElementById("f-once").checked,
+    notes: document.getElementById("f-notes").value.trim(),
+  };
+  const url = id ? `${BASE}/api/admin/promo-codes/${id}` : `${BASE}/api/admin/promo-codes`;
+  const res = await fetch(url, {
+    method: id ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    const el = document.getElementById("promoError");
+    el.textContent = data.error || "حدث خطأ";
+    el.classList.remove("hidden");
+    return;
+  }
+  closePromoModal();
+  loadPromos();
+}
+
+async function togglePromo(id, cur) {
+  await fetch(`${BASE}/api/admin/promo-codes/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ is_active: !cur }),
+  });
+  loadPromos();
+}
+
+async function deletePromo(id) {
+  if (!confirm("هل أنت متأكد من حذف هذا الكود نهائياً؟")) return;
+  await fetch(`${BASE}/api/admin/promo-codes/${id}`, { method: "DELETE" });
+  loadPromos();
+}
+
+loadPromos();
+</script>
+</main>
+<%- include('partials/footer', locals) %>

@@ -75,6 +75,9 @@
           <label class="flex items-center gap-2 bg-orange-50 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-orange-100 border border-orange-100">
             <input type="checkbox" id="p-process_returns" class="rounded"/> <span class="text-sm font-medium text-orange-700">↩️ معالجة المردودات</span>
           </label>
+          <label class="flex items-center gap-2 bg-purple-50 rounded-xl px-3 py-2.5 cursor-pointer hover:bg-purple-100 border border-purple-100 col-span-2">
+            <input type="checkbox" id="p-reviews" class="rounded"/> <span class="text-sm font-medium text-purple-800">⭐ التقييمات وإرسال برومو الواتساب (+ إشعاراتها)</span>
+          </label>
         </div>
       </div>
 
@@ -89,8 +92,8 @@
 </div>
 <script>
 const BASE = "<%- base %>";
-const PERM_KEYS = ["pos","inventory","expiry","customers","accounting","invoices","edit_prices","process_returns"];
-const PERM_LABELS = { pos:"نقطة البيع", inventory:"المخزون", expiry:"الصلاحية", customers:"العملاء", accounting:"المحاسبة", invoices:"الفواتير", edit_prices:"تعديل الأسعار", process_returns:"المردودات" };
+const PERM_KEYS = ["pos","inventory","expiry","customers","accounting","invoices","edit_prices","process_returns","reviews"];
+const PERM_LABELS = { pos:"نقطة البيع", inventory:"المخزون", expiry:"الصلاحية", customers:"العملاء", accounting:"المحاسبة", invoices:"الفواتير", edit_prices:"تعديل الأسعار", process_returns:"المردودات", reviews:"التقييمات والبرومو" };
 
 async function loadUsers() {
   const res = await fetch(`${BASE}/api/users`);

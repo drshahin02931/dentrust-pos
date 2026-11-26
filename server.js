@@ -121,6 +121,10 @@ const OPEN_API = [
   '/api/customer/redeem',
   '/api/loyalty-rewards',
   '/api/promo/validate',
+  '/api/promo/customer-active',
+  '/api/website-config',
+  '/api/settings/social',
+  '/api/reviews/notify',
   '/api/website-registrations/count',
   '/api/cart/validate-stock',
   '/api/clinic',
@@ -236,6 +240,18 @@ app.get([`${BASE}/invoices`, '/invoices'], (req, res) => {
 app.get(`${BASE}/settings`, (req, res) => {
   if (!isMgr(req)) return res.redirect(`${BASE}/`);
   return renderPage(req, res, 'settings');
+});
+app.get([`${BASE}/website-settings`, '/website-settings'], (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'website_settings', { pageTitle: 'إعدادات الموقع' });
+});
+app.get([`${BASE}/promo-codes`, '/promo-codes'], (req, res) => {
+  if (!isMgr(req)) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'promo_codes', { pageTitle: 'أكواد الخصم' });
+});
+app.get([`${BASE}/reviews-admin`, '/reviews-admin'], (req, res) => {
+  if (!isMgr(req) && !hasPerm(req, 'reviews')) return res.redirect(`${BASE}/`);
+  return renderPage(req, res, 'reviews_admin', { pageTitle: 'تقييمات العملاء' });
 });
 app.get(`${BASE}/barcodes`, (req, res) => {
   if (!hasPerm(req, 'inventory')) return res.redirect(`${BASE}/`);
@@ -2451,6 +2467,25 @@ app.post(`${BASE}/api/sales`, async (req, res) => {
         console.error('[Error deducting redeemed points]:', rErr.message);
       }
     }
+    if (promoCode) {
+      let custPhoneForPromo = '';
+      if (customerId) {
+        const { rows: [cph] } = await client.query('SELECT phone FROM customers WHERE id=$1', [customerId]).catch(() => ({ rows: [] }));
+        custPhoneForPromo = cph?.phone || '';
+      }
+      await client.query('SAVEPOINT sp_promo_use');
+      try {
+        await recordPromoCodeUsage(client, {
+          code: promoCode,
+          customerPhone: custPhoneForPromo,
+          saleId,
+          discountAmount,
+        });
+        await client.query('RELEASE SAVEPOINT sp_promo_use');
+      } catch (_puErr) {
+        await client.query('ROLLBACK TO SAVEPOINT sp_promo_use');
+      }
+    }
     await client.query('COMMIT');
 
     let lowStock = [];
@@ -3631,40 +3666,232 @@ app.get([`${BASE}/api/customer/profile`, '/api/customer/profile', `${BASE}/api/c
   }
 });
 
-app.post(`${BASE}/api/promo/validate`, async (req, res) => {
-  const { code, total_amount } = req.body;
-  if (!code || !code.trim()) return res.status(400).json({ error: 'كود الخصم مطلوب' });
-  const cleanCode = code.trim().toUpperCase();
-  const orderTotal = parseFloat(total_amount || 0);
+function normalizePromoPhone(p) {
+  return String(p || '').replace(/\D/g, '').replace(/^2(?=(01\d{9}|1\d{9}))/, '').replace(/^0?1/, '01').trim();
+}
+
+async function recordPromoCodeUsage(dbClient, { code, customerPhone = '', saleId = null, orderId = null, discountAmount = 0 }) {
+  const cleanCode = String(code || '').trim().toUpperCase();
+  if (!cleanCode) return;
+  const normPhone = normalizePromoPhone(customerPhone);
+  const { rows: [promo] } = await dbClient.query(
+    'SELECT id, usage_count, max_uses, customer_phone, once_per_customer FROM promo_codes WHERE UPPER(code)=$1 LIMIT 1',
+    [cleanCode]
+  );
+  if (!promo) return;
+  const nextCount = Number(promo.usage_count || 0) + 1;
+  const maxUses = Number(promo.max_uses || 0);
+  const isPersonalSingle = Boolean(promo.customer_phone) && promo.once_per_customer !== false;
+  const exhaustsCode = (maxUses > 0 && nextCount >= maxUses) || isPersonalSingle;
+  await dbClient.query(
+    'UPDATE promo_codes SET usage_count = $1, is_active = CASE WHEN $2 THEN FALSE ELSE is_active END WHERE id = $3',
+    [nextCount, exhaustsCode, promo.id]
+  );
+  await dbClient.query(
+    `INSERT INTO promo_code_usages (promo_id, code, customer_phone, sale_id, order_id, discount_amount)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [promo.id, cleanCode, normPhone || null, saleId || null, orderId ? String(orderId) : null, r2(discountAmount)]
+  );
+}
+
+app.post(`${BASE}/api/promo/validate`, webCors, async (req, res) => {
+  const cleanCode = String(req.body.code || '').trim().toUpperCase();
+  if (!cleanCode) return res.status(400).json({ error: 'كود الخصم مطلوب' });
+  const orderTotal = parseFloat(req.body.total_amount ?? req.body.order_total ?? req.body.cartTotal ?? 0) || 0;
+  const eligibleSubtotal = req.body.eligible_subtotal != null
+    ? (parseFloat(req.body.eligible_subtotal) || 0)
+    : orderTotal;
+  const customerPhone = normalizePromoPhone(req.body.customer_phone ?? req.body.phone ?? '');
+
   try {
     const { rows: [promo] } = await posDb.query(
-      'SELECT * FROM promo_codes WHERE UPPER(code)=$1 AND is_active=true LIMIT 1',
+      'SELECT * FROM promo_codes WHERE UPPER(code)=$1 LIMIT 1',
       [cleanCode]
     );
-    if (!promo) return res.status(404).json({ error: 'كود الخصم غير صالح أو منتهي الصلاحية' });
+    if (!promo || promo.is_active === false) {
+      return res.status(404).json({ error: 'كود الخصم غير صالح أو غير مفعّل' });
+    }
+    if (promo.expires_at && new Date(promo.expires_at).getTime() < Date.now()) {
+      return res.status(400).json({ error: 'انتهت صلاحية كود الخصم' });
+    }
+    const maxUses = Number(promo.max_uses || 0);
+    if (maxUses > 0 && Number(promo.usage_count || 0) >= maxUses) {
+      return res.status(400).json({ error: 'تم استنفاد عدد مرات استخدام هذا الكود' });
+    }
+    const assignedPhone = normalizePromoPhone(promo.customer_phone || '');
+    if (assignedPhone) {
+      if (!customerPhone) {
+        return res.status(400).json({ error: 'هذا الكود مخصص لعميل محدد — أدخل رقم هاتفك المسجل أولاً' });
+      }
+      if (assignedPhone !== customerPhone) {
+        return res.status(403).json({ error: 'هذا الكود مخصص لحساب عميل آخر' });
+      }
+    }
+    if (promo.once_per_customer !== false && customerPhone) {
+      const { rows: usedRows } = await posDb.query(
+        'SELECT id FROM promo_code_usages WHERE UPPER(code)=$1 AND customer_phone=$2 LIMIT 1',
+        [cleanCode, customerPhone]
+      );
+      if (usedRows.length > 0) {
+        return res.status(400).json({ error: 'لقد قمت باستخدام هذا الكود من قبل' });
+      }
+      const { rows: legacyUsed } = await posDb.query(
+        `SELECT s.id FROM sales s
+         JOIN customers c ON c.id = s.customer_id
+         WHERE UPPER(s.promo_code)=$1 AND regexp_replace(COALESCE(c.phone,''), '\\D', '', 'g') LIKE '%' || $2 LIMIT 1`,
+        [cleanCode, customerPhone.slice(-10)]
+      ).catch(() => ({ rows: [] }));
+      if (legacyUsed.length > 0) {
+        return res.status(400).json({ error: 'لقد قمت باستخدام هذا الكود من قبل' });
+      }
+    }
+
+    const excludeBulk = promo.exclude_bulk !== false;
+    const baseAmount = excludeBulk ? Math.max(0, eligibleSubtotal) : Math.max(0, orderTotal);
+    if (excludeBulk && baseAmount <= 0 && orderTotal > 0) {
+      return res.status(400).json({ error: 'كود الخصم لا يسري على منتجات الجملة (Buy in Bulk) والشحن' });
+    }
 
     const minOrder = parseFloat(promo.min_order || 0);
-    if (minOrder > 0 && orderTotal < minOrder) {
+    if (minOrder > 0 && baseAmount < minOrder) {
       return res.status(400).json({ error: `هذا الكوبون يتطلب حداً أدنى للطلب بقيمة ${minOrder} ج.م` });
     }
 
     let discount = 0;
     if (promo.discount_type === 'percentage') {
-      discount = (orderTotal * parseFloat(promo.discount_value)) / 100;
+      discount = (baseAmount * parseFloat(promo.discount_value || 0)) / 100;
     } else {
-      discount = Math.min(orderTotal, parseFloat(promo.discount_value));
+      discount = Math.min(baseAmount, parseFloat(promo.discount_value || 0));
     }
-    discount = Math.round(discount * 100) / 100;
+    discount = r2(discount);
 
     res.json({
       ok: true,
       promo: {
+        id: promo.id,
         code: promo.code,
         discount_type: promo.discount_type,
-        discount_value: parseFloat(promo.discount_value),
-        discount_amount: discount
-      }
+        discount_value: parseFloat(promo.discount_value || 0),
+        discount_amount: discount,
+        exclude_bulk: excludeBulk,
+        expires_at: promo.expires_at || null,
+      },
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+app.get(`${BASE}/api/promo/customer-active`, webCors, async (req, res) => {
+  const phone = normalizePromoPhone(req.query.phone || '');
+  if (phone.length < 10) return res.json({ promos: [] });
+  try {
+    const { rows } = await posDb.query(
+      `SELECT p.id, p.code, p.discount_type, p.discount_value, p.min_order, p.expires_at, p.exclude_bulk
+       FROM promo_codes p
+       WHERE p.is_active = TRUE
+         AND COALESCE(p.customer_phone, '') <> ''
+         AND regexp_replace(p.customer_phone, '\\D', '', 'g') LIKE '%' || $1
+         AND (p.expires_at IS NULL OR p.expires_at > NOW())
+         AND (COALESCE(p.max_uses, 0) = 0 OR COALESCE(p.usage_count, 0) < p.max_uses)
+         AND NOT EXISTS (
+           SELECT 1 FROM promo_code_usages u
+           WHERE UPPER(u.code) = UPPER(p.code) AND u.customer_phone = $2
+         )
+       ORDER BY p.created_at DESC
+       LIMIT 5`,
+      [phone.slice(-10), phone]
+    );
+    res.json({ promos: rows });
+  } catch (err) {
+    res.json({ promos: [] });
+  }
+});
+
+// ── Admin Promo Codes CRUD (Manager Only) ─────────────────────────────────────
+app.get(`${BASE}/api/admin/promo-codes`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    const { rows } = await posDb.query('SELECT * FROM promo_codes ORDER BY id DESC');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+app.post(`${BASE}/api/admin/promo-codes`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const d = req.body || {};
+  const code = String(d.code || '').trim().toUpperCase();
+  if (!code) return res.status(400).json({ error: 'كود الخصم مطلوب' });
+  const discountType = d.discount_type === 'fixed' ? 'fixed' : 'percentage';
+  const discountValue = parseFloat(d.discount_value || 0);
+  if (discountValue <= 0) return res.status(400).json({ error: 'قيمة الخصم يجب أن تكون أكبر من صفر' });
+  const minOrder = parseFloat(d.min_order || 0) || 0;
+  const maxUses = Math.max(0, parseInt(d.max_uses || 0, 10) || 0);
+  const oncePerCust = d.once_per_customer !== false;
+  const excludeBulk = d.exclude_bulk !== false;
+  const isActive = d.is_active !== false;
+  const expiresAt = d.expires_at ? new Date(d.expires_at).toISOString() : null;
+  const customerPhone = normalizePromoPhone(d.customer_phone || '') || null;
+  const customerName = String(d.customer_name || '').trim() || null;
+  const notes = String(d.notes || '').trim() || null;
+
+  try {
+    const { rows: [created] } = await posDb.query(
+      `INSERT INTO promo_codes
+         (code, discount_type, discount_value, min_order, is_active, expires_at, max_uses, once_per_customer, customer_phone, customer_name, exclude_bulk, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [code, discountType, discountValue, minOrder, isActive, expiresAt, maxUses, oncePerCust, customerPhone, customerName, excludeBulk, notes]
+    );
+    res.status(201).json({ ok: true, promo: created });
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: 'هذا الكود مسجل بالفعل' });
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+app.put(`${BASE}/api/admin/promo-codes/:id`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const d = req.body || {};
+  const pid = parseInt(req.params.id, 10);
+  if (!pid) return res.status(400).json({ error: 'معرف غير صالح' });
+  try {
+    const { rows: [existing] } = await posDb.query('SELECT * FROM promo_codes WHERE id=$1', [pid]);
+    if (!existing) return res.status(404).json({ error: 'الكود غير موجود' });
+    const code = d.code != null ? String(d.code).trim().toUpperCase() : existing.code;
+    const discountType = d.discount_type != null ? (d.discount_type === 'fixed' ? 'fixed' : 'percentage') : existing.discount_type;
+    const discountValue = d.discount_value != null ? parseFloat(d.discount_value) : existing.discount_value;
+    const minOrder = d.min_order != null ? (parseFloat(d.min_order) || 0) : existing.min_order;
+    const isActive = d.is_active != null ? Boolean(d.is_active) : existing.is_active;
+    const expiresAt = d.expires_at !== undefined ? (d.expires_at ? new Date(d.expires_at).toISOString() : null) : existing.expires_at;
+    const maxUses = d.max_uses != null ? Math.max(0, parseInt(d.max_uses, 10) || 0) : existing.max_uses;
+    const oncePerCust = d.once_per_customer != null ? Boolean(d.once_per_customer) : existing.once_per_customer;
+    const excludeBulk = d.exclude_bulk != null ? Boolean(d.exclude_bulk) : existing.exclude_bulk;
+    const customerPhone = d.customer_phone !== undefined ? (normalizePromoPhone(d.customer_phone) || null) : existing.customer_phone;
+    const customerName = d.customer_name !== undefined ? (String(d.customer_name || '').trim() || null) : existing.customer_name;
+    const notes = d.notes !== undefined ? (String(d.notes || '').trim() || null) : existing.notes;
+
+    const { rows: [updated] } = await posDb.query(
+      `UPDATE promo_codes
+       SET code=$1, discount_type=$2, discount_value=$3, min_order=$4, is_active=$5,
+           expires_at=$6, max_uses=$7, once_per_customer=$8, customer_phone=$9,
+           customer_name=$10, exclude_bulk=$11, notes=$12
+       WHERE id=$13 RETURNING *`,
+      [code, discountType, discountValue, minOrder, isActive, expiresAt, maxUses, oncePerCust, customerPhone, customerName, excludeBulk, notes, pid]
+    );
+    res.json({ ok: true, promo: updated });
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: 'هذا الكود مسجل بالفعل' });
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+app.delete(`${BASE}/api/admin/promo-codes/:id`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  try {
+    await posDb.query('DELETE FROM promo_codes WHERE id=$1', [parseInt(req.params.id, 10)]);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message || 'خطأ داخلي' });
   }
@@ -8143,6 +8370,15 @@ app.post(`${BASE}/api/cart/validate-stock`, async (req, res) => {
 app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
   const d = req.body;
   try {
+    if (d.dentrust_order_id) {
+      const { rows: [existingSale] } = await posDb.query(
+        'SELECT id FROM sales WHERE dentrust_order_id::text = $1 LIMIT 1',
+        [String(d.dentrust_order_id)]
+      ).catch(() => ({ rows: [] }));
+      if (existingSale) {
+        return res.json({ ok: true, sale_id: existingSale.id, duplicate: true });
+      }
+    }
     // 🔔 Insert alert for POS staff
     const alertItems = (d.items || []);
     const alertSummary = alertItems.map(i => `${i.product_name || i.name || '?'} x${i.quantity || 1}`).join('، ');
@@ -8315,6 +8551,16 @@ app.post(`${BASE}/api/sync/order-placed`, async (req, res) => {
       } catch (ptsErr) {
         console.error('[Error updating online points]:', ptsErr.message);
       }
+    }
+
+    if (d.promo_code) {
+      await recordPromoCodeUsage(posDb, {
+        code: d.promo_code,
+        customerPhone: d.customer_phone || '',
+        saleId,
+        orderId: d.dentrust_order_id || null,
+        discountAmount: onlineDiscount,
+      }).catch(() => {});
     }
 
     // Flask: online orders do NOT increment customer debt on order-placed;
@@ -8713,6 +8959,16 @@ async function loadStorePolicies() {
       const lines = result.rows.map(r => `[${r.category}] ${r.title}: ${r.content}`).join('\n');
       text = `\n\n=== معلومات المتجر وسياسات DenTrust ===\n${lines}\n===`;
     }
+    try {
+      const { rows: extraRows } = await posDb.query(
+        "SELECT key, value FROM store_settings WHERE key IN ('denbot_extra','stylebot_extra')"
+      );
+      for (const er of extraRows) {
+        if (er.value && er.value.trim()) {
+          text += `\n\n[${er.key}]:\n${er.value.trim()}`;
+        }
+      }
+    } catch (_) {}
     _knowledgeCache = text;
     _knowledgeCacheAt = now;
     return _knowledgeCache;
@@ -9616,6 +9872,277 @@ app.delete(`${BASE}/api/bot-knowledge/:id`, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'خطأ داخلي' }); }
 });
 
+// ── Website Config (Manager-managed from POS) ────────────────────────────────
+const DEFAULT_SOCIAL_LINKS = { facebook: '', instagram: '', whatsapp: '', tiktok: '', phone: '' };
+const DEFAULT_SHIPPING_CFG = { defaultFee: 35, cityFees: {}, districtFees: {} };
+const DEFAULT_INSTAPAY_CFG = {
+  number: '01014067776',
+  name: 'أحلام أنور السيد',
+  link: 'https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI',
+};
+
+async function readWebsiteConfigData() {
+  const s = await getSettings().catch(() => ({}));
+  let socialLinks = { ...DEFAULT_SOCIAL_LINKS };
+  let shippingSettings = { ...DEFAULT_SHIPPING_CFG };
+  let instapaySettings = { ...DEFAULT_INSTAPAY_CFG };
+  let denbotExtra = s.denbot_extra || '';
+  let stylebotExtra = s.stylebot_extra || '';
+
+  try { if (s.website_social_links) socialLinks = { ...socialLinks, ...JSON.parse(s.website_social_links) }; } catch (_) {}
+  try { if (s.website_shipping_settings) shippingSettings = { ...shippingSettings, ...JSON.parse(s.website_shipping_settings) }; } catch (_) {}
+  try { if (s.website_instapay_settings) instapaySettings = { ...instapaySettings, ...JSON.parse(s.website_instapay_settings) }; } catch (_) {}
+
+  // Fallback read from public schema if not yet saved in store_settings
+  if (!s.website_shipping_settings || !s.website_social_links || !denbotExtra || !stylebotExtra) {
+    try {
+      const { rows: pubSet } = await dentrustDb.query(
+        "SELECT key, value FROM public.settings WHERE key IN ('shipping_settings','denbot_extra','stylebot_extra')"
+      ).catch(() => ({ rows: [] }));
+      for (const r of pubSet) {
+        if (r.key === 'shipping_settings' && !s.website_shipping_settings && r.value) {
+          try { shippingSettings = { ...shippingSettings, ...(typeof r.value === 'string' ? JSON.parse(r.value) : r.value) }; } catch (_) {}
+        }
+        if (r.key === 'denbot_extra' && !denbotExtra && r.value) denbotExtra = String(r.value);
+        if (r.key === 'stylebot_extra' && !stylebotExtra && r.value) stylebotExtra = String(r.value);
+      }
+      if (!s.website_social_links) {
+        const { rows: sl } = await dentrustDb.query('SELECT * FROM public.social_links LIMIT 1').catch(() => ({ rows: [] }));
+        if (sl[0]) {
+          socialLinks = {
+            facebook: sl[0].facebook || '',
+            instagram: sl[0].instagram || '',
+            whatsapp: sl[0].whatsapp || '',
+            tiktok: sl[0].tiktok || '',
+            phone: sl[0].phone || '',
+          };
+        }
+      }
+    } catch (_) {}
+  }
+  return { socialLinks, shippingSettings, instapaySettings, denbotExtra, stylebotExtra };
+}
+
+app.get([`${BASE}/api/website-config`, '/api/website-config'], webCors, async (req, res) => {
+  try {
+    res.json(await readWebsiteConfigData());
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+app.get([`${BASE}/api/settings/social`, '/api/settings/social'], webCors, async (req, res) => {
+  try {
+    const cfg = await readWebsiteConfigData();
+    res.json(cfg.socialLinks);
+  } catch (_) {
+    res.json(DEFAULT_SOCIAL_LINKS);
+  }
+});
+
+app.post(`${BASE}/api/admin/website-config`, async (req, res) => {
+  if (!isMgr(req)) return res.status(403).json({ error: 'مسموح للمدير فقط' });
+  const d = req.body || {};
+  try {
+    const socialLinks = {
+      facebook: String(d.socialLinks?.facebook || '').trim(),
+      instagram: String(d.socialLinks?.instagram || '').trim(),
+      whatsapp: String(d.socialLinks?.whatsapp || '').trim(),
+      tiktok: String(d.socialLinks?.tiktok || '').trim(),
+      phone: String(d.socialLinks?.phone || '').trim(),
+    };
+    const shippingSettings = {
+      defaultFee: Math.max(0, Number(d.shippingSettings?.defaultFee || 0)),
+      cityFees: d.shippingSettings?.cityFees && typeof d.shippingSettings.cityFees === 'object' ? d.shippingSettings.cityFees : {},
+      districtFees: d.shippingSettings?.districtFees && typeof d.shippingSettings.districtFees === 'object' ? d.shippingSettings.districtFees : {},
+    };
+    const instapaySettings = {
+      number: String(d.instapaySettings?.number || '').trim(),
+      name: String(d.instapaySettings?.name || '').trim(),
+      link: String(d.instapaySettings?.link || '').trim(),
+    };
+    const denbotExtra = String(d.denbotExtra || '');
+    const stylebotExtra = String(d.stylebotExtra || '');
+
+    const pairs = {
+      website_social_links: JSON.stringify(socialLinks),
+      website_shipping_settings: JSON.stringify(shippingSettings),
+      website_instapay_settings: JSON.stringify(instapaySettings),
+      denbot_extra: denbotExtra,
+      stylebot_extra: stylebotExtra,
+    };
+    for (const [k, v] of Object.entries(pairs)) {
+      await posDb.query(
+        'INSERT INTO store_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2',
+        [k, v]
+      );
+    }
+
+    // Best-effort mirror to public.settings and public.social_links
+    try {
+      for (const [k, v] of [
+        ['shipping_settings', JSON.stringify(shippingSettings)],
+        ['denbot_extra', denbotExtra],
+        ['stylebot_extra', stylebotExtra],
+      ]) {
+        await dentrustDb.query(
+          'INSERT INTO public.settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2',
+          [k, v]
+        ).catch(() => {});
+      }
+      const { rows: exSocial } = await dentrustDb.query('SELECT id FROM public.social_links LIMIT 1').catch(() => ({ rows: [] }));
+      if (exSocial[0]?.id) {
+        await dentrustDb.query(
+          'UPDATE public.social_links SET facebook=$1, instagram=$2, whatsapp=$3, tiktok=$4, phone=$5 WHERE id=$6',
+          [socialLinks.facebook, socialLinks.instagram, socialLinks.whatsapp, socialLinks.tiktok, socialLinks.phone, exSocial[0].id]
+        ).catch(() => {});
+      } else {
+        await dentrustDb.query(
+          'INSERT INTO public.social_links (facebook, instagram, whatsapp, tiktok, phone) VALUES ($1,$2,$3,$4,$5)',
+          [socialLinks.facebook, socialLinks.instagram, socialLinks.whatsapp, socialLinks.tiktok, socialLinks.phone]
+        ).catch(() => {});
+      }
+    } catch (_) {}
+
+    _knowledgeCache = null;
+    res.json({ ok: true, config: { socialLinks, shippingSettings, instapaySettings, denbotExtra, stylebotExtra } });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+// ── Customer Reviews & Reward Promo Workflow ──────────────────────────────────
+app.post([`${BASE}/api/reviews/notify`, '/api/reviews/notify'], webCors, async (req, res) => {
+  const d = req.body || {};
+  const reviewId = d.reviewId != null ? parseInt(d.reviewId, 10) : null;
+  const source = d.source === 'site' ? 'site' : 'product';
+  const customerName = String(d.customerName || 'دكتور').trim();
+  const customerPhone = normalizePromoPhone(d.customerPhone || '');
+  const orderId = d.orderId != null ? parseInt(d.orderId, 10) : null;
+  const rating = Math.min(5, Math.max(1, parseInt(d.rating || 5, 10) || 5));
+  const comment = String(d.comment || '').trim();
+  const productId = d.productId != null ? parseInt(d.productId, 10) : null;
+
+  try {
+    if (source === 'site') {
+      if (reviewId && customerPhone) {
+        await dentrustDb.query(
+          'UPDATE public.site_ratings SET customer_phone=COALESCE(NULLIF($1,\'\'), customer_phone), order_id=COALESCE($2, order_id) WHERE id=$3',
+          [customerPhone, orderId, reviewId]
+        ).catch(() => {});
+      }
+    } else if (reviewId) {
+      await dentrustDb.query(
+        'UPDATE public.reviews SET customer_phone=COALESCE(NULLIF($1,\'\'), customer_phone), order_id=COALESCE($2, order_id) WHERE id=$3',
+        [customerPhone, orderId, reviewId]
+      ).catch(() => {});
+    } else if (comment) {
+      await dentrustDb.query(
+        'INSERT INTO public.reviews (product_id, customer_name, rating, comment, customer_phone, order_id) VALUES ($1,$2,$3,$4,$5,$6)',
+        [productId, customerName, rating, comment, customerPhone || null, orderId]
+      ).catch(() => {});
+    }
+
+    const shortBody = comment.length > 90 ? comment.slice(0, 87) + '...' : (comment || 'تقييم جديد على المتجر');
+    sendPushToReviewAuthorized(
+      `⭐ تقييم جديد (${rating}/5) — ${customerName}`,
+      shortBody,
+      `${BASE}/reviews-admin`,
+      `review-${Date.now()}`
+    ).catch(() => {});
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.json({ ok: false, error: err.message });
+  }
+});
+
+app.get(`${BASE}/api/admin/reviews`, async (req, res) => {
+  if (!isMgr(req) && !hasPerm(req, 'reviews')) return res.status(403).json({ error: 'غير مصرح' });
+  try {
+    const [prodRes, siteRes] = await Promise.all([
+      dentrustDb.query(
+        `SELECT r.id, 'product' AS source, r.product_id, p.name AS product_name,
+                r.customer_name, r.customer_phone, r.order_id, r.rating, r.comment,
+                r.reward_promo_code, r.reward_sent_at, r.created_at
+         FROM public.reviews r
+         LEFT JOIN public.products p ON p.id = r.product_id
+         ORDER BY r.created_at DESC NULLS LAST, r.id DESC
+         LIMIT 200`
+      ).catch(() => ({ rows: [] })),
+      dentrustDb.query(
+        `SELECT id, 'site' AS source, NULL::integer AS product_id, 'تقييم عام للموقع' AS product_name,
+                customer_name, customer_phone, order_id, rating, comment,
+                reward_promo_code, reward_sent_at, created_at
+         FROM public.site_ratings
+         ORDER BY created_at DESC NULLS LAST, id DESC
+         LIMIT 100`
+      ).catch(() => ({ rows: [] })),
+    ]);
+
+    const combined = [...(prodRes.rows || []), ...(siteRes.rows || [])].sort(
+      (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+    res.json(combined);
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
+app.post(`${BASE}/api/admin/reviews/reward-promo`, async (req, res) => {
+  if (!isMgr(req) && !hasPerm(req, 'reviews')) return res.status(403).json({ error: 'غير مصرح' });
+  const d = req.body || {};
+  const reviewId = parseInt(d.reviewId, 10);
+  const source = d.source === 'site' ? 'site' : 'product';
+  const code = String(d.code || '').trim().toUpperCase() || `DT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  const discountType = d.discount_type === 'fixed' ? 'fixed' : 'percentage';
+  const discountValue = Math.max(1, parseFloat(d.discount_value || 5) || 5);
+  const minOrder = Math.max(0, parseFloat(d.min_order || 0) || 0);
+  const excludeBulk = d.exclude_bulk !== false;
+  const daysValid = Math.max(1, parseInt(d.days_valid || 30, 10) || 30);
+  const customerPhone = normalizePromoPhone(d.customer_phone || '');
+  const customerName = String(d.customer_name || 'دكتور').trim();
+  const expiresAt = d.expires_at ? new Date(d.expires_at) : new Date(Date.now() + daysValid * 86400 * 1000);
+
+  try {
+    const { rows: [promo] } = await posDb.query(
+      `INSERT INTO promo_codes
+         (code, discount_type, discount_value, min_order, is_active, expires_at, max_uses, once_per_customer, customer_phone, customer_name, exclude_bulk, notes)
+       VALUES ($1,$2,$3,$4,TRUE,$5,1,TRUE,$6,$7,$8,$9) RETURNING *`,
+      [
+        code,
+        discountType,
+        discountValue,
+        minOrder,
+        expiresAt.toISOString(),
+        customerPhone || null,
+        customerName,
+        excludeBulk,
+        `مكافأة تقييم #${reviewId || ''}`.trim(),
+      ]
+    );
+
+    if (reviewId) {
+      const tbl = source === 'site' ? 'public.site_ratings' : 'public.reviews';
+      await dentrustDb.query(
+        `UPDATE ${tbl} SET reward_promo_code=$1, reward_sent_at=NOW() WHERE id=$2`,
+        [code, reviewId]
+      ).catch(() => {});
+    }
+
+    const discLabel = discountType === 'percentage' ? `${discountValue}%` : `${discountValue} جنيه`;
+    const expDateStr = expiresAt.toLocaleDateString('ar-EG');
+    const waMsg = `أهلاً بك يا ${customerName} 🌟\nشكراً لتقييمك الجميل لمتجر DenTrust!\n\nدي هدية خاصة لحضرتك: كود خصم *${discLabel}* على طلبك القادم (يستثنى منه منتجات الجملة والشحن):\n\n🎁 الكود: *${code}*\n⏳ صالح حتى: ${expDateStr}\n🌐 الموقع: https://dentrust.site\n\n(صالح للاستخدام مرة واحدة فقط في الموقع أو عند الكاشير)`;
+    const waPhone = customerPhone ? (customerPhone.startsWith('0') ? '2' + customerPhone : customerPhone) : '';
+    const whatsappUrl = `https://wa.me/${waPhone}?text=${encodeURIComponent(waMsg)}`;
+
+    res.status(201).json({ ok: true, promo, whatsappUrl });
+  } catch (err) {
+    if (err.code === '23505') return res.status(400).json({ error: 'هذا الكود موجود بالفعل — جرب توليد كود جديد' });
+    res.status(500).json({ error: err.message || 'خطأ داخلي' });
+  }
+});
+
 // ── Price Tracker ─────────────────────────────────────────────────────────────
 const PT_INIT_SQL = `
   CREATE TABLE IF NOT EXISTS pt_sites (
@@ -10461,6 +10988,11 @@ async function sendPushNotification({
       query = `SELECT DISTINCT ps.* FROM push_subscriptions ps
                JOIN users u ON u.id = ps.user_id
                WHERE (u.role = 'manager' OR u.role = 'admin') AND (u.is_active = 1 OR u.is_active IS NULL)`;
+    } else if (targetType === 'reviews_authorized') {
+      query = `SELECT DISTINCT ps.* FROM push_subscriptions ps
+               JOIN users u ON u.id = ps.user_id
+               WHERE (u.is_active = 1 OR u.is_active IS NULL)
+                 AND (u.role = 'manager' OR u.role = 'admin' OR COALESCE(u.permissions, '') LIKE '%"reviews":true%')`;
     } else if (targetType === 'customer') {
       const cleanPhone = (targetPhone || '').replace(/\D/g, '');
       const cleanCode = (targetCode || '').trim();
@@ -10608,6 +11140,11 @@ async function sendLowStockPush(lowStockItems) {
 // Helper: send push only to devices belonging to managers
 async function sendPushToManagers(title, body, url = null, tag = 'dentrust-notif') {
   return sendPushNotification({ title, body, url, tag, targetType: 'managers', sentBy: 'system' });
+}
+
+// Helper: send push to managers & staff who have 'reviews' permission
+async function sendPushToReviewAuthorized(title, body, url = null, tag = 'new-review') {
+  return sendPushNotification({ title, body, url, tag, targetType: 'reviews_authorized', sentBy: 'system' });
 }
 
 // Helper: check products nearing expiry (خلال 3 شهور) and push-notify managers

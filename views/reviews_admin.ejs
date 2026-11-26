@@ -1,0 +1,215 @@
+<%- include('partials/header', Object.assign({pageTitle: 'تقييمات العملاء'}, locals)) %>
+<div class="max-w-6xl mx-auto space-y-5">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-2xl font-black text-gray-800">⭐ تقييمات العملاء ومكافآت الواتساب</h1>
+      <p class="text-sm text-gray-500 mt-0.5">راجع تعليقات الدكاترة وأرسل كود خصم صالح 30 يوم بضغطة زر على الواتساب</p>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="setFilter('all')" id="flt-all" class="px-4 py-2 rounded-xl text-xs font-bold bg-blue-700 text-white">الكل</button>
+      <button onclick="setFilter('pending')" id="flt-pending" class="px-4 py-2 rounded-xl text-xs font-bold bg-white border text-gray-700">بانتظار برومو</button>
+      <button onclick="setFilter('rewarded')" id="flt-rewarded" class="px-4 py-2 rounded-xl text-xs font-bold bg-white border text-gray-700">تم إرسال برومو</button>
+    </div>
+  </div>
+
+  <div id="reviewsList" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+  <div id="noReviews" class="hidden text-center text-gray-400 py-14 bg-white rounded-2xl border">لا توجد تقييمات مطابقة</div>
+</div>
+
+<!-- Reward Modal -->
+<div id="rewardModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+    <div class="p-5 bg-gradient-to-r from-[#10246b] to-[#521959] text-white flex items-center justify-between">
+      <h3 class="font-bold text-lg">🎁 إنشاء وإرسال برومو 30 يوم</h3>
+      <button onclick="closeRewardModal()" class="text-white/80 hover:text-white text-2xl leading-none">×</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <input type="hidden" id="rw-id"/>
+      <input type="hidden" id="rw-source"/>
+
+      <div class="bg-slate-50 border rounded-xl p-3 text-xs space-y-1">
+        <div><span class="text-gray-500">الدكتور:</span> <strong id="rw-cust-label">—</strong></div>
+        <div><span class="text-gray-500">رقم الهاتف:</span> <strong id="rw-phone-label" dir="ltr">—</strong></div>
+      </div>
+
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">رقم هاتف الإرسال / التخصيص</label>
+        <input id="rw-phone" type="text" dir="ltr" placeholder="010..." class="w-full border rounded-xl px-3 py-2 text-sm"/>
+      </div>
+
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">كود الخصم</label>
+        <div class="flex gap-2">
+          <input id="rw-code" type="text" dir="ltr" class="flex-1 border rounded-xl px-3 py-2 text-sm font-mono uppercase"/>
+          <button type="button" onclick="regenReviewCode()" class="bg-purple-100 hover:bg-purple-200 text-purple-800 font-bold px-3 rounded-xl text-xs whitespace-nowrap">🎲 توليد عشوائي</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-3 gap-2">
+        <div>
+          <label class="text-xs font-bold text-gray-600 block mb-1">النوع</label>
+          <select id="rw-type" class="w-full border rounded-xl px-2 py-2 text-sm bg-white">
+            <option value="percentage">نسبة (%)</option>
+            <option value="fixed">مبلغ (ج.م)</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-gray-600 block mb-1">القيمة</label>
+          <input id="rw-value" type="number" value="5" min="1" step="0.5" class="w-full border rounded-xl px-3 py-2 text-sm"/>
+        </div>
+        <div>
+          <label class="text-xs font-bold text-gray-600 block mb-1">الصلاحية (يوم)</label>
+          <input id="rw-days" type="number" value="30" min="1" class="w-full border rounded-xl px-3 py-2 text-sm"/>
+        </div>
+      </div>
+
+      <div id="rw-err" class="hidden text-red-600 text-xs bg-red-50 rounded-xl px-3 py-2 font-bold"></div>
+
+      <div class="flex gap-2 pt-1">
+        <button onclick="submitRewardPromo()" id="rw-submit-btn" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl text-sm">
+          📲 حفظ وإرسال واتساب
+        </button>
+        <button onclick="closeRewardModal()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold px-4 py-2.5 rounded-xl text-sm">إلغاء</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = "<%- base %>";
+let _reviews = [];
+let _filter = "all";
+
+function setFilter(f) {
+  _filter = f;
+  ["all","pending","rewarded"].forEach(k => {
+    const btn = document.getElementById("flt-" + k);
+    btn.className = k === f
+      ? "px-4 py-2 rounded-xl text-xs font-bold bg-blue-700 text-white"
+      : "px-4 py-2 rounded-xl text-xs font-bold bg-white border text-gray-700";
+  });
+  renderReviews();
+}
+
+async function loadReviews() {
+  const res = await fetch(`${BASE}/api/admin/reviews`);
+  _reviews = await res.json();
+  renderReviews();
+}
+
+function renderReviews() {
+  const list = _reviews.filter(r => {
+    if (_filter === "pending") return !r.reward_promo_code;
+    if (_filter === "rewarded") return Boolean(r.reward_promo_code);
+    return true;
+  });
+  const container = document.getElementById("reviewsList");
+  if (!list.length) {
+    container.innerHTML = "";
+    document.getElementById("noReviews").classList.remove("hidden");
+    return;
+  }
+  document.getElementById("noReviews").classList.add("hidden");
+
+  container.innerHTML = list.map(r => {
+    const stars = "⭐".repeat(Math.max(1, Math.min(5, Number(r.rating || 5))));
+    const dateStr = r.created_at ? new Date(r.created_at).toLocaleString("ar-EG") : "—";
+    const orderBadge = r.order_id ? `<span class="text-[11px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-bold">طلب #${r.order_id}</span>` : "";
+    const prodLabel = r.product_name || "تقييم للموقع";
+    const rewardBlock = r.reward_promo_code
+      ? `<div class="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 flex items-center justify-between">
+           <span class="text-xs font-bold text-emerald-800">✅ تم إرسال برومو: <span class="font-mono">${r.reward_promo_code}</span></span>
+           <span class="text-[10px] text-emerald-600">${r.reward_sent_at ? new Date(r.reward_sent_at).toLocaleDateString("ar-EG") : ""}</span>
+         </div>`
+      : `<button onclick='openRewardModal(${JSON.stringify(JSON.stringify(r))})'
+           class="w-full bg-gradient-to-r from-[#10246b] to-[#521959] hover:opacity-95 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5">
+           🎁 إنشاء وإرسال برومو (30 يوم)
+         </button>`;
+
+    return `<div class="bg-white rounded-2xl border shadow-sm p-4 space-y-3 flex flex-col justify-between">
+      <div class="space-y-2">
+        <div class="flex items-start justify-between gap-2">
+          <div>
+            <div class="font-bold text-gray-800">${r.customer_name || "دكتور"}</div>
+            <div class="text-xs text-gray-500 font-mono" dir="ltr">${r.customer_phone || "بدون رقم"}</div>
+          </div>
+          <div class="text-left">
+            <div class="text-sm">${stars}</div>
+            <div class="text-[10px] text-gray-400 mt-0.5">${dateStr}</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-[11px] bg-purple-50 text-purple-800 px-2 py-0.5 rounded-full font-bold">${prodLabel}</span>
+          ${orderBadge}
+        </div>
+        <p class="text-sm text-gray-700 bg-slate-50 rounded-xl p-3 border border-slate-100 leading-relaxed">${r.comment || ""}</p>
+      </div>
+      <div>${rewardBlock}</div>
+    </div>`;
+  }).join("");
+}
+
+function regenReviewCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let rnd = "";
+  for (let i = 0; i < 6; i++) rnd += chars[Math.floor(Math.random() * chars.length)];
+  document.getElementById("rw-code").value = "DT-" + rnd;
+}
+
+function openRewardModal(jsonStr) {
+  const r = JSON.parse(jsonStr);
+  document.getElementById("rw-id").value = r.id;
+  document.getElementById("rw-source").value = r.source || "product";
+  document.getElementById("rw-cust-label").textContent = r.customer_name || "دكتور";
+  document.getElementById("rw-phone-label").textContent = r.customer_phone || "غير مسجل";
+  document.getElementById("rw-phone").value = r.customer_phone || "";
+  document.getElementById("rw-type").value = "percentage";
+  document.getElementById("rw-value").value = "5";
+  document.getElementById("rw-days").value = "30";
+  regenReviewCode();
+  document.getElementById("rw-err").classList.add("hidden");
+  document.getElementById("rewardModal").classList.remove("hidden");
+}
+
+function closeRewardModal() {
+  document.getElementById("rewardModal").classList.add("hidden");
+}
+
+async function submitRewardPromo() {
+  const btn = document.getElementById("rw-submit-btn");
+  btn.disabled = true;
+  try {
+    const res = await fetch(`${BASE}/api/admin/reviews/reward-promo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reviewId: document.getElementById("rw-id").value,
+        source: document.getElementById("rw-source").value,
+        customer_name: document.getElementById("rw-cust-label").textContent,
+        customer_phone: document.getElementById("rw-phone").value.trim(),
+        code: document.getElementById("rw-code").value.trim(),
+        discount_type: document.getElementById("rw-type").value,
+        discount_value: parseFloat(document.getElementById("rw-value").value || 5),
+        days_valid: parseInt(document.getElementById("rw-days").value || 30, 10),
+        exclude_bulk: true,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const el = document.getElementById("rw-err");
+      el.textContent = data.error || "تعذر إنشاء الكود";
+      el.classList.remove("hidden");
+      return;
+    }
+    closeRewardModal();
+    await loadReviews();
+    if (data.whatsappUrl) window.open(data.whatsappUrl, "_blank");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+loadReviews();
+</script>
+</main>
+<%- include('partials/footer', locals) %>

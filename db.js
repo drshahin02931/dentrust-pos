@@ -64,12 +64,12 @@ sessionDb.on('connect', client => {
 const ALL_PERMS = {
   pos: true, inventory: true, expiry: true,
   customers: true, accounting: true, invoices: true,
-  edit_prices: true, process_returns: true,
+  edit_prices: true, process_returns: true, reviews: true,
 };
 const EMPLOYEE_DEFAULT_PERMS = {
   pos: true, inventory: true, expiry: true,
   customers: true, accounting: false, invoices: false,
-  edit_prices: false, process_returns: false,
+  edit_prices: false, process_returns: false, reviews: false,
 };
 
 // NOTE: products table is removed from pos_data schema.
@@ -434,6 +434,23 @@ const MIGRATIONS = [
     usage_count INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`,
+  "ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
+  "ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS max_uses INTEGER DEFAULT 0",
+  "ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS once_per_customer BOOLEAN DEFAULT TRUE",
+  "ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS customer_phone TEXT",
+  "ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS customer_name TEXT",
+  "ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS exclude_bulk BOOLEAN DEFAULT TRUE",
+  "ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS notes TEXT",
+  `CREATE TABLE IF NOT EXISTS promo_code_usages (
+    id SERIAL PRIMARY KEY,
+    promo_id INTEGER,
+    code TEXT NOT NULL,
+    customer_phone TEXT,
+    sale_id INTEGER,
+    order_id TEXT,
+    discount_amount NUMERIC DEFAULT 0,
+    used_at TIMESTAMPTZ DEFAULT NOW()
+  )`,
   `UPDATE sales SET payment_method = 'pickup', delivery_type = 'pickup', delivery_amount = 0
    WHERE id = 310 OR delivery_type = 'store_pickup'`,
   `UPDATE sales s SET payment_method = 'pickup', delivery_type = 'pickup', delivery_amount = 0
@@ -489,6 +506,14 @@ const PUBLIC_PRODUCTS_MIGRATIONS = [
   "ALTER TABLE sales ADD COLUMN IF NOT EXISTS paid_amount NUMERIC DEFAULT 0",
   "ALTER TABLE public.sales ADD COLUMN IF NOT EXISTS paid_amount NUMERIC DEFAULT 0",
   "ALTER TABLE public.products DISABLE ROW LEVEL SECURITY",
+  "ALTER TABLE public.reviews ADD COLUMN IF NOT EXISTS customer_phone TEXT",
+  "ALTER TABLE public.reviews ADD COLUMN IF NOT EXISTS order_id INTEGER",
+  "ALTER TABLE public.reviews ADD COLUMN IF NOT EXISTS reward_promo_code TEXT",
+  "ALTER TABLE public.reviews ADD COLUMN IF NOT EXISTS reward_sent_at TIMESTAMPTZ",
+  "ALTER TABLE public.site_ratings ADD COLUMN IF NOT EXISTS customer_phone TEXT",
+  "ALTER TABLE public.site_ratings ADD COLUMN IF NOT EXISTS order_id INTEGER",
+  "ALTER TABLE public.site_ratings ADD COLUMN IF NOT EXISTS reward_promo_code TEXT",
+  "ALTER TABLE public.site_ratings ADD COLUMN IF NOT EXISTS reward_sent_at TIMESTAMPTZ",
 ];
 
 // The VIEW that makes pos_data.products a transparent window into public.products.

@@ -152,8 +152,23 @@
         🎁 هدايا النقاط
       </a>
 
+      <% if (isMgr || (typeof userPerms !== 'undefined' && userPerms.reviews)) { %>
+      <a href="<%= base %>/reviews-admin" class="nav-link <%= reqPath.includes('/reviews-admin') ? 'active' : '' %>">
+        ⭐ التقييمات
+      </a>
+      <% } %>
+
       <% if (typeof isMgr !== 'undefined' && isMgr) { %>
       <div class="h-5 w-px bg-blue-500 mx-1"></div>
+      <a href="<%= base %>/promo-codes" class="nav-link <%= reqPath.includes('/promo-codes') ? 'active' : '' %>">
+        🏷️ أكواد الخصم
+      </a>
+      <a href="<%= base %>/website-settings" class="nav-link <%= reqPath.includes('/website-settings') ? 'active' : '' %>">
+        🌐 إعدادات الموقع
+      </a>
+      <a href="<%= base %>/bot-knowledge" class="nav-link <%= reqPath.includes('/bot-knowledge') ? 'active' : '' %>">
+        🤖 تعليمات البوت
+      </a>
       <a href="<%= base %>/push-notifications" class="nav-link <%= reqPath.includes('/push-notifications') ? 'active' : '' %>">
         📲 إشعارات الويب
       </a>

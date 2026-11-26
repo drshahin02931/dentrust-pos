@@ -1,0 +1,213 @@
+<%- include('partials/header', Object.assign({pageTitle: 'إعدادات الموقع'}, locals)) %>
+<div class="max-w-4xl mx-auto space-y-6">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-2xl font-black text-gray-800">🌐 إعدادات الموقع (للمدير فقط)</h1>
+      <p class="text-sm text-gray-500 mt-0.5">التحكم الكامل في روابط السوشيال، مصاريف الشحن، بيانات InstaPay، وتعليمات الذكاء الاصطناعي</p>
+    </div>
+    <button onclick="saveWebsiteConfig()" id="saveWebBtn"
+      class="bg-blue-700 hover:bg-blue-800 text-white font-bold px-6 py-2.5 rounded-xl shadow">
+      💾 حفظ كل التعديلات
+    </button>
+  </div>
+
+  <div id="webToast" class="hidden fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-emerald-600 text-white px-6 py-3 rounded-2xl shadow-xl font-bold text-sm"></div>
+
+  <!-- 1. Social Links -->
+  <div class="bg-white rounded-2xl border shadow-sm p-6 space-y-4">
+    <h2 class="font-bold text-gray-800 text-base border-b pb-2">📱 روابط السوشيال ميديا والتواصل</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">رقم واتساب الموقع (مثال: 2010...)</label>
+        <input id="sl-whatsapp" type="text" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm"/>
+      </div>
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">رقم الاتصال الهاتفي</label>
+        <input id="sl-phone" type="text" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm"/>
+      </div>
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">رابط فيسبوك (Facebook)</label>
+        <input id="sl-facebook" type="url" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm"/>
+      </div>
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">رابط إنستجرام (Instagram)</label>
+        <input id="sl-instagram" type="url" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm"/>
+      </div>
+      <div class="md:col-span-2">
+        <label class="text-xs font-bold text-gray-600 block mb-1">رابط تيك توك (TikTok)</label>
+        <input id="sl-tiktok" type="url" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm"/>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. InstaPay Settings -->
+  <div class="bg-white rounded-2xl border shadow-sm p-6 space-y-4">
+    <h2 class="font-bold text-gray-800 text-base border-b pb-2">📲 بيانات الدفع الإلكتروني (InstaPay)</h2>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">رقم التحويل / الحساب</label>
+        <input id="ip-number" type="text" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm"/>
+      </div>
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">اسم المستلم</label>
+        <input id="ip-name" type="text" class="w-full border rounded-xl px-3 py-2.5 text-sm"/>
+      </div>
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">رابط الدفع المباشر</label>
+        <input id="ip-link" type="url" dir="ltr" class="w-full border rounded-xl px-3 py-2.5 text-sm"/>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Shipping Settings -->
+  <div class="bg-white rounded-2xl border shadow-sm p-6 space-y-4">
+    <h2 class="font-bold text-gray-800 text-base border-b pb-2">🚚 مصاريف الشحن (المحافظات والمناطق)</h2>
+    <div>
+      <label class="text-xs font-bold text-gray-600 block mb-1">سعر الشحن الافتراضي لأي منطقة غير محددة (ج.م)</label>
+      <input id="sh-default" type="number" min="0" step="1" class="w-48 border rounded-xl px-3 py-2 text-sm"/>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+      <div class="space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-gray-700">أسعار المحافظات</span>
+          <button type="button" onclick="addFeeRow('city')" class="text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg font-bold">+ إضافة محافظة</button>
+        </div>
+        <div id="cityFeesList" class="space-y-2"></div>
+      </div>
+
+      <div class="space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-gray-700">أسعار المناطق / الأحياء الخاصة</span>
+          <button type="button" onclick="addFeeRow('district')" class="text-xs bg-purple-50 text-purple-700 px-2.5 py-1 rounded-lg font-bold">+ إضافة منطقة</button>
+        </div>
+        <div id="districtFeesList" class="space-y-2"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. AI Extra Instructions -->
+  <div class="bg-white rounded-2xl border shadow-sm p-6 space-y-4">
+    <div class="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+      <h2 class="font-bold text-gray-800 text-base">🤖 تعليمات إضافية لـ DenBot &amp; StyleBot</h2>
+      <a href="<%= base %>/bot-knowledge" class="text-xs bg-purple-100 hover:bg-purple-200 text-purple-800 font-bold px-3 py-1.5 rounded-lg">📚 فتح قاعدة معرفة البوت</a>
+    </div>
+    <div class="space-y-4">
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">تعليمات إضافية لمساعد الأسنان (DenBot Extra Prompt)</label>
+        <textarea id="ai-denbot" rows="4" placeholder="اكتب أي تعليمات أو سياسات إضافية تحب DenBot يلتزم بيها في الرد على الدكاترة..."
+          class="w-full border rounded-xl px-3 py-2.5 text-sm resize-y"></textarea>
+      </div>
+      <div>
+        <label class="text-xs font-bold text-gray-600 block mb-1">تعليمات إضافية لمساعد الزي الطبي (StyleBot Extra Prompt)</label>
+        <textarea id="ai-stylebot" rows="4" placeholder="اكتب أي تعليمات إضافية لمستشار السكرابات والزي الطبي..."
+          class="w-full border rounded-xl px-3 py-2.5 text-sm resize-y"></textarea>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = "<%- base %>";
+
+function renderFeeRow(type, key = "", val = "") {
+  const wrap = document.getElementById(type === "city" ? "cityFeesList" : "districtFeesList");
+  const row = document.createElement("div");
+  row.className = "flex gap-2 items-center fee-row";
+  row.innerHTML = `
+    <input type="text" value="${key.replace(/"/g, "&quot;")}" placeholder="${type === "city" ? "اسم المحافظة" : "اسم المنطقة"}" class="fee-key flex-1 border rounded-xl px-3 py-2 text-xs"/>
+    <input type="number" min="0" value="${val}" placeholder="السعر" class="fee-val w-24 border rounded-xl px-3 py-2 text-xs"/>
+    <button type="button" onclick="this.parentElement.remove()" class="text-red-500 hover:text-red-700 font-bold px-2">✕</button>
+  `;
+  wrap.appendChild(row);
+}
+
+function addFeeRow(type) {
+  renderFeeRow(type, "", "35");
+}
+
+function collectFees(containerId) {
+  const obj = {};
+  document.querySelectorAll(`#${containerId} .fee-row`).forEach(r => {
+    const k = r.querySelector(".fee-key").value.trim();
+    const v = parseFloat(r.querySelector(".fee-val").value || 0);
+    if (k) obj[k] = v;
+  });
+  return obj;
+}
+
+async function loadWebsiteConfig() {
+  const res = await fetch(`${BASE}/api/website-config`);
+  const cfg = await res.json();
+  const sl = cfg.socialLinks || {};
+  document.getElementById("sl-whatsapp").value = sl.whatsapp || "";
+  document.getElementById("sl-phone").value = sl.phone || "";
+  document.getElementById("sl-facebook").value = sl.facebook || "";
+  document.getElementById("sl-instagram").value = sl.instagram || "";
+  document.getElementById("sl-tiktok").value = sl.tiktok || "";
+
+  const ip = cfg.instapaySettings || {};
+  document.getElementById("ip-number").value = ip.number || "";
+  document.getElementById("ip-name").value = ip.name || "";
+  document.getElementById("ip-link").value = ip.link || "";
+
+  const sh = cfg.shippingSettings || {};
+  document.getElementById("sh-default").value = sh.defaultFee ?? 35;
+  document.getElementById("cityFeesList").innerHTML = "";
+  Object.entries(sh.cityFees || {}).forEach(([k, v]) => renderFeeRow("city", k, v));
+  document.getElementById("districtFeesList").innerHTML = "";
+  Object.entries(sh.districtFees || {}).forEach(([k, v]) => renderFeeRow("district", k, v));
+
+  document.getElementById("ai-denbot").value = cfg.denbotExtra || "";
+  document.getElementById("ai-stylebot").value = cfg.stylebotExtra || "";
+}
+
+async function saveWebsiteConfig() {
+  const btn = document.getElementById("saveWebBtn");
+  btn.disabled = true;
+  try {
+    const payload = {
+      socialLinks: {
+        whatsapp: document.getElementById("sl-whatsapp").value.trim(),
+        phone: document.getElementById("sl-phone").value.trim(),
+        facebook: document.getElementById("sl-facebook").value.trim(),
+        instagram: document.getElementById("sl-instagram").value.trim(),
+        tiktok: document.getElementById("sl-tiktok").value.trim(),
+      },
+      instapaySettings: {
+        number: document.getElementById("ip-number").value.trim(),
+        name: document.getElementById("ip-name").value.trim(),
+        link: document.getElementById("ip-link").value.trim(),
+      },
+      shippingSettings: {
+        defaultFee: parseFloat(document.getElementById("sh-default").value || 0),
+        cityFees: collectFees("cityFeesList"),
+        districtFees: collectFees("districtFeesList"),
+      },
+      denbotExtra: document.getElementById("ai-denbot").value,
+      stylebotExtra: document.getElementById("ai-stylebot").value,
+    };
+    const res = await fetch(`${BASE}/api/admin/website-config`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const t = document.getElementById("webToast");
+    if (res.ok) {
+      t.textContent = "✅ تم حفظ إعدادات الموقع ومزامنتها بنجاح";
+      t.className = "fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-emerald-600 text-white px-6 py-3 rounded-2xl shadow-xl font-bold text-sm";
+    } else {
+      t.textContent = "❌ حدث خطأ أثناء الحفظ";
+      t.className = "fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-red-600 text-white px-6 py-3 rounded-2xl shadow-xl font-bold text-sm";
+    }
+    t.classList.remove("hidden");
+    setTimeout(() => t.classList.add("hidden"), 3000);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+loadWebsiteConfig();
+</script>
+</main>
+<%- include('partials/footer', locals) %>

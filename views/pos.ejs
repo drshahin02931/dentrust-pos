@@ -828,6 +828,13 @@ function setDeliveryMode(mode) {
 
 // ── Promo Code ───────────────────────────────────────────────────────────────
 let _appliedPromo = null;
+function getPromoEligibleSubtotal() {
+  return cart.reduce((s, i) => {
+    const wh = i.wholesale_price != null && parseFloat(i.wholesale_price) > 0;
+    const isBulkPriced = wh && parseFloat(i.unit_price) <= parseFloat(i.wholesale_price) + 0.001;
+    return isBulkPriced ? s : s + i.unit_price * i.quantity;
+  }, 0);
+}
 async function applyPromoCode() {
   const code = (document.getElementById("promoCodeInput").value || '').trim();
   if (!code) {
@@ -835,6 +842,9 @@ async function applyPromoCode() {
     return;
   }
   const subtotal = cart.reduce((s,i) => s + i.unit_price * i.quantity, 0);
+  const eligibleSubtotal = getPromoEligibleSubtotal();
+  const cid = parseInt(document.getElementById("customerSelect")?.value || '0', 10);
+  const cust = customers.find(c => c.id === cid);
   const btn = document.getElementById("applyPromoBtn");
   btn.disabled = true;
   btn.textContent = "...";
@@ -842,7 +852,12 @@ async function applyPromoCode() {
     const res = await fetch(`${BASE}/api/promo/validate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, total_amount: subtotal })
+      body: JSON.stringify({
+        code,
+        total_amount: subtotal,
+        eligible_subtotal: eligibleSubtotal,
+        customer_phone: cust?.phone || ''
+      })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "كود الخصم غير صحيح");
@@ -1898,10 +1913,11 @@ function updateTotal() {
   const discType  = document.getElementById("discountType").value;
   let discAmt     = discType === "percent" ? subtotal * rawDisc / 100 : rawDisc;
   if (_appliedPromo) {
+    const promoBase = _appliedPromo.exclude_bulk !== false ? getPromoEligibleSubtotal() : subtotal;
     if (_appliedPromo.discount_type === 'percentage') {
-      discAmt += (subtotal * _appliedPromo.discount_value) / 100;
+      discAmt += (promoBase * _appliedPromo.discount_value) / 100;
     } else {
-      discAmt += _appliedPromo.discount_amount;
+      discAmt += Math.min(promoBase, _appliedPromo.discount_amount);
     }
   }
   const delivery  = (_currentDeliveryMode === 'delivery') ? (parseFloat(document.getElementById("deliveryInput").value) || 0) : 0;
@@ -1972,9 +1988,10 @@ async function checkout() {
   const discType   = document.getElementById("discountType").value;
   let discAmt      = discType === "percent" ? subtotal * rawDisc / 100 : rawDisc;
   if (_appliedPromo) {
+    const promoBase = _appliedPromo.exclude_bulk !== false ? getPromoEligibleSubtotal() : subtotal;
     discAmt += (_appliedPromo.discount_type === 'percentage')
-      ? (subtotal * _appliedPromo.discount_value) / 100
-      : _appliedPromo.discount_amount;
+      ? (promoBase * _appliedPromo.discount_value) / 100
+      : Math.min(promoBase, _appliedPromo.discount_amount);
   }
   const delivery   = (_currentDeliveryMode === 'delivery') ? (parseFloat(document.getElementById("deliveryInput").value) || 0) : 0;
   const total      = Math.max(0, subtotal - discAmt) + delivery;
