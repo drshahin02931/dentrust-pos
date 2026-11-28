@@ -8962,13 +8962,12 @@ async function loadStorePolicies() {
       text = `\n\n=== معلومات المتجر وسياسات DenTrust ===\n${lines}\n===`;
     }
     try {
-      const { rows: extraRows } = await posDb.query(
-        "SELECT key, value FROM store_settings WHERE key IN ('denbot_extra','stylebot_extra')"
-      );
-      for (const er of extraRows) {
-        if (er.value && er.value.trim()) {
-          text += `\n\n[${er.key}]:\n${er.value.trim()}`;
-        }
+      const cfgData = await readWebsiteConfigData().catch(() => null);
+      if (cfgData?.denbotExtra?.trim()) {
+        text += `\n\n[denbot_extra]:\n${cfgData.denbotExtra.trim()}`;
+      }
+      if (cfgData?.stylebotExtra?.trim()) {
+        text += `\n\n[stylebot_extra]:\n${cfgData.stylebotExtra.trim()}`;
       }
     } catch (_) {}
     _knowledgeCache = text;
@@ -9875,13 +9874,25 @@ app.delete(`${BASE}/api/bot-knowledge/:id`, async (req, res) => {
 });
 
 // ── Website Config (Manager-managed from POS) ────────────────────────────────
-const DEFAULT_SOCIAL_LINKS = { facebook: '', instagram: '', whatsapp: '', tiktok: '', phone: '' };
+const DEFAULT_SOCIAL_LINKS = {
+  facebook: 'https://www.facebook.com/share/16eVwruUqS/',
+  instagram: 'https://www.instagram.com/_dentrust_?igsh=MXBvYjRha3B4amdrdg==',
+  whatsapp: '+201157004081',
+  tiktok: 'https://www.tiktok.com/@_dentrust_?_r=1&_t=ZS-9623KJeM5fM',
+  phone: '+201153788802',
+};
 const DEFAULT_SHIPPING_CFG = { defaultFee: 35, cityFees: {}, districtFees: {} };
 const DEFAULT_INSTAPAY_CFG = {
   number: '01014067776',
   name: 'أحلام أنور السيد',
   link: 'https://ipn.eg/S/ahlamanwar72/instapay/6n0ojI',
 };
+
+function parseSettingJson(val) {
+  if (!val) return null;
+  if (typeof val === 'object') return val;
+  try { return JSON.parse(String(val)); } catch (_) { return null; }
+}
 
 async function readWebsiteConfigData() {
   const s = await getSettings().catch(() => ({}));
@@ -9891,34 +9902,49 @@ async function readWebsiteConfigData() {
   let denbotExtra = s.denbot_extra || '';
   let stylebotExtra = s.stylebot_extra || '';
 
-  try { if (s.website_social_links) socialLinks = { ...socialLinks, ...JSON.parse(s.website_social_links) }; } catch (_) {}
-  try { if (s.website_shipping_settings) shippingSettings = { ...shippingSettings, ...JSON.parse(s.website_shipping_settings) }; } catch (_) {}
-  try { if (s.website_instapay_settings) instapaySettings = { ...instapaySettings, ...JSON.parse(s.website_instapay_settings) }; } catch (_) {}
+  const sSocial = parseSettingJson(s.website_social_links);
+  if (sSocial && Object.values(sSocial).some(v => String(v || '').trim())) {
+    socialLinks = { ...socialLinks, ...sSocial };
+  }
+  const sShip = parseSettingJson(s.website_shipping_settings);
+  if (sShip) shippingSettings = { ...shippingSettings, ...sShip };
+  const sInsta = parseSettingJson(s.website_instapay_settings);
+  if (sInsta) instapaySettings = { ...instapaySettings, ...sInsta };
 
-  // Fallback read from public schema if not yet saved in store_settings
-  if (!s.website_shipping_settings || !s.website_social_links || !denbotExtra || !stylebotExtra) {
+  // Fallback read from public.settings (where legacy social_links, ai_settings, instapay_settings, shipping_settings live)
+  if (!sSocial || !Object.values(sSocial).some(v => String(v || '').trim()) || !s.website_shipping_settings || !s.website_instapay_settings || !denbotExtra || !stylebotExtra) {
     try {
       const { rows: pubSet } = await dentrustDb.query(
-        "SELECT key, value FROM public.settings WHERE key IN ('shipping_settings','denbot_extra','stylebot_extra')"
+        "SELECT key, value FROM public.settings WHERE key IN ('shipping_settings','social_links','instapay_settings','ai_settings','denbot_extra','stylebot_extra')"
       ).catch(() => ({ rows: [] }));
       for (const r of pubSet) {
-        if (r.key === 'shipping_settings' && !s.website_shipping_settings && r.value) {
-          try { shippingSettings = { ...shippingSettings, ...(typeof r.value === 'string' ? JSON.parse(r.value) : r.value) }; } catch (_) {}
+        if (r.key === 'shipping_settings' && !sShip && r.value) {
+          const parsed = parseSettingJson(r.value);
+          if (parsed) shippingSettings = { ...shippingSettings, ...parsed };
+        }
+        if (r.key === 'social_links' && (!sSocial || !Object.values(sSocial).some(v => String(v || '').trim())) && r.value) {
+          const parsed = parseSettingJson(r.value);
+          if (parsed) socialLinks = { ...socialLinks, ...parsed };
+        }
+        if (r.key === 'instapay_settings' && !sInsta && r.value) {
+          const parsed = parseSettingJson(r.value);
+          if (parsed) {
+            instapaySettings = {
+              number: parsed.number || instapaySettings.number,
+              name: parsed.name || instapaySettings.name,
+              link: parsed.link || instapaySettings.link,
+            };
+          }
+        }
+        if (r.key === 'ai_settings' && r.value) {
+          const parsed = parseSettingJson(r.value);
+          if (parsed) {
+            if (!denbotExtra && parsed.denbotExtra) denbotExtra = String(parsed.denbotExtra);
+            if (!stylebotExtra && parsed.stylebotExtra && parsed.stylebotExtra !== '-') stylebotExtra = String(parsed.stylebotExtra);
+          }
         }
         if (r.key === 'denbot_extra' && !denbotExtra && r.value) denbotExtra = String(r.value);
-        if (r.key === 'stylebot_extra' && !stylebotExtra && r.value) stylebotExtra = String(r.value);
-      }
-      if (!s.website_social_links) {
-        const { rows: sl } = await dentrustDb.query('SELECT * FROM public.social_links LIMIT 1').catch(() => ({ rows: [] }));
-        if (sl[0]) {
-          socialLinks = {
-            facebook: sl[0].facebook || '',
-            instagram: sl[0].instagram || '',
-            whatsapp: sl[0].whatsapp || '',
-            tiktok: sl[0].tiktok || '',
-            phone: sl[0].phone || '',
-          };
-        }
+        if (r.key === 'stylebot_extra' && !stylebotExtra && r.value && String(r.value).trim() !== '-') stylebotExtra = String(r.value);
       }
     } catch (_) {}
   }
@@ -9980,28 +10006,19 @@ app.post(`${BASE}/api/admin/website-config`, async (req, res) => {
       );
     }
 
-    // Best-effort mirror to public.settings and public.social_links
+    // Best-effort mirror to public.settings
     try {
       for (const [k, v] of [
+        ['social_links', JSON.stringify(socialLinks)],
         ['shipping_settings', JSON.stringify(shippingSettings)],
+        ['instapay_settings', JSON.stringify(instapaySettings)],
+        ['ai_settings', JSON.stringify({ denbotExtra, stylebotExtra })],
         ['denbot_extra', denbotExtra],
         ['stylebot_extra', stylebotExtra],
       ]) {
         await dentrustDb.query(
           'INSERT INTO public.settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2',
           [k, v]
-        ).catch(() => {});
-      }
-      const { rows: exSocial } = await dentrustDb.query('SELECT id FROM public.social_links LIMIT 1').catch(() => ({ rows: [] }));
-      if (exSocial[0]?.id) {
-        await dentrustDb.query(
-          'UPDATE public.social_links SET facebook=$1, instagram=$2, whatsapp=$3, tiktok=$4, phone=$5 WHERE id=$6',
-          [socialLinks.facebook, socialLinks.instagram, socialLinks.whatsapp, socialLinks.tiktok, socialLinks.phone, exSocial[0].id]
-        ).catch(() => {});
-      } else {
-        await dentrustDb.query(
-          'INSERT INTO public.social_links (facebook, instagram, whatsapp, tiktok, phone) VALUES ($1,$2,$3,$4,$5)',
-          [socialLinks.facebook, socialLinks.instagram, socialLinks.whatsapp, socialLinks.tiktok, socialLinks.phone]
         ).catch(() => {});
       }
     } catch (_) {}
