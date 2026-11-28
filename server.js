@@ -44,9 +44,24 @@ app.set('trust proxy', 1);
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 const POS_ORIGINS = (process.env.TRUSTED_ORIGINS || 'https://dentrust-pos.onrender.com,http://localhost:5000,https://dentrust.site,https://www.dentrust.site').split(',').map(s => s.trim());
+const WEBSITE_ORIGINS = (process.env.WEBSITE_ORIGIN || 'https://dentrust.site,https://www.dentrust.site')
+  .split(',').map(s => s.trim());
+const LAN_OR_LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$/;
+
+const webCors = cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (WEBSITE_ORIGINS.some(o => origin === o) || LAN_OR_LOCAL_ORIGIN_RE.test(origin)) return cb(null, true);
+    cb(null, false);
+  },
+  credentials: false,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+});
+app.options('/api/*', webCors);
+
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin || POS_ORIGINS.includes(origin) || /localhost/.test(origin)) return cb(null, true);
+    if (!origin || POS_ORIGINS.includes(origin) || LAN_OR_LOCAL_ORIGIN_RE.test(origin)) return cb(null, true);
     cb(null, false);
   },
   credentials: true,
@@ -8718,19 +8733,6 @@ function r2(n) { return Math.round(parseFloat(n || 0) * 100) / 100; }
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 const SUPABASE_BASE = 'https://ywfunodybcqakhweuxwn.supabase.co';
-const WEBSITE_ORIGINS = (process.env.WEBSITE_ORIGIN || 'https://dentrust.site,https://www.dentrust.site')
-  .split(',').map(s => s.trim());
-
-const webCors = cors({
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, true);
-    if (WEBSITE_ORIGINS.some(o => origin === o) || /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$/.test(origin)) return cb(null, true);
-    cb(null, false);
-  },
-  credentials: false,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-});
-app.options('/api/*', webCors);
 
 // ── Products (public, from Supabase) ─────────────────────────────────────────
 const _memCache = {};
